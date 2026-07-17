@@ -8,6 +8,7 @@ use crate::error::WorkspaceError;
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct FrozenDiff {
     /// Canonical byte representation of the diff (what gets hashed).
+    /// Encoding: for each file, path bytes, a NUL, contents, then LF.
     pub bytes: Vec<u8>,
     pub files: Vec<String>,
     pub loc: u32,
@@ -24,6 +25,7 @@ pub struct CommandOutput {
 pub trait Workspace: Send + Sync {
     fn apply_write(&self, task_id: &TaskId, path: &str, contents: &[u8]) -> Result<(), WorkspaceError>;
     fn run_command(&self, task_id: &TaskId, command: &str, cwd: &str) -> Result<CommandOutput, WorkspaceError>;
+    /// Callers must not issue concurrent writes to the task between freeze and gate-open; the frozen diff is what operators sign against.
     fn freeze_task_diff(&self, task_id: &TaskId) -> Result<FrozenDiff, WorkspaceError>;
     fn accept_task(&self, task_id: &TaskId) -> Result<(), WorkspaceError>;
     fn discard_task(&self, task_id: &TaskId) -> Result<(), WorkspaceError>;
@@ -111,17 +113,28 @@ impl Workspace for InMemoryWorkspace {
     fn freeze_task_diff(&self, task_id: &TaskId) -> Result<FrozenDiff, WorkspaceError> {
         let g = self.inner.lock().unwrap();
         let buf = g.task(&task_id.0).ok_or_else(|| WorkspaceError::UnknownTask(task_id.0.clone()))?;
-        let mut bytes = Vec::new();
-        let mut files = Vec::new();
-        let mut loc = 0u32;
-        for (path, contents) in &buf.writes {
-            bytes.extend_from_slice(path.as_bytes());
-            bytes.push(0);
-            bytes.extend_from_slice(contents);
-            bytes.push(b'\n');
+        // First-seen order of paths; last write wins per path — matches FsWorkspace
+        // (which reads final on-disk content) so both impls produce the same diff hash.
+        let mut files: Vec<String> = Vec::new();
+        for (path, _) in &buf.writes {
             if !files.contains(path) {
                 files.push(path.clone());
             }
+        }
+        let mut bytes = Vec::new();
+        let mut loc = 0u32;
+        for path in &files {
+            let contents = buf
+                .writes
+                .iter()
+                .rev()
+                .find(|(p, _)| p == path)
+                .map(|(_, c)| c.clone())
+                .unwrap_or_default();
+            bytes.extend_from_slice(path.as_bytes());
+            bytes.push(0);
+            bytes.extend_from_slice(&contents);
+            bytes.push(b'\n');
             loc += contents.iter().filter(|b| **b == b'\n').count() as u32;
         }
         Ok(FrozenDiff { bytes, files, loc })
@@ -167,6 +180,17 @@ mod tests {
         assert_eq!(ws.accepted_tasks(), vec![tid()]);
         assert!(ws.discarded_tasks().is_empty());
         assert_eq!(ws.file_contents(&tid(), "a.rs"), Some(b"x".to_vec()));
+    }
+
+    #[test]
+    fn freeze_uses_last_write_per_path() {
+        let ws = InMemoryWorkspace::new();
+        let t = TaskId("t1".into());
+        ws.apply_write(&t, "a.rs", b"old\n").unwrap();
+        ws.apply_write(&t, "a.rs", b"new\nnew2\n").unwrap();
+        let f = ws.freeze_task_diff(&t).unwrap();
+        assert_eq!(f.files, vec!["a.rs".to_string()]);
+        assert_eq!(f.loc, 2); // last write's newline count; old write ignored
     }
 
     #[test]

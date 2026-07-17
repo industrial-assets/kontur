@@ -43,6 +43,7 @@ impl FsWorkspace {
 }
 
 impl Workspace for FsWorkspace {
+    /// NOTE: `path` is trusted and not sanitised against traversal; the non-bypass/trust boundary is the deferred Claude Code binding slice.
     fn apply_write(&self, task_id: &TaskId, path: &str, contents: &[u8]) -> Result<(), WorkspaceError> {
         let full = self.root.join(path);
         if let Some(parent) = full.parent() {

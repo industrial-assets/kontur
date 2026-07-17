@@ -197,6 +197,7 @@ impl GateHost {
     }
 
     /// Read a gate's terminal outcome (for the awaiting agent handler).
+    /// Returns Some for a gate in ANY state; callers must inspect `state` before acting.
     pub async fn gate_outcome(&self, gate_id: &GateId) -> Option<GateFinal> {
         let st = self.state.lock().await;
         let e = st.holds.iter().find(|e| e.hold.gate_id() == gate_id)?;
@@ -222,7 +223,7 @@ impl GateHost {
         path: &str,
         contents: &[u8],
         editor: OperatorId,
-    ) -> Result<GateId, GateHostError> {
+    ) -> Result<(GateId, watch::Receiver<HoldState>), GateHostError> {
         self.workspace.apply_write(&task_id, path, contents)?;
         let frozen = self.workspace.freeze_task_diff(&task_id)?;
         let dh = diff_hash(&frozen);
@@ -241,9 +242,10 @@ impl GateHost {
             true,
             &st.ctx.operators,
         );
-        let (tx, _rx) = watch::channel(hold.state());
-        st.holds.push(HoldEntry { hold, provenance, watch_tx: tx, escalation_required: false });
-        Ok(id)
+        let (tx, rx) = watch::channel(hold.state());
+        let escalation_required = hold.escalation_required();
+        st.holds.push(HoldEntry { hold, provenance, watch_tx: tx, escalation_required });
+        Ok((id, rx))
     }
 }
 
@@ -381,7 +383,7 @@ mod tests {
             ws.clone(),
         );
 
-        let gid = host.hand_edit(task.clone(), "a.rs", b"guarded\n", op1).await.unwrap();
+        let (gid, _rx) = host.hand_edit(task.clone(), "a.rs", b"guarded\n", op1).await.unwrap();
         // Applied immediately, observable in the workspace.
         assert_eq!(ws.file_contents(&task, "a.rs"), Some(b"guarded\n".to_vec()));
 
@@ -402,7 +404,7 @@ mod tests {
         let host = GateHost::new(ctx(vec![op1, op2]), ws.clone());
 
         let task = TaskId("t1".into());
-        let gid = host.hand_edit(task, "a.rs", b"guarded\n", op1).await.unwrap();
+        let (gid, _rx) = host.hand_edit(task, "a.rs", b"guarded\n", op1).await.unwrap();
         let dh = host.pending_gates().await[0].diff_hash;
 
         // op2 (non-editor) casts: accepted, but escalation is signalled (pool = 1 < 2).
