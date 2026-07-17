@@ -39,6 +39,7 @@ pub struct DualHold {
     version: u64,
     state: HoldState,
     contested: bool,
+    eligible_pool: usize,
     outcome: Option<Outcome>,
 }
 
@@ -62,6 +63,7 @@ impl DualHold {
             version: 0,
             state: HoldState::Open,
             contested: false,
+            eligible_pool: usize::MAX,
             outcome: None,
         }
     }
@@ -78,6 +80,37 @@ impl DualHold {
     ) -> Self {
         let mut h = DualHold::new(gate_id, task_id, diff_hash, policy, makers, authorship);
         h.contested = true;
+        h
+    }
+
+    /// A fresh hold opened after a hand-edit: authorship reflects human
+    /// involvement, the editor joins the maker set (so strict mode excludes
+    /// them), and the eligible pool is computed from the known operators. If
+    /// that pool is smaller than the required keys, the hold reports
+    /// `escalation_required` on the next cast (invariants #5, #7).
+    pub fn reopen_handedit(
+        gate_id: GateId,
+        task_id: TaskId,
+        diff_hash: Hash,
+        policy: GatePolicy,
+        prior_makers: MakerSet,
+        editor: crate::ids::OperatorId,
+        agent_authored: bool,
+        known_operators: &[crate::ids::OperatorId],
+    ) -> Self {
+        let makers = prior_makers.with(editor);
+        let authorship = if agent_authored {
+            Authorship::Both
+        } else {
+            Authorship::HandEdited
+        };
+        let mut h = DualHold::reopen(gate_id, task_id, diff_hash, policy, makers.clone(), authorship);
+        h.eligible_pool = match policy.independence {
+            crate::policy::Independence::Strict => {
+                known_operators.iter().filter(|op| !makers.contains(op)).count()
+            }
+            crate::policy::Independence::Pragmatic => known_operators.len(),
+        };
         h
     }
 
@@ -230,11 +263,10 @@ impl DualHold {
         })
     }
 
-    /// Strict independence with fewer eligible operators than required sign
-    /// keys cannot clear — the caller must escalate (invariant #7). This is a
-    /// signal only; the core runs no timer.
+    /// Strict independence with fewer eligible operators than required keys
+    /// cannot clear — the caller must escalate (invariant #7). Signal only.
     fn escalation_required(&self) -> bool {
-        false // refined in Task 10 when hand-edit shrinks the eligible pool
+        self.eligible_pool < self.policy.required as usize
     }
 }
 
@@ -398,6 +430,58 @@ mod tests {
         assert_eq!(out.state, HoldState::Blocked);
         assert_eq!(h.blocking_remedy(), Some(steer));
         assert_eq!(h.outcome(), None); // blocked is not a satisfied outcome
+    }
+
+    #[test]
+    fn handedit_strict_two_operators_signals_escalation() {
+        let a = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let b = Ed25519Signer::from_seed([2; 32]).operator_id();
+        // A hand-edits; strict mode; only A and B exist → eligible pool = {B} = 1 < 2.
+        let mut h = DualHold::reopen_handedit(
+            GateId("g1".into()),
+            TaskId("t1".into()),
+            Hash([9u8; 32]),
+            GatePolicy::default(),
+            MakerSet::new(),
+            a,
+            true,
+            &[a, b],
+        );
+        assert_eq!(h.authorship(), Authorship::Both);
+        // B can cast, but the outcome flags escalation because two eligible
+        // keys are unreachable; A (the editor) is ineligible.
+        let out = h.cast(0, go(2, &h)).unwrap();
+        assert!(out.escalation_required);
+        assert!(matches!(
+            h.cast(1, go(1, &h)).unwrap_err(),
+            CastRejected::Ineligible
+        ));
+    }
+
+    #[test]
+    fn handedit_pragmatic_editor_may_cosign() {
+        let a = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let b = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let policy = GatePolicy {
+            independence: crate::Independence::Pragmatic,
+            ..GatePolicy::default()
+        };
+        let mut h = DualHold::reopen_handedit(
+            GateId("g1".into()),
+            TaskId("t1".into()),
+            Hash([9u8; 32]),
+            policy,
+            MakerSet::new(),
+            a,
+            true,
+            &[a, b],
+        );
+        // Editor A co-signs (allowed in pragmatic), B co-signs → satisfied.
+        let out = h.cast(0, go(1, &h)).unwrap();
+        assert!(!out.escalation_required);
+        let out = h.cast(1, go(2, &h)).unwrap();
+        assert_eq!(out.state, HoldState::Satisfied);
+        assert_eq!(h.outcome(), Some(Outcome::ResolvedAfterDisagreement));
     }
 
     #[test]
