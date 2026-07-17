@@ -8,7 +8,7 @@ pub mod workspace;
 pub mod provenance;
 
 pub use error::{GateHostError, WorkspaceError};
-pub use gatehost::{GateHost, GateProgress};
+pub use gatehost::{GateFinal, GateHost, GateProgress, GateView};
 pub use session::SessionContext;
 pub use workspace::{diff_hash, CommandOutput, FrozenDiff, InMemoryWorkspace, Workspace};
 pub use provenance::build_provenance;
