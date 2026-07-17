@@ -31,6 +31,8 @@ pub struct GateView {
     pub state: HoldState,
     pub observed: Vec<VerdictView>,
     pub escalation_required: bool,
+    pub files: Vec<String>,
+    pub loc: u32,
 }
 
 /// Terminal summary of a gate, read by the awaiting agent handler.
@@ -192,6 +194,8 @@ impl GateHost {
                 state: e.hold.state(),
                 observed: e.hold.observed_verdicts(),
                 escalation_required: e.escalation_required,
+                files: e.provenance.files.clone(),
+                loc: e.provenance.loc,
             })
             .collect()
     }
@@ -246,6 +250,21 @@ impl GateHost {
         let escalation_required = hold.escalation_required();
         st.holds.push(HoldEntry { hold, provenance, watch_tx: tx, escalation_required });
         Ok((id, rx))
+    }
+
+    /// The current frozen diff bytes for a gate's task (a review preview). The
+    /// authoritative content hash is the gate's `diff_hash`; this is the bytes
+    /// an operator opens to review.
+    pub async fn gate_diff(&self, gate_id: &GateId) -> Option<Vec<u8>> {
+        let st = self.state.lock().await;
+        let task_id = st.holds.iter().find(|e| e.hold.gate_id() == gate_id)?.hold.task_id().clone();
+        drop(st);
+        self.workspace.freeze_task_diff(&task_id).ok().map(|f| f.bytes)
+    }
+
+    /// Number of records currently in the audit chain.
+    pub async fn audit_len(&self) -> usize {
+        self.state.lock().await.chain.records().len()
     }
 }
 
@@ -414,5 +433,36 @@ mod tests {
         // op1 (the editor) is a maker in strict mode -> rejected.
         let err = host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap_err();
         assert_eq!(err, GateHostError::Cast(kontur_core::CastRejected::Ineligible));
+    }
+
+    #[tokio::test]
+    async fn gate_view_carries_files_and_loc() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let context = ctx(vec![op1, op2]);
+        let host = GateHost::new(context.clone(), ws.clone());
+        let (_gid, _dh) = open_a_gate(&host, &ws, &context).await;
+        let view = &host.pending_gates().await[0];
+        assert_eq!(view.files, vec!["a.rs".to_string()]);
+        assert_eq!(view.loc, 1);
+    }
+
+    #[tokio::test]
+    async fn gate_diff_and_audit_len() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let context = ctx(vec![op1, op2]);
+        let host = GateHost::new(context.clone(), ws.clone());
+        let (gid, dh) = open_a_gate(&host, &ws, &context).await;
+
+        let diff = host.gate_diff(&gid).await.expect("diff bytes");
+        assert!(!diff.is_empty());
+        assert_eq!(host.audit_len().await, 0);
+
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
+        host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+        assert_eq!(host.audit_len().await, 1);
     }
 }
