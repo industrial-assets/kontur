@@ -255,7 +255,7 @@ impl DualHold {
     /// Note: only meaningful for holds constructed via `reopen_handedit` (which
     /// sets `eligible_pool` from the known operator list); holds from `new` or
     /// `reopen` use `eligible_pool = usize::MAX` and always return `false`.
-    fn escalation_required(&self) -> bool {
+    pub fn escalation_required(&self) -> bool {
         self.eligible_pool < self.policy.required as usize
     }
 }
@@ -472,6 +472,28 @@ mod tests {
         let out = h.cast(1, go(2, &h)).unwrap();
         assert_eq!(out.state, HoldState::Satisfied);
         assert_eq!(h.outcome(), Some(Outcome::ResolvedAfterDisagreement));
+    }
+
+    #[test]
+    fn escalation_required_is_readable_before_any_cast() {
+        // A normal agent-authored hold never forces escalation.
+        let h = hold();
+        assert!(!h.escalation_required());
+
+        // A strict hand-edit hold with only two operators (editor excluded) does.
+        let a = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let b = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let he = DualHold::reopen_handedit(
+            GateId("g1".into()),
+            TaskId("t1".into()),
+            Hash([9u8; 32]),
+            GatePolicy::default(),
+            MakerSet::new(),
+            a,
+            true,
+            &[a, b],
+        );
+        assert!(he.escalation_required());
     }
 
     #[test]
