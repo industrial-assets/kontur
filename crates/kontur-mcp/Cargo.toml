@@ -1,0 +1,10 @@
+[package]
+name = "kontur-mcp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kontur-core = { path = "../kontur-core" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
