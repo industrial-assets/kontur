@@ -290,4 +290,75 @@ mod tests {
             assert_eq!(view.status, VerdictStatus::Revealed(Verdict::Go));
         }
     }
+
+    fn strict_hold_with_maker(maker_seed: u8) -> DualHold {
+        let maker = Ed25519Signer::from_seed([maker_seed; 32]).operator_id();
+        DualHold::new(
+            GateId("g1".into()),
+            TaskId("t1".into()),
+            Hash([9u8; 32]),
+            GatePolicy::default(), // strict
+            MakerSet::new().with(maker),
+            Authorship::Agent,
+        )
+    }
+
+    #[test]
+    fn duplicate_identity_is_rejected() {
+        let mut h = hold();
+        h.cast(0, go(1, &h)).unwrap();
+        let err = h.cast(1, go(1, &h)).unwrap_err();
+        assert_eq!(err, CastRejected::DuplicateIdentity);
+        // State and version unchanged by the rejected second cast.
+        assert_eq!(h.state(), HoldState::Partial);
+        assert_eq!(h.version(), 1);
+    }
+
+    #[test]
+    fn stale_version_is_rejected() {
+        let mut h = hold();
+        h.cast(0, go(1, &h)).unwrap();
+        let err = h.cast(0, go(2, &h)).unwrap_err(); // expected 1, not 0
+        assert_eq!(
+            err,
+            CastRejected::StaleVersion { expected: 0, actual: 1 }
+        );
+    }
+
+    #[test]
+    fn strict_mode_rejects_the_maker() {
+        let mut h = strict_hold_with_maker(1);
+        let err = h.cast(0, go(1, &h)).unwrap_err();
+        assert_eq!(err, CastRejected::Ineligible);
+        // A non-maker is accepted.
+        assert!(h.cast(0, go(2, &h)).is_ok());
+    }
+
+    #[test]
+    fn cannot_cast_after_resolved() {
+        let mut h = hold();
+        h.cast(0, go(1, &h)).unwrap();
+        h.cast(1, go(2, &h)).unwrap(); // Satisfied
+        let err = h.cast(2, go(3, &h)).unwrap_err();
+        assert_eq!(err, CastRejected::AlreadyResolved);
+    }
+
+    #[test]
+    fn bad_signature_is_rejected() {
+        let mut h = hold();
+        // Sign for a *different* gate, then submit here — signature won't verify.
+        let signer = Ed25519Signer::from_seed([1; 32]);
+        let clock = FixedClock(1000);
+        let forged = CastVerdict::create(
+            &signer,
+            &clock,
+            &GateId("other-gate".into()),
+            h.diff_hash(),
+            Verdict::Go,
+            ReviewDepth::FullDiff,
+            None,
+        );
+        let err = h.cast(0, forged).unwrap_err();
+        assert_eq!(err, CastRejected::BadSignature);
+    }
 }
