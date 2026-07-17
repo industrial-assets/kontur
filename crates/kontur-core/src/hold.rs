@@ -218,6 +218,18 @@ impl DualHold {
         self.state = HoldState::Blocked;
     }
 
+    /// If the hold is blocked by a no-go, the remedy that must drive the
+    /// rework/replan ripple. `None` unless blocked with a no-go verdict.
+    pub fn blocking_remedy(&self) -> Option<crate::verdict::Remedy> {
+        if self.state != HoldState::Blocked {
+            return None;
+        }
+        self.verdicts.iter().find_map(|v| match &v.raw().verdict {
+            crate::verdict::Verdict::NoGo(remedy) => Some(remedy.clone()),
+            crate::verdict::Verdict::Go => None,
+        })
+    }
+
     /// Strict independence with fewer eligible operators than required sign
     /// keys cannot clear — the caller must escalate (invariant #7). This is a
     /// signal only; the core runs no timer.
@@ -233,6 +245,7 @@ mod tests {
     use crate::sign::{Ed25519Signer, FixedClock, Signer};
     use crate::verdict::CastVerdict;
     use crate::{GatePolicy, ReviewDepth, Verdict, VerdictStatus};
+    use crate::Remedy;
 
     fn hold() -> DualHold {
         DualHold::new(
@@ -360,5 +373,111 @@ mod tests {
         );
         let err = h.cast(0, forged).unwrap_err();
         assert_eq!(err, CastRejected::BadSignature);
+    }
+
+    fn nogo(seed: u8, h: &DualHold, remedy: Remedy) -> CastVerdict {
+        let signer = Ed25519Signer::from_seed([seed; 32]);
+        let clock = FixedClock(2000 + seed as i64);
+        CastVerdict::create(
+            &signer,
+            &clock,
+            h.gate_id(),
+            h.diff_hash(),
+            Verdict::NoGo(remedy),
+            ReviewDepth::FullDiff,
+            None,
+        )
+    }
+
+    #[test]
+    fn nogo_blocks_and_retains_remedy() {
+        let mut h = hold();
+        h.cast(0, go(1, &h)).unwrap();
+        let steer = Remedy::Steer("cache the lookup".into());
+        let out = h.cast(1, nogo(2, &h, steer.clone())).unwrap();
+        assert_eq!(out.state, HoldState::Blocked);
+        assert_eq!(h.blocking_remedy(), Some(steer));
+        assert_eq!(h.outcome(), None); // blocked is not a satisfied outcome
+    }
+
+    #[test]
+    fn reopened_hold_records_resolved_after_disagreement() {
+        let mut h = DualHold::reopen(
+            GateId("g1".into()),
+            TaskId("t1".into()),
+            Hash([9u8; 32]),
+            GatePolicy::default(),
+            MakerSet::new(),
+            Authorship::Both,
+        );
+        h.cast(0, go(1, &h)).unwrap();
+        h.cast(1, go(2, &h)).unwrap();
+        assert_eq!(h.state(), HoldState::Satisfied);
+        assert_eq!(h.outcome(), Some(Outcome::ResolvedAfterDisagreement));
+    }
+}
+
+#[cfg(test)]
+mod prop {
+    use super::tests_support::*;
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        // Invariant #1 & #7: SATISFIED requires exactly two distinct GO keys;
+        // one key alone never satisfies.
+        #[test]
+        fn never_satisfies_on_a_single_key(seed in 0u8..64) {
+            let mut h = fresh_hold();
+            let out = h.cast(0, go_for(seed, &h)).unwrap();
+            prop_assert_eq!(out.state, HoldState::Partial);
+            prop_assert!(h.outcome().is_none());
+        }
+
+        // Invariant #3: while blind + partial, no verdict value is observable.
+        #[test]
+        fn sealed_value_never_leaks_while_partial(seed in 0u8..64) {
+            let mut h = fresh_hold();
+            h.cast(0, go_for(seed, &h)).unwrap();
+            for view in h.observed_verdicts() {
+                prop_assert_eq!(view.status, crate::VerdictStatus::Sealed);
+            }
+        }
+    }
+}
+
+// Shared constructors for the property module (kept out of the value-test
+// module to avoid `use super::tests::…` visibility gymnastics).
+#[cfg(test)]
+mod tests_support {
+    use super::*;
+    use crate::ids::Hash;
+    use crate::sign::{Ed25519Signer, FixedClock};
+    use crate::verdict::CastVerdict;
+    use crate::{GatePolicy, ReviewDepth, Verdict};
+
+    pub fn fresh_hold() -> DualHold {
+        DualHold::new(
+            GateId("g1".into()),
+            TaskId("t1".into()),
+            Hash([9u8; 32]),
+            GatePolicy::default(),
+            MakerSet::new(),
+            Authorship::Agent,
+        )
+    }
+
+    pub fn go_for(seed: u8, h: &DualHold) -> CastVerdict {
+        let signer = Ed25519Signer::from_seed([seed; 32]);
+        let clock = FixedClock(1000 + seed as i64);
+        CastVerdict::create(
+            &signer,
+            &clock,
+            h.gate_id(),
+            h.diff_hash(),
+            Verdict::Go,
+            ReviewDepth::FullDiff,
+            None,
+        )
     }
 }
