@@ -211,6 +211,40 @@ impl GateHost {
             .unwrap_or_default();
         Some(GateFinal { state, remedy, reviewed_by })
     }
+
+    /// Operator face: a hand-edit. Applies to the worktree immediately, then
+    /// opens a FRESH gate over the combined diff (deferred acceptance). The
+    /// editor joins the maker set (strict mode excludes them); escalation is
+    /// signalled on the first cast when the eligible pool < required.
+    pub async fn hand_edit(
+        &self,
+        task_id: TaskId,
+        path: &str,
+        contents: &[u8],
+        editor: OperatorId,
+    ) -> Result<GateId, GateHostError> {
+        self.workspace.apply_write(&task_id, path, contents)?;
+        let frozen = self.workspace.freeze_task_diff(&task_id)?;
+        let dh = diff_hash(&frozen);
+
+        let mut st = self.state.lock().await;
+        st.next_gate += 1;
+        let id = GateId(format!("gate-{:03}", st.next_gate));
+        let provenance = build_provenance(&st.ctx, &task_id, dh, &frozen, 0);
+        let hold = DualHold::reopen_handedit(
+            id.clone(),
+            task_id,
+            dh,
+            st.ctx.policy,
+            MakerSet::new(),
+            editor,
+            true,
+            &st.ctx.operators,
+        );
+        let (tx, _rx) = watch::channel(hold.state());
+        st.holds.push(HoldEntry { hold, provenance, watch_tx: tx, escalation_required: false });
+        Ok(id)
+    }
 }
 
 #[cfg(test)]
@@ -330,5 +364,53 @@ mod tests {
         assert_eq!(outcome.state, HoldState::Satisfied);
         assert_eq!(outcome.reviewed_by.len(), 2);
         assert!(outcome.remedy.is_none());
+    }
+
+    #[tokio::test]
+    async fn hand_edit_applies_now_and_opens_fresh_gate() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let task = TaskId("t1".into());
+        // Pragmatic policy so the editor (op1) may co-sign.
+        let host = GateHost::new(
+            ctx(vec![op1, op2]).with_policy(kontur_core::GatePolicy {
+                independence: kontur_core::Independence::Pragmatic,
+                ..kontur_core::GatePolicy::default()
+            }),
+            ws.clone(),
+        );
+
+        let gid = host.hand_edit(task.clone(), "a.rs", b"guarded\n", op1).await.unwrap();
+        // Applied immediately, observable in the workspace.
+        assert_eq!(ws.file_contents(&task, "a.rs"), Some(b"guarded\n".to_vec()));
+
+        let dh = host.pending_gates().await[0].diff_hash;
+        // Editor op1 co-signs (pragmatic), op2 co-signs -> satisfied.
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
+        let p = host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+        assert_eq!(p.state, HoldState::Satisfied);
+        assert_eq!(ws.accepted_tasks(), vec![task]);
+    }
+
+    #[tokio::test]
+    async fn hand_edit_strict_signals_escalation_and_excludes_editor() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        // Default policy = strict.
+        let host = GateHost::new(ctx(vec![op1, op2]), ws.clone());
+
+        let task = TaskId("t1".into());
+        let gid = host.hand_edit(task, "a.rs", b"guarded\n", op1).await.unwrap();
+        let dh = host.pending_gates().await[0].diff_hash;
+
+        // op2 (non-editor) casts: accepted, but escalation is signalled (pool = 1 < 2).
+        let p = host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+        assert!(p.escalation_required);
+
+        // op1 (the editor) is a maker in strict mode -> rejected.
+        let err = host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap_err();
+        assert_eq!(err, GateHostError::Cast(kontur_core::CastRejected::Ineligible));
     }
 }
