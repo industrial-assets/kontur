@@ -8,3 +8,5 @@ kontur-core = { path = "../kontur-core" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
+rmcp = { version = "2.2", features = ["server", "client", "macros", "schemars", "transport-async-rw"] }
+serde_json = "1"

@@ -3,6 +3,7 @@
 
 pub mod error;
 pub mod gatehost;
+pub mod server;
 pub mod session;
 pub mod workspace;
 pub mod provenance;
@@ -10,6 +11,7 @@ pub mod fs_workspace;
 
 pub use error::{GateHostError, WorkspaceError};
 pub use gatehost::{GateFinal, GateHost, GateProgress, GateView};
+pub use server::KonturServer;
 pub use session::SessionContext;
 pub use workspace::{diff_hash, CommandOutput, FrozenDiff, InMemoryWorkspace, Workspace};
 pub use provenance::build_provenance;
