@@ -153,7 +153,6 @@ impl DualHold {
 
     /// Crate-internal: the raw cast verdicts, for building the audit record
     /// once the hold has resolved (Task 11).
-    #[allow(dead_code)]
     pub(crate) fn raw_verdicts(&self) -> &[SealedVerdict] {
         &self.verdicts
     }

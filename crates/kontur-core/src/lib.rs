@@ -2,6 +2,7 @@
 //!
 //! Pure, synchronous, no I/O. Time and signing are injected via traits.
 
+pub mod audit;
 pub mod canonical;
 pub mod eligibility;
 pub mod error;
@@ -12,6 +13,7 @@ pub mod sealed;
 pub mod sign;
 pub mod verdict;
 
+pub use audit::{CheckerEntry, GateRecord, Provenance, RecordCore, RecordError};
 pub use canonical::{canonical_bytes, sha256};
 pub use eligibility::{is_eligible, MakerSet};
 pub use error::CastRejected;
