@@ -31,12 +31,10 @@ impl SealedVerdict {
 
     /// Crate-internal access for the hold's own evaluation logic. Not public,
     /// so no external caller can bypass the seal.
-    #[allow(dead_code)]
     pub(crate) fn raw(&self) -> &CastVerdict {
         &self.cv
     }
 
-    #[allow(dead_code)]
     pub(crate) fn unseal(&mut self) {
         self.sealed = false;
     }
