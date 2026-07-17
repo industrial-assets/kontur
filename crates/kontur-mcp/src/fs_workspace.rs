@@ -104,9 +104,11 @@ mod tests {
     use crate::workspace::diff_hash;
 
     fn temp_root() -> PathBuf {
-        // Deterministic-per-process unique dir without external crates.
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let mut p = std::env::temp_dir();
-        p.push(format!("kontur-fsws-{}", std::process::id()));
+        p.push(format!("kontur-fsws-{}-{}", std::process::id(), n));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
