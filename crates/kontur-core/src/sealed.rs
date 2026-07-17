@@ -4,10 +4,23 @@ use crate::verdict::{CastVerdict, Verdict};
 /// A cast verdict whose value is hidden while `sealed` is true (blind review,
 /// invariant #3). The operator identity is always visible (needed for
 /// deduplication and eligibility); the *verdict* is not.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SealedVerdict {
     cv: CastVerdict,
     sealed: bool,
+}
+
+impl std::fmt::Debug for SealedVerdict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = f.debug_struct("SealedVerdict");
+        s.field("operator", &self.cv.operator);
+        if self.sealed {
+            s.field("verdict", &"<sealed>");
+        } else {
+            s.field("verdict", &self.cv.verdict);
+        }
+        s.field("sealed", &self.sealed).finish()
+    }
 }
 
 impl SealedVerdict {
@@ -109,6 +122,16 @@ mod tests {
         sv.unseal();
         assert!(sv.reveal().is_some());
         assert_eq!(sv.view().status, VerdictStatus::Revealed(Verdict::Go));
+    }
+
+    #[test]
+    fn debug_redacts_sealed_verdict() {
+        let cv = a_cast();
+        let sealed = SealedVerdict::new(cv.clone(), true);
+        assert!(format!("{:?}", sealed).contains("<sealed>"));
+        assert!(!format!("{:?}", sealed).contains("Go"));
+        let open = SealedVerdict::new(cv, false);
+        assert!(format!("{:?}", open).contains("Go"));
     }
 
     #[test]

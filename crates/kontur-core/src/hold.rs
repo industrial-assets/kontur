@@ -158,17 +158,6 @@ impl DualHold {
         &self.verdicts
     }
 
-    // Called by Task 10 (hand-edit eligibility) and Task 11 (audit record).
-    #[allow(dead_code)]
-    pub(crate) fn makers(&self) -> &MakerSet {
-        &self.makers
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn contested(&self) -> bool {
-        self.contested
-    }
-
     /// Cast a signed verdict. See `CastRejected` for refusal reasons. On the
     /// second eligible verdict, evaluates the hold (blind: both hidden until
     /// now; non-blind: incremental).
@@ -210,8 +199,8 @@ impl DualHold {
 
     /// Recompute state from the accumulated verdicts.
     fn evaluate(&mut self) {
-        let have = self.verdicts.len() as u8;
-        let required = self.policy.required;
+        let have = self.verdicts.len();
+        let required = self.policy.required as usize;
 
         // In blind mode we defer any decision until all required verdicts are
         // in, so the second reviewer can never observe the first (not even
@@ -263,6 +252,9 @@ impl DualHold {
 
     /// Strict independence with fewer eligible operators than required keys
     /// cannot clear — the caller must escalate (invariant #7). Signal only.
+    /// Note: only meaningful for holds constructed via `reopen_handedit` (which
+    /// sets `eligible_pool` from the known operator list); holds from `new` or
+    /// `reopen` use `eligible_pool = usize::MAX` and always return `false`.
     fn escalation_required(&self) -> bool {
         self.eligible_pool < self.policy.required as usize
     }
