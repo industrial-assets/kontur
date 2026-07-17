@@ -13,7 +13,10 @@ pub mod sealed;
 pub mod sign;
 pub mod verdict;
 
-pub use audit::{CheckerEntry, GateRecord, Provenance, RecordCore, RecordError};
+pub use audit::{
+    reviewed_by, verify_chain, AuditChain, ChainBreak, ChainError, CheckerEntry, GateRecord,
+    Provenance, RecordCore, RecordError, GENESIS,
+};
 pub use canonical::{canonical_bytes, sha256};
 pub use eligibility::{is_eligible, MakerSet};
 pub use error::CastRejected;
