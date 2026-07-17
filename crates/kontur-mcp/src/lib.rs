@@ -4,7 +4,9 @@
 pub mod error;
 pub mod session;
 pub mod workspace;
+pub mod provenance;
 
 pub use error::{GateHostError, WorkspaceError};
 pub use session::SessionContext;
 pub use workspace::{diff_hash, CommandOutput, FrozenDiff, InMemoryWorkspace, Workspace};
+pub use provenance::build_provenance;
