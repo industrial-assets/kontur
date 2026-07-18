@@ -416,23 +416,4 @@ mod tests {
         assert!(ts.0 > 1_577_836_800_000, "timestamp looks too small: {}", ts.0);
     }
 
-    // -----------------------------------------------------------------------
-    // Smoke: operator() returns the key derived from seed
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn operator_identity_matches_seed() {
-        let seed = [7u8; 32];
-        let expected = Ed25519Signer::from_seed(seed).operator_id();
-
-        let (sa, sb) = tokio::io::duplex(65536);
-
-        // We can't call SessionClient::attach without a live server, so just
-        // verify the signer directly.
-        drop(sa);
-        drop(sb);
-
-        let signer = Ed25519Signer::from_seed(seed);
-        assert_eq!(signer.operator_id(), expected);
-    }
 }

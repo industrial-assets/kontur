@@ -33,11 +33,24 @@ fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, WorkspaceError> {
 impl GitWorkspace {
     pub fn create(repo: PathBuf, session: &str) -> Result<Self, WorkspaceError> {
         let base = git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
+
+        // Pre-flight: refuse to start a session on a dirty checkout so the
+        // squash-merge at the end cannot conflict with uncommitted work.
+        let status = git(&repo, &["status", "--porcelain"])?;
+        if !status.trim().is_empty() {
+            return Err(WorkspaceError::Io(
+                "repository checkout is dirty; commit or stash before hosting a session".into(),
+            ));
+        }
+
         let branch = format!("kontur/{session}");
         let mut worktree = std::env::temp_dir();
         worktree.push(format!("kontur-wt-{session}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&worktree);
-        git(&repo, &["worktree", "add", worktree.to_str().unwrap(), "-b", &branch])?;
+        let worktree_str = worktree
+            .to_str()
+            .ok_or_else(|| WorkspaceError::Io("worktree path is not valid UTF-8".into()))?;
+        git(&repo, &["worktree", "add", worktree_str, "-b", &branch])?;
         Ok(GitWorkspace { repo, worktree, branch, base })
     }
 
@@ -79,6 +92,7 @@ impl Workspace for GitWorkspace {
             let adds = parts.next().unwrap_or("0");
             let _dels = parts.next();
             if let Some(name) = parts.next() {
+                // loc = added lines only (numstat additions), not net change
                 loc += adds.parse::<u32>().unwrap_or(0);
                 files.push(name.to_string());
             }
@@ -101,7 +115,11 @@ impl Workspace for GitWorkspace {
     fn merge_session(&self, message: &str) -> Result<(), WorkspaceError> {
         git(&self.repo, &["merge", "--squash", &self.branch])?;
         git(&self.repo, &["commit", "-m", message])?;
-        git(&self.repo, &["worktree", "remove", "--force", self.worktree.to_str().unwrap()])?;
+        let worktree_str = self
+            .worktree
+            .to_str()
+            .ok_or_else(|| WorkspaceError::Io("worktree path is not valid UTF-8".into()))?;
+        git(&self.repo, &["worktree", "remove", "--force", worktree_str])?;
         Ok(())
     }
 }
@@ -125,6 +143,22 @@ mod tests {
         run(&["add", "-A"]);
         run(&["commit", "-m", "seed"]);
         p
+    }
+
+    #[test]
+    fn dirty_repo_prevents_create() {
+        let repo = temp_repo();
+        // Write an uncommitted file to make the repo dirty.
+        std::fs::write(repo.join("dirty.txt"), "unsaved work\n").unwrap();
+        let result = GitWorkspace::create(repo, "s-dirty");
+        assert!(result.is_err(), "create should fail on a dirty repo");
+        match result {
+            Err(WorkspaceError::Io(msg)) => {
+                assert!(msg.contains("dirty"), "error should mention dirty: {msg}");
+            }
+            Err(e) => panic!("unexpected error variant: {e:?}"),
+            Ok(_) => panic!("expected error"),
+        }
     }
 
     #[test]

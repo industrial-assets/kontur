@@ -178,7 +178,7 @@ fn active(frame: &mut Frame, area: Rect, view: &SessionView) {
             );
         }
         ActiveRegion::SessionClosed(summary) => {
-            let lines = vec![
+            let mut lines = vec![
                 Line::from(format!(" {} gates", summary.gates)),
                 Line::from(format!(" Reviewed-by: {}", summary.reviewers.join("   Reviewed-by: "))),
                 Line::from(if summary.chain_verified {
@@ -187,6 +187,14 @@ fn active(frame: &mut Frame, area: Rect, view: &SessionView) {
                     " chain BROKEN ✗".to_string()
                 }),
             ];
+            if summary.merged {
+                lines.push(Line::from(" merged to repo ✓"));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    " MERGE FAILED — work NOT landed in git (audit chain intact)",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )));
+            }
             frame.render_widget(
                 Paragraph::new(lines).block(Block::bordered().title("SESSION COMPLETE")),
                 area,
@@ -208,4 +216,76 @@ pub fn render_diff(frame: &mut Frame, title: &str, text: &str) {
             .wrap(Wrap { trim: false }),
         frame.area(),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::view::{
+        ActiveRegion, AuditSummary, Banner, Role, SessionView, Station,
+        StatusStrip,
+    };
+    use kontur_core::OperatorId;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn minimal_view(active: ActiveRegion) -> SessionView {
+        SessionView {
+            banner: Banner { session: "test".into(), version: "0.0.0".into() },
+            status: StatusStrip { linked: true, four_eyes: true, fleet_count: 0, needs_you: 0, tokens: 0 },
+            stations: [
+                Station { label: "A".into(), role: Role::Driver, activity: "linked".into(), operator: OperatorId([1; 32]) },
+                Station { label: "B".into(), role: Role::Navigator, activity: "linked".into(), operator: OperatorId([2; 32]) },
+            ],
+            fleet: vec![],
+            log: vec![],
+            active,
+        }
+    }
+
+    /// When merged=false the render must contain the loud failure notice.
+    #[test]
+    fn session_closed_merge_failed_renders_loud_notice() {
+        let backend = TestBackend::new(120, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let view = minimal_view(ActiveRegion::SessionClosed(AuditSummary {
+            gates: 1,
+            reviewers: vec!["A".into(), "B".into()],
+            chain_verified: true,
+            merged: false,
+        }));
+        terminal.draw(|f| render(f, &view)).unwrap();
+        let rendered = terminal.backend().to_string();
+        assert!(
+            rendered.contains("MERGE FAILED"),
+            "expected 'MERGE FAILED' in rendered output; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("merged to repo"),
+            "must not show success copy when merge failed"
+        );
+    }
+
+    /// When merged=true the render must show the success line.
+    #[test]
+    fn session_closed_merge_ok_renders_success_line() {
+        let backend = TestBackend::new(120, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let view = minimal_view(ActiveRegion::SessionClosed(AuditSummary {
+            gates: 2,
+            reviewers: vec!["A".into(), "B".into()],
+            chain_verified: true,
+            merged: true,
+        }));
+        terminal.draw(|f| render(f, &view)).unwrap();
+        let rendered = terminal.backend().to_string();
+        assert!(
+            rendered.contains("merged to repo"),
+            "expected 'merged to repo' in rendered output; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("MERGE FAILED"),
+            "must not show failure copy when merge succeeded"
+        );
+    }
 }

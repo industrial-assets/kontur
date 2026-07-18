@@ -16,12 +16,18 @@ pub async fn write_json<W: AsyncWrite + Unpin, T: Serialize>(w: &mut W, v: &T) -
 
 /// Read a JSON-lines value from an async reader.
 /// Returns `Ok(None)` on EOF, `Ok(Some(v))` on successful parse.
+/// Returns `Err(InvalidData)` if the line exceeds 1 MiB (post-hoc cap —
+/// bounded by one oversized allocation; a streaming byte-limit would require
+/// a custom reader and is overkill for the expected message sizes here).
 pub async fn read_json<R: AsyncBufRead + Unpin, T: for<'de> Deserialize<'de>>(
     r: &mut R,
 ) -> io::Result<Option<T>> {
     let mut line = String::new();
     if r.read_line(&mut line).await? == 0 {
         return Ok(None);
+    }
+    if line.len() > 1_000_000 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "message too large"));
     }
     serde_json::from_str(line.trim_end())
         .map(Some)
@@ -31,7 +37,7 @@ pub async fn read_json<R: AsyncBufRead + Unpin, T: for<'de> Deserialize<'de>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{ClientMsg, ServerMsg, WireState, WirePhase, WireSeat};
+    use crate::protocol::{ClientMsg, ServerMsg, WireRole, WireState, WirePhase, WireSeat};
     use kontur_core::{OperatorId, GateId, Verdict, ReviewDepth, Timestamp, Sig, CastVerdict};
 
     async fn roundtrip<T>(v: &T) -> T
@@ -128,7 +134,7 @@ mod tests {
             seats: vec![WireSeat {
                 label: "Seat A".to_string(),
                 operator: OperatorId([1; 32]),
-                role: "Driver".to_string(),
+                role: WireRole::Driver,
                 linked: true,
                 ready: false,
             }],

@@ -10,7 +10,7 @@ use kontur_core::{HoldState, OperatorId};
 use kontur_mcp::GateHost;
 
 use crate::codec::{read_json, write_json};
-use crate::protocol::{ClientMsg, ServerMsg, WireFleetCard, WireGate, WirePhase, WireSeat, WireState};
+use crate::protocol::{ClientMsg, ServerMsg, WireFleetCard, WireGate, WirePhase, WireRole, WireSeat, WireState};
 
 // ---------------------------------------------------------------------------
 // Public config
@@ -69,13 +69,14 @@ enum Phase {
         gates: usize,
         chain_verified: bool,
         reviewers: Vec<String>,
+        merged: bool,
     },
 }
 
 struct SeatState {
     label: String,
     operator: OperatorId,
-    role: String,
+    role: WireRole,
     linked: bool,
     ready: bool,
 }
@@ -113,14 +114,14 @@ impl SessionServer {
             SeatState {
                 label: cfg.seats[0].0.clone(),
                 operator: cfg.seats[0].1,
-                role: "Driver".into(),
+                role: WireRole::Driver,
                 linked: false,
                 ready: false,
             },
             SeatState {
                 label: cfg.seats[1].0.clone(),
                 operator: cfg.seats[1].1,
-                role: "Navigator".into(),
+                role: WireRole::Navigator,
                 linked: false,
                 ready: false,
             },
@@ -132,14 +133,14 @@ impl SessionServer {
                 WireSeat {
                     label: cfg.seats[0].0.clone(),
                     operator: cfg.seats[0].1,
-                    role: "Driver".into(),
+                    role: WireRole::Driver,
                     linked: false,
                     ready: false,
                 },
                 WireSeat {
                     label: cfg.seats[1].0.clone(),
                     operator: cfg.seats[1].1,
-                    role: "Navigator".into(),
+                    role: WireRole::Navigator,
                     linked: false,
                     ready: false,
                 },
@@ -483,8 +484,8 @@ async fn handle_client_msg(
         ClientMsg::Rotate => {
             let mut net = server.inner.net.lock().await;
             let (role0, role1) = {
-                let r0 = net.seats[0].role.clone();
-                let r1 = net.seats[1].role.clone();
+                let r0 = net.seats[0].role;
+                let r1 = net.seats[1].role;
                 (r1, r0)
             };
             net.seats[0].role = role0;
@@ -560,10 +561,14 @@ impl SessionServer {
             )
         };
 
-        if let Err(e) = inner.host.merge_session(&merge_msg).await {
-            let mut net = inner.net.lock().await;
-            push_log(&mut net, &format!("merge error: {e}"));
-        }
+        let merged = match inner.host.merge_session(&merge_msg).await {
+            Ok(()) => true,
+            Err(e) => {
+                let mut net = inner.net.lock().await;
+                push_log(&mut net, &format!("merge error: {e}"));
+                false
+            }
+        };
 
         let gates = inner.host.audit_len().await;
         let chain_verified = inner.host.verify_audit().await.is_ok();
@@ -574,7 +579,7 @@ impl SessionServer {
                 net.seats[0].label.clone(),
                 net.seats[1].label.clone(),
             ];
-            Phase::Closed { gates, chain_verified, reviewers }
+            Phase::Closed { gates, chain_verified, reviewers, merged }
         };
 
         {
@@ -600,10 +605,11 @@ impl SessionServer {
                 tasks: inner.cfg.plan.clone(),
             },
             Phase::Executing => WirePhase::Executing,
-            Phase::Closed { gates, chain_verified, reviewers } => WirePhase::Closed {
+            Phase::Closed { gates, chain_verified, reviewers, merged } => WirePhase::Closed {
                 gates: *gates,
                 chain_verified: *chain_verified,
                 reviewers: reviewers.clone(),
+                merged: *merged,
             },
         };
 
@@ -613,7 +619,7 @@ impl SessionServer {
             .map(|s| WireSeat {
                 label: s.label.clone(),
                 operator: s.operator,
-                role: s.role.clone(),
+                role: s.role,
                 linked: s.linked,
                 ready: s.ready,
             })
@@ -676,6 +682,7 @@ fn push_log(net: &mut Net, text: &str) {
     }
 }
 
+// Human-readable label only; the verifiable reviewer set lives in the audit chain (reviewed_by).
 fn hex16(op: &OperatorId) -> String {
     op.0.iter().take(8).fold(String::new(), |mut s, b| {
         let _ = write!(s, "{b:02x}");
@@ -918,8 +925,9 @@ mod tests {
         .expect("timed out waiting for Closed");
 
         match &final_state.phase {
-            WirePhase::Closed { chain_verified, .. } => {
+            WirePhase::Closed { chain_verified, merged, .. } => {
                 assert!(chain_verified, "chain should be verified");
+                assert!(merged, "session should have merged successfully");
             }
             _ => panic!("expected Closed phase"),
         }

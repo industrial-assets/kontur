@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 
 use kontur_core::{OperatorId, VerdictStatus, Verdict};
-use kontur_net::{ServerMsg, SessionClient, WireGate, WirePhase, WireState};
+use kontur_net::{ServerMsg, SessionClient, WireGate, WirePhase, WireRole, WireState};
 
 use crate::app::{poll_action, TerminalGuard};
 use crate::input::Action;
@@ -40,7 +40,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId) -> SessionView {
         let mut iter = state.seats.iter();
         let make = |ws: &kontur_net::WireSeat| Station {
             label: ws.label.clone(),
-            role: if ws.role == "DRIVER" { Role::Driver } else { Role::Navigator },
+            role: match ws.role { WireRole::Driver => Role::Driver, WireRole::Navigator => Role::Navigator },
             activity: if ws.linked { "linked".into() } else { "dropped".into() },
             operator: ws.operator,
         };
@@ -139,11 +139,12 @@ pub fn wire_to_view(state: &WireState, own: OperatorId) -> SessionView {
                 ActiveRegion::Idle
             }
         }
-        WirePhase::Closed { gates, chain_verified, reviewers } => {
+        WirePhase::Closed { gates, chain_verified, reviewers, merged } => {
             ActiveRegion::SessionClosed(AuditSummary {
                 gates: *gates,
                 chain_verified: *chain_verified,
                 reviewers: reviewers.clone(),
+                merged: *merged,
             })
         }
     };
@@ -359,7 +360,7 @@ pub async fn run_remote(addr: &str, seat: String, seed: [u8; 32]) -> io::Result<
 mod tests {
     use super::*;
     use kontur_core::{VerdictStatus, OperatorId};
-    use kontur_net::{WireGate, WirePhase, WireSeat, WireState};
+    use kontur_net::{WireGate, WirePhase, WireRole, WireSeat, WireState};
     use kontur_core::GateId;
     use kontur_core::Hash;
 
@@ -371,8 +372,8 @@ mod tests {
         WireState {
             phase,
             seats: vec![
-                WireSeat { label: "A".into(), operator: op(1), role: "DRIVER".into(), linked: true, ready: false },
-                WireSeat { label: "B".into(), operator: op(2), role: "NAVIGATOR".into(), linked: true, ready: false },
+                WireSeat { label: "A".into(), operator: op(1), role: WireRole::Driver, linked: true, ready: false },
+                WireSeat { label: "B".into(), operator: op(2), role: WireRole::Navigator, linked: true, ready: false },
             ],
             fleet: vec![],
             log: vec![],
@@ -462,13 +463,14 @@ mod tests {
         }
     }
 
-    // Closed phase maps gates/verified/reviewers.
+    // Closed phase maps gates/verified/reviewers/merged.
     #[test]
     fn closed_phase_maps_correctly() {
         let state = base_state(WirePhase::Closed {
             gates: 3,
             chain_verified: true,
             reviewers: vec!["A".into(), "B".into()],
+            merged: true,
         });
 
         let view = wire_to_view(&state, op(1));
@@ -477,9 +479,19 @@ mod tests {
                 assert_eq!(summary.gates, 3);
                 assert!(summary.chain_verified);
                 assert_eq!(summary.reviewers, vec!["A".to_string(), "B".to_string()]);
+                assert!(summary.merged);
             }
             other => panic!("expected SessionClosed, got {:?}", other),
         }
+    }
+
+    // WireRole::Driver maps to Role::Driver (regression for casing-mismatch bug).
+    #[test]
+    fn wire_role_driver_maps_to_driver() {
+        let state = base_state(WirePhase::AwaitOperators);
+        let view = wire_to_view(&state, op(1));
+        assert_eq!(view.stations[0].role, crate::view::Role::Driver, "seat A should be Driver");
+        assert_eq!(view.stations[1].role, crate::view::Role::Navigator, "seat B should be Navigator");
     }
 
     // linked=false on a seat → StatusStrip.linked == false.

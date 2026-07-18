@@ -33,6 +33,7 @@ pub async fn build_session_view(
             gates: host.audit_len().await,
             reviewers: stations.iter().map(|s| s.label.clone()).collect(),
             chain_verified: host.verify_audit().await.is_ok(),
+            merged: true, // in-memory demo: acceptance is recorded; no git merge needed
         })
     } else if let Some(gv) = pending.first() {
         let diff_preview = host
@@ -151,6 +152,7 @@ mod tests {
                 assert_eq!(summary.gates, 1);
                 assert!(summary.chain_verified);
                 assert_eq!(summary.reviewers.len(), 2);
+                assert!(summary.merged, "in-memory demo should report merged=true");
             }
             other => panic!("expected SessionClosed, got {other:?}"),
         }
