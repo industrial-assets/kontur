@@ -13,11 +13,16 @@ use crate::workspace::{CommandOutput, FrozenDiff, Workspace};
 pub struct FsWorkspace {
     root: PathBuf,
     tracked: Mutex<Vec<(String, Vec<String>)>>, // (task_id, relative paths written)
+    merged: Mutex<Option<String>>,
 }
 
 impl FsWorkspace {
     pub fn new(root: PathBuf) -> Self {
-        FsWorkspace { root, tracked: Mutex::new(Vec::new()) }
+        FsWorkspace { root, tracked: Mutex::new(Vec::new()), merged: Mutex::new(None) }
+    }
+
+    pub fn merged_message(&self) -> Option<String> {
+        self.merged.lock().unwrap().clone()
     }
 
     fn track(&self, task_id: &str, path: &str) {
@@ -97,6 +102,11 @@ impl Workspace for FsWorkspace {
         }
         Ok(())
     }
+
+    fn merge_session(&self, message: &str) -> Result<(), WorkspaceError> {
+        *self.merged.lock().unwrap() = Some(message.to_string());
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -145,5 +155,13 @@ mod tests {
         assert!(root.join("gone.txt").exists());
         ws.discard_task(&task).unwrap();
         assert!(!root.join("gone.txt").exists());
+    }
+
+    #[test]
+    fn merge_session_records_message() {
+        let ws = FsWorkspace::new(temp_root());
+        assert!(ws.merged_message().is_none());
+        ws.merge_session("kontur session\n\nReviewed-by: A").unwrap();
+        assert_eq!(ws.merged_message(), Some("kontur session\n\nReviewed-by: A".to_string()));
     }
 }

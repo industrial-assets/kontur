@@ -270,6 +270,16 @@ impl GateHost {
     pub async fn audit_len(&self) -> usize {
         self.state.lock().await.chain.records().len()
     }
+
+    /// Session-end: land the approved work as one reviewed commit.
+    pub async fn merge_session(&self, message: &str) -> Result<(), GateHostError> {
+        Ok(self.workspace.merge_session(message)?)
+    }
+
+    /// The session's operator roster (for composing Reviewed-by trailers).
+    pub async fn session_operators(&self) -> Vec<OperatorId> {
+        self.state.lock().await.ctx.operators.clone()
+    }
 }
 
 #[cfg(test)]
@@ -470,6 +480,22 @@ mod tests {
         host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
         host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
         assert_eq!(host.audit_len().await, 1);
+    }
+
+    #[tokio::test]
+    async fn merge_session_after_satisfied_gate_records_message() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let context = ctx(vec![op1, op2]);
+        let host = GateHost::new(context.clone(), ws.clone());
+
+        let (gid, dh) = open_a_gate(&host, &ws, &context).await;
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
+        host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+
+        host.merge_session("m").await.unwrap();
+        assert_eq!(ws.merged_message(), Some("m".to_string()));
     }
 
     #[tokio::test]

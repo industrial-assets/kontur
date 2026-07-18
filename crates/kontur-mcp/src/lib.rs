@@ -3,6 +3,7 @@
 
 pub mod error;
 pub mod gatehost;
+pub mod git_workspace;
 pub mod server;
 pub mod session;
 pub mod workspace;
@@ -16,3 +17,4 @@ pub use session::SessionContext;
 pub use workspace::{diff_hash, CommandOutput, FrozenDiff, InMemoryWorkspace, Workspace};
 pub use provenance::build_provenance;
 pub use fs_workspace::FsWorkspace;
+pub use git_workspace::GitWorkspace;

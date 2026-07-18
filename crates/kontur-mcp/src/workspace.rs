@@ -29,6 +29,10 @@ pub trait Workspace: Send + Sync {
     fn freeze_task_diff(&self, task_id: &TaskId) -> Result<FrozenDiff, WorkspaceError>;
     fn accept_task(&self, task_id: &TaskId) -> Result<(), WorkspaceError>;
     fn discard_task(&self, task_id: &TaskId) -> Result<(), WorkspaceError>;
+    /// Session-end effect: land the approved session as one reviewed commit
+    /// (real impls squash-merge the session branch; test doubles record it).
+    /// Reachable only at session close.
+    fn merge_session(&self, message: &str) -> Result<(), WorkspaceError>;
 }
 
 /// The single source of a diff's hash — used at open, sign, and record time so
@@ -48,6 +52,7 @@ struct Inner {
     tasks: Vec<(String, TaskBuf)>, // Vec, not HashMap: deterministic order
     accepted: Vec<String>,
     discarded: Vec<String>,
+    merged: Option<String>,
 }
 
 impl Inner {
@@ -80,6 +85,10 @@ impl InMemoryWorkspace {
 
     pub fn discarded_tasks(&self) -> Vec<TaskId> {
         self.inner.lock().unwrap().discarded.iter().cloned().map(TaskId).collect()
+    }
+
+    pub fn merged_message(&self) -> Option<String> {
+        self.inner.lock().unwrap().merged.clone()
     }
 
     pub fn file_contents(&self, task_id: &TaskId, path: &str) -> Option<Vec<u8>> {
@@ -149,6 +158,11 @@ impl Workspace for InMemoryWorkspace {
         self.inner.lock().unwrap().discarded.push(task_id.0.clone());
         Ok(())
     }
+
+    fn merge_session(&self, message: &str) -> Result<(), WorkspaceError> {
+        self.inner.lock().unwrap().merged = Some(message.to_string());
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -200,5 +214,13 @@ mod tests {
             ws.freeze_task_diff(&TaskId("nope".into())).unwrap_err(),
             WorkspaceError::UnknownTask("nope".into())
         );
+    }
+
+    #[test]
+    fn merge_session_records_message() {
+        let ws = InMemoryWorkspace::new();
+        assert!(ws.merged_message().is_none());
+        ws.merge_session("session end\n\nReviewed-by: A").unwrap();
+        assert_eq!(ws.merged_message(), Some("session end\n\nReviewed-by: A".to_string()));
     }
 }
