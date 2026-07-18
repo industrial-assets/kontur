@@ -78,17 +78,41 @@ The product's value *is* these properties. Never weaken, shortcut, or "simplify"
 
 ## Stack & tooling
 
-**Not yet chosen — do NOT assume or scaffold a language/framework without confirming first.**
+**Rust workspace** (`edition = "2021"`), four crates:
 
-Realistic candidates for a two-seat TUI in the MCP / Claude Code ecosystem: TypeScript + Ink, Go + Bubble Tea, or Rust + ratatui. None is decided. Once a stack is chosen, replace this section with the real setup and fill in the commands below.
+| Crate | Role |
+|---|---|
+| `kontur-core` | Four-eyes engine: hold, verdict, audit chain, signing |
+| `kontur-mcp` | MCP enforcement plane (`rmcp`), gate host, git workspace |
+| `kontur-net` | Session server/client, protocol codec, scripted agent, MCP agent endpoint |
+| `kontur-tui` | Ratatui TUI, `kontur` binary |
+
+Key runtime deps: `rmcp 2.2`, `ratatui 0.30`, `tokio 1`, `ed25519-dalek` (via kontur-core).
 
 ## Build / run / test
 
-- **Build:** _TBD — not scaffolded yet._
-- **Run:** _TBD._
-- **Test:** _TBD._
+```sh
+# build everything
+cargo build
 
-Until the project is scaffolded, **ask before assuming any command exists.** Update this section the moment there is a real toolchain.
+# build the kontur binary specifically
+cargo build -p kontur-tui --bin kontur
+
+# run tests (whole workspace)
+cargo test
+
+# lint
+cargo clippy --all-targets -- -D warnings
+
+# run the self-contained local demo
+cargo run -p kontur-tui --bin kontur -- demo
+
+# host a session (in-memory workspace; demo scripted agent)
+cargo run -p kontur-tui --bin kontur -- host --mem --demo-agent
+
+# join as operator A (after `host` prints the join line)
+cargo run -p kontur-tui --bin kontur -- join --addr 127.0.0.1:7777 --seat A --seed 1
+```
 
 ---
 

@@ -42,9 +42,35 @@ Pair programming assumed a driver at the keyboard and a navigator watching the c
 
 Brutalist: raw, structural, honest. Every element on screen earns its place or it's cut — no decorative telemetry, no confidence theatre, no alarms that don't mean anything. The look is a consequence of supervising many things at once, not a costume applied over it. Calm until it needs you.
 
-## Status
+## Running it
 
-Concept / pre-build. The design lives in:
+```sh
+# Self-contained local demo (both seats, scripted agent, in-memory workspace):
+cargo run -p kontur-tui --bin kontur -- demo
+
+# Host a real session on a git repo with a scripted demo agent:
+cargo run -p kontur-tui --bin kontur -- host --repo /path/to/repo --demo-agent
+
+# Host with a custom prompt and operator seeds:
+cargo run -p kontur-tui --bin kontur -- host --mem --prompt "add auth gate" --seeds 1,2
+
+# Join as operator A (run this on each operator's machine):
+cargo run -p kontur-tui --bin kontur -- join --addr host:7777 --seat A --seed 1
+cargo run -p kontur-tui --bin kontur -- join --addr host:7777 --seat B --seed 2
+```
+
+The `host` command also binds an MCP endpoint (default port 7778). A real agent
+(Claude Code or compatible) connects via a stdio bridge such as:
+
+```json
+{"command": "nc", "args": ["localhost", "7778"]}
+```
+
+The agent's `write_file` and `propose_task_complete` calls are gated — every
+task completion parks until both operators cast a verdict. Binding native Claude
+Code tool calls through this endpoint is the next integration step.
+
+The design lives in:
 
 - **`PRD-coop-supervisor.md`** — problem, requirements, architecture, and the two-signatory four-eyes mechanism.
 - **`UX-kontur.md`** — console anatomy, screen states, and the interaction model.
