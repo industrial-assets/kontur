@@ -538,6 +538,11 @@ impl SessionServer {
                 self.finalize().await;
                 return;
             }
+            // A gate still pends (e.g. a hand-edit opened after the agent
+            // finished): release the claim so the cast that resolves it can
+            // finalize on its own refresh. Without this, `finalizing` stays
+            // claimed forever and the session can never close.
+            inner.net.lock().await.finalizing = false;
         }
 
         let wire_state = self.build_wire_state().await;
