@@ -100,6 +100,39 @@ fn active(frame: &mut Frame, area: Rect, view: &SessionView) {
                 area,
             );
         }
+        ActiveRegion::Prompt { prompt, ready } => {
+            let a_mark = if ready[0] { "■" } else { "□" };
+            let b_mark = if ready[1] { "■" } else { "□" };
+            let lines = vec![
+                Line::from(format!(" {}", prompt)),
+                Line::from(format!(
+                    " DISPATCH GATE   A ⟨{}⟩ ready   B ⟨{}⟩ ready",
+                    a_mark, b_mark
+                )),
+                Line::from(" [y] mark ready — needs both"),
+            ];
+            frame.render_widget(
+                Paragraph::new(lines).block(Block::bordered().title("PROMPT")),
+                area,
+            );
+        }
+        ActiveRegion::Plan { tasks, ready } => {
+            let a_mark = if ready[0] { "■" } else { "□" };
+            let b_mark = if ready[1] { "■" } else { "□" };
+            let mut lines: Vec<Line> = tasks
+                .iter()
+                .map(|t| Line::from(format!(" t {}", t)))
+                .collect();
+            lines.push(Line::from(format!(
+                " PLAN GATE   A ⟨{}⟩ ready   B ⟨{}⟩ ready",
+                a_mark, b_mark
+            )));
+            lines.push(Line::from(" [y] approve plan — needs both"));
+            frame.render_widget(
+                Paragraph::new(lines).block(Block::bordered().title("PLAN")),
+                area,
+            );
+        }
         ActiveRegion::Gate(card) => {
             let mut lines = vec![Line::from(format!(
                 " GATE {} · {} · {} · +{} loc",
@@ -146,7 +179,7 @@ fn active(frame: &mut Frame, area: Rect, view: &SessionView) {
         }
         ActiveRegion::SessionClosed(summary) => {
             let lines = vec![
-                Line::from(format!(" {} gates · unanimous", summary.gates)),
+                Line::from(format!(" {} gates", summary.gates)),
                 Line::from(format!(" Reviewed-by: {}", summary.reviewers.join("   Reviewed-by: "))),
                 Line::from(if summary.chain_verified {
                     " chain verified ✓ (tamper-evident)".to_string()
@@ -164,4 +197,15 @@ fn active(frame: &mut Frame, area: Rect, view: &SessionView) {
 
 fn command(frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(" > "), area);
+}
+
+/// Render a full-screen diff view with a close hint.
+pub fn render_diff(frame: &mut Frame, title: &str, text: &str) {
+    let block = Block::bordered().title(format!("{} — [o] close diff", title));
+    frame.render_widget(
+        Paragraph::new(text.to_owned())
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        frame.area(),
+    );
 }

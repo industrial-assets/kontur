@@ -76,7 +76,56 @@ fn gate_shows_summary_and_sealed_key_never_value() {
 fn session_close_shows_verified_chain() {
     let summary = AuditSummary { gates: 4, reviewers: vec!["A · YOU".into(), "B · J.REED".into()], chain_verified: true };
     let s = draw(&base(ActiveRegion::SessionClosed(summary)));
-    assert!(s.contains("4 gates · unanimous"));
+    assert!(s.contains("4 gates"));
+    assert!(!s.contains("unanimous"));
     assert!(s.contains("chain verified"));
     assert!(s.contains("Reviewed-by: A · YOU"));
+}
+
+#[test]
+fn prompt_region_renders_dispatch_gate_and_ready_key() {
+    let s = draw(&base(ActiveRegion::Prompt {
+        prompt: "refactor session guard".into(),
+        ready: [false, true],
+    }));
+    assert!(s.contains("DISPATCH GATE"));
+    assert!(s.contains("[y] mark ready"));
+    assert!(s.contains("refactor session guard"));
+}
+
+#[test]
+fn plan_region_renders_plan_gate_and_approve_key() {
+    let s = draw(&base(ActiveRegion::Plan {
+        tasks: vec!["auth.rs".into(), "session.rs".into()],
+        ready: [true, false],
+    }));
+    assert!(s.contains("PLAN GATE") || s.contains("PLAN"));
+    assert!(s.contains("[y] approve plan"));
+}
+
+#[test]
+fn dropped_link_shows_b_station_dropped() {
+    let mut view = base(ActiveRegion::Idle);
+    view.status.linked = false;
+    let s = draw(&view);
+    assert!(s.contains("B-STATION DROPPED"));
+}
+
+#[test]
+fn render_diff_contains_diff_text_and_close_hint() {
+    use kontur_tui::render::render_diff;
+    let diff_text = "diff --git a/foo.rs b/foo.rs\n+fn added() {}";
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 30)).unwrap();
+    terminal.draw(|f| render_diff(f, "gate-001", diff_text)).unwrap();
+    let s = buf_string(terminal.backend().buffer());
+    assert!(s.contains("diff --git"));
+    assert!(s.contains("[o] close diff"));
+}
+
+#[test]
+fn session_close_no_longer_says_unanimous() {
+    let summary = AuditSummary { gates: 4, reviewers: vec!["A".into()], chain_verified: true };
+    let s = draw(&base(ActiveRegion::SessionClosed(summary)));
+    assert!(s.contains("4 gates"));
+    assert!(!s.contains("unanimous"));
 }

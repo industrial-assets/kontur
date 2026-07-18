@@ -100,6 +100,8 @@ pub struct AuditSummary {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ActiveRegion {
     Idle,
+    Prompt { prompt: String, ready: [bool; 2] },
+    Plan { tasks: Vec<String>, ready: [bool; 2] },
     Gate(GateCard),
     Intervention(InterventionCard),
     SessionClosed(AuditSummary),
