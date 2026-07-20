@@ -8,6 +8,7 @@ pub enum Action {
     HandEdit,
     Discuss,
     OpenDiff,
+    ToggleLink,
     Ready,
     Help,
     Quit,
@@ -36,6 +37,7 @@ pub fn map_key(code: KeyCode, composing_remedy: bool) -> Action {
         KeyCode::Char('e') => Action::HandEdit,
         KeyCode::Char('d') => Action::Discuss,
         KeyCode::Char('o') => Action::OpenDiff,
+        KeyCode::Char('l') => Action::ToggleLink,
         KeyCode::Tab => Action::None,
         KeyCode::Char('y') => Action::Ready,
         KeyCode::Char('?') => Action::Help,
@@ -54,6 +56,7 @@ mod tests {
         assert_eq!(map_key(KeyCode::Char('r'), false), Action::NoGoBegin);
         assert_eq!(map_key(KeyCode::Char('e'), false), Action::HandEdit);
         assert_eq!(map_key(KeyCode::Char('q'), false), Action::Quit);
+        assert_eq!(map_key(KeyCode::Char('l'), false), Action::ToggleLink);
         assert_eq!(map_key(KeyCode::Char('z'), false), Action::None);
     }
 

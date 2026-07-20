@@ -218,3 +218,13 @@ mod tests {
         );
     }
 }
+
+/// The invite in both reachability flavours, for the console's [l] toggle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InviteLinks {
+    /// Same-machine / same-network join command (no router config needed).
+    pub lan: Option<String>,
+    /// Off-network join command (requires forwarding the operator port).
+    pub wan: Option<String>,
+    pub port: u16,
+}

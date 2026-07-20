@@ -194,14 +194,53 @@ fn wire_gate_to_card(wg: &WireGate, stations: &[Station; 2]) -> GateCard {
 // ---------------------------------------------------------------------------
 
 /// Connect to a kontur-net session server, enter the TUI, and loop until quit.
+/// Which invite flavour the host console is currently showing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LinkMode {
+    Lan,
+    Wan,
+}
+
+/// Compose the invite panel text for the current mode. Pure; tested.
+/// Falls back to whichever flavour exists when the preferred one is absent.
+pub fn compose_invite_text(links: &crate::link::InviteLinks, mode: LinkMode) -> Option<String> {
+    let (primary, alt_hint) = match mode {
+        LinkMode::Lan => (
+            links.lan.as_ref().or(links.wan.as_ref()),
+            links.wan.is_some() && links.lan.is_some(),
+        ),
+        LinkMode::Wan => (
+            links.wan.as_ref().or(links.lan.as_ref()),
+            links.lan.is_some() && links.wan.is_some(),
+        ),
+    };
+    let primary = primary?;
+    let mut text = primary.clone();
+    let effective_wan = matches!(mode, LinkMode::Wan) && links.wan.is_some();
+    if effective_wan {
+        text.push_str(&format!(
+            "\nWAN link — forward port {} on your router first",
+            links.port
+        ));
+    }
+    if alt_hint {
+        text.push_str(match mode {
+            LinkMode::Lan => "\n[l] switch to WAN link (for an operator off your network)",
+            LinkMode::Wan => "\n[l] switch to LAN link (same machine or network)",
+        });
+    }
+    Some(text)
+}
+
 pub async fn run_remote(
     addr: &str,
     seat: String,
     seed: [u8; 32],
-    invite: Option<String>,
+    invite: Option<crate::link::InviteLinks>,
 ) -> io::Result<()> {
     let (client, mut rx) = SessionClient::connect_tcp(addr, seat, seed).await?;
     let own = client.operator();
+    let mut link_mode = LinkMode::Lan;
 
     // Fold the mpsc stream into a watch so the render loop always has the
     // latest state without blocking.
@@ -256,7 +295,7 @@ pub async fn run_remote(
         // The invite is decision-relevant only while the stations are not both
         // linked; the moment they are, it disappears (calm default).
         if !view.status.linked {
-            view.invite = invite.clone();
+            view.invite = invite.as_ref().and_then(|l| compose_invite_text(l, link_mode));
         }
 
         terminal.draw(|f| {
@@ -303,6 +342,12 @@ pub async fn run_remote(
             // Diff toggle.
             Some(Action::OpenDiff) => {
                 diff_open = !diff_open;
+            }
+            Some(Action::ToggleLink) => {
+                link_mode = match link_mode {
+                    LinkMode::Lan => LinkMode::Wan,
+                    LinkMode::Wan => LinkMode::Lan,
+                };
             }
 
             // Composing text.
@@ -528,5 +573,35 @@ mod tests {
             view2.invite = invite.clone();
         }
         assert!(view2.invite.is_none());
+    }
+
+    #[test]
+    fn compose_invite_toggles_and_falls_back() {
+        let both = crate::link::InviteLinks {
+            lan: Some("kontur join kontur://192.168.1.2:7777/aa".into()),
+            wan: Some("kontur join kontur://203.0.113.5:7777/aa".into()),
+            port: 7777,
+        };
+        let lan = compose_invite_text(&both, LinkMode::Lan).unwrap();
+        assert!(lan.contains("192.168.1.2"));
+        assert!(lan.contains("[l] switch to WAN"));
+        assert!(!lan.contains("forward port"));
+
+        let wan = compose_invite_text(&both, LinkMode::Wan).unwrap();
+        assert!(wan.contains("203.0.113.5"));
+        assert!(wan.contains("forward port 7777"));
+        assert!(wan.contains("[l] switch to LAN"));
+
+        let lan_only = crate::link::InviteLinks { lan: both.lan.clone(), wan: None, port: 7777 };
+        let t = compose_invite_text(&lan_only, LinkMode::Wan).unwrap();
+        assert!(t.contains("192.168.1.2")); // falls back
+        assert!(!t.contains("[l] switch")); // no toggle hint with one flavour
+        assert!(!t.contains("forward port")); // fallback is LAN, no WAN caveat
+
+        assert!(compose_invite_text(
+            &crate::link::InviteLinks { lan: None, wan: None, port: 7777 },
+            LinkMode::Lan
+        )
+        .is_none());
     }
 }

@@ -288,11 +288,17 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         println!("\nkontur host shutting down.");
     } else {
         let host_addr = format!("127.0.0.1:{}", op_addr.port());
-        let mut invite_cmd = format!("kontur join {invite_link}");
-        if let Some(remote) = &remote_link {
-            invite_cmd.push_str(&format!("\nremote (forward port {} first): kontur join {remote}", op_addr.port()));
-        }
-        run_remote(&host_addr, "HOST".into(), seed_a, Some(invite_cmd)).await?;
+        let links = kontur_tui::link::InviteLinks {
+            lan: lan_ip
+                .as_ref()
+                .map(|ip| format!("kontur join {}", format_invite(ip, op_addr.port(), &seed_b)))
+                .or_else(|| Some(format!("kontur join {invite_link}"))),
+            wan: remote_link
+                .as_ref()
+                .map(|remote| format!("kontur join {remote}")),
+            port: op_addr.port(),
+        };
+        run_remote(&host_addr, "HOST".into(), seed_a, Some(links)).await?;
     }
     Ok(())
 }
