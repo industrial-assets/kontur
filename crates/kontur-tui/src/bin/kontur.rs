@@ -246,8 +246,18 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
     }
 
     // Discover IP and format invite link.
-    let ip = discover_ip();
+    let lan_ip = kontur_tui::link::discover_lan_ip();
+    let public_ip = kontur_tui::link::discover_public_ip();
+    let ip = lan_ip.clone().unwrap_or_else(discover_ip);
     let invite_link = format_invite(&ip, op_addr.port(), &seed_b);
+    // A remote (off-LAN) operator needs the public address + a router
+    // port-forward; only offer it when it differs from the primary.
+    let remote_link = match &public_ip {
+        Some(pubip) if Some(pubip) != lan_ip.as_ref() => {
+            Some(format_invite(pubip, op_addr.port(), &seed_b))
+        }
+        _ => None,
+    };
 
     // Print session info and invite block.
     println!("kontur host running  ·  session {session_name}");
@@ -256,8 +266,11 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
     println!();
     println!("  invite your operator — send them this (over a private channel; the link IS their key):");
     println!("    kontur join {invite_link}");
-    println!();
-    println!("  link uses your public/LAN IP — if NATed, forward port {} or share your LAN address", op_addr.port());
+    if let Some(remote) = &remote_link {
+        println!();
+        println!("  remote operator (off your network)? forward port {} on your router, then send:", op_addr.port());
+        println!("    kontur join {remote}");
+    }
     println!();
     println!("  attach a real Claude Code as the agent:");
     println!("    1. save as kontur-mcp.json:");
@@ -275,7 +288,10 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         println!("\nkontur host shutting down.");
     } else {
         let host_addr = format!("127.0.0.1:{}", op_addr.port());
-        let invite_cmd = format!("kontur join {invite_link}");
+        let mut invite_cmd = format!("kontur join {invite_link}");
+        if let Some(remote) = &remote_link {
+            invite_cmd.push_str(&format!("\nremote (forward port {} first): kontur join {remote}", op_addr.port()));
+        }
         run_remote(&host_addr, "HOST".into(), seed_a, Some(invite_cmd)).await?;
     }
     Ok(())

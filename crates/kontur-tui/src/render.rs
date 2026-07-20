@@ -10,7 +10,10 @@ use crate::view::{ActiveRegion, KeyStatus, SessionView};
 pub fn render(frame: &mut Frame, view: &SessionView) {
     // While the second station is unlinked, the invite is the one thing that
     // needs the human — it gets its own loud row and vanishes once linked.
-    let invite_rows = if view.invite.is_some() { 4 } else { 0 };
+    let invite_rows = match &view.invite {
+        Some(text) => (text.lines().count() as u16) + 3, // lines + caveat + border
+        None => 0,
+    };
     let rows = Layout::vertical([
         Constraint::Length(1),           // banner
         Constraint::Length(1),           // status strip
@@ -36,13 +39,18 @@ pub fn render(frame: &mut Frame, view: &SessionView) {
 }
 
 fn invite(frame: &mut Frame, area: Rect, link: &str) {
-    let lines = vec![
-        Line::from(Span::styled(
-            format!(" {link}"),
-            Style::default().add_modifier(Modifier::BOLD),
-        )),
-        Line::from(" send over a private channel — the link IS the operator's key"),
-    ];
+    let mut lines: Vec<Line> = link
+        .lines()
+        .map(|l| {
+            Line::from(Span::styled(
+                format!(" {l}"),
+                Style::default().add_modifier(Modifier::BOLD),
+            ))
+        })
+        .collect();
+    lines.push(Line::from(
+        " send over a private channel — the link IS the operator's key",
+    ));
     frame.render_widget(
         Paragraph::new(lines)
             .block(Block::bordered().title("INVITE — OPERATOR NOT LINKED"))

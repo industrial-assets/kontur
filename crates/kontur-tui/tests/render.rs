@@ -148,3 +148,16 @@ fn invite_panel_absent_when_none() {
     let s = draw(&base(ActiveRegion::Idle));
     assert!(!s.contains("INVITE"));
 }
+
+#[test]
+fn invite_panel_renders_remote_variant_line() {
+    let mut view = base(ActiveRegion::Idle);
+    view.status.linked = false;
+    view.invite = Some(
+        "kontur join kontur://192.168.1.10:7777/aabb\nremote (forward port 7777 first): kontur join kontur://203.0.113.5:7777/aabb"
+            .into(),
+    );
+    let s = draw(&view);
+    assert!(s.contains("kontur://192.168.1.10:7777/aabb"));
+    assert!(s.contains("remote (forward port 7777 first)"));
+}

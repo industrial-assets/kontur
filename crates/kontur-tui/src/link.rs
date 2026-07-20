@@ -107,30 +107,31 @@ fn hex_digit(b: u8) -> Option<u8> {
 ///
 /// Returns the IP as a string. Call sites should print the caveat line:
 /// "link uses your public/LAN IP — if NATed, forward port 7777 or share your LAN address"
-pub fn discover_ip() -> String {
-    // 1. Try public IP via curl.
-    if let Ok(output) = std::process::Command::new("curl")
+/// Public IP via an external service, validated as an IpAddr (a captive
+/// portal returning HTML must never end up in a link). None if unreachable.
+pub fn discover_public_ip() -> Option<String> {
+    let output = std::process::Command::new("curl")
         .args(["-s", "--max-time", "2", "https://api.ipify.org"])
         .output()
-    {
-        let raw = String::from_utf8_lossy(&output.stdout);
-        let candidate = raw.trim();
-        if candidate.parse::<IpAddr>().is_ok() {
-            return candidate.to_string();
-        }
-    }
+        .ok()?;
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let candidate = raw.trim();
+    candidate.parse::<IpAddr>().ok().map(|ip| ip.to_string())
+}
 
-    // 2. LAN IP via UDP trick.
-    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
-        if socket.connect("8.8.8.8:80").is_ok() {
-            if let Ok(addr) = socket.local_addr() {
-                return addr.ip().to_string();
-            }
-        }
-    }
+/// LAN IP via the UDP-connect trick (no packets sent). None if unavailable.
+pub fn discover_lan_ip() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    socket.local_addr().ok().map(|a| a.ip().to_string())
+}
 
-    // 3. Loopback fallback.
-    "127.0.0.1".to_string()
+/// Best single address for an invite: LAN first (works for same-machine and
+/// same-network operators with zero router config), then public, then loopback.
+pub fn discover_ip() -> String {
+    discover_lan_ip()
+        .or_else(discover_public_ip)
+        .unwrap_or_else(|| "127.0.0.1".to_string())
 }
 
 // ---------------------------------------------------------------------------
