@@ -14,11 +14,11 @@ It exists for the place solo agentic tooling can't go: production environments w
 
 ## The idea
 
-Pair programming assumed a driver at the keyboard and a navigator watching the cursor. Agentic development took the keyboard away — so pairing moves up a layer. The driver constructs the instruction; the navigator reviews it live; the agents write the code; both engineers independently approve every change. Maker-checker, with the agent as maker and two humans as checkers.
+Pair programming assumed a driver at the keyboard and a navigator watching the cursor. Agentic development took the keyboard away — so pairing moves up a layer. The **Host** runs the session and provides the agents (the Claude Code connection lives on their machine); the **Operator** joins over the network. Both construct and review instructions, both watch the fleet, and both independently approve every change. Maker-checker, with the agent as maker and two co-equal humans as checkers.
 
 ## How it works
 
-- **Co-write the prompt.** The navigator reviews as the driver types; both mark ready before it dispatches.
+- **Confirm the prompt.** Both seats see the instruction and mark ready before it dispatches.
 - **Plan first.** The agent returns a task list of bounded, single-concern changes. Both operators approve the plan before a line is written.
 - **One task at a time.** Agents work sequentially; each finished change parks at a gate.
 - **Two keys, independent.** On high-risk gates the first verdict is sealed until the second is cast — no anchoring, no rubber-stamp. A no-go must carry its fix. A hand-edit applies instantly for emergencies but still needs both keys before it merges.
