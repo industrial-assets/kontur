@@ -120,10 +120,10 @@ fn render_diff_contains_diff_text_and_close_hint() {
     use kontur_tui::render::render_diff;
     let diff_text = "diff --git a/foo.rs b/foo.rs\n+fn added() {}";
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 30)).unwrap();
-    terminal.draw(|f| render_diff(f, "gate-001", diff_text)).unwrap();
+    terminal.draw(|f| render_diff(f, "gate-001", diff_text, 0)).unwrap();
     let s = buf_string(terminal.backend().buffer());
     assert!(s.contains("diff --git"));
-    assert!(s.contains("[o] close diff"));
+    assert!(s.contains("[o] close"));
 }
 
 #[test]

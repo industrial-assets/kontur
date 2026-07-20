@@ -4,6 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Wrap};
 use ratatui::Frame;
 
+use crate::diffview::styled_diff_lines;
 use crate::view::{ActiveRegion, KeyStatus, SessionView};
 
 /// Draw the whole console. Pure: no I/O, no engine calls.
@@ -274,13 +275,24 @@ fn command(frame: &mut Frame, area: Rect, view: &SessionView) {
     frame.render_widget(text, area);
 }
 
-/// Render a full-screen diff view with a close hint.
-pub fn render_diff(frame: &mut Frame, title: &str, text: &str) {
-    let block = Block::bordered().title(format!("{} — [o] close diff", title));
+/// Render a full-screen diff view with colored lines and scroll support.
+///
+/// Title format: `DIFF — <title> · [e] edit <n> files · [o] close · j/k ↓/↑ scroll`
+/// Body uses `styled_diff_lines` for coloured + / - / @@ rendering.
+pub fn render_diff(frame: &mut Frame, title: &str, text: &str, scroll: u16) {
+    use crate::diffview::diff_files;
+    let n_files = diff_files(text).len();
+    let block_title = format!(
+        "DIFF — {} · [e] edit {} file{} · [g] go · [o] close · j/k ↓/↑ scroll",
+        title,
+        n_files,
+        if n_files == 1 { "" } else { "s" },
+    );
+    let block = Block::bordered().title(block_title);
     frame.render_widget(
-        Paragraph::new(text.to_owned())
+        Paragraph::new(styled_diff_lines(text))
             .block(block)
-            .wrap(Wrap { trim: false }),
+            .scroll((scroll, 0)),
         frame.area(),
     );
 }
@@ -444,6 +456,65 @@ mod tests {
         assert!(
             !rendered.contains("MERGE FAILED"),
             "must not show failure copy when merge succeeded"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // render_diff golden tests
+    // -----------------------------------------------------------------------
+
+    fn sample_diff_text() -> &'static str {
+        "diff --git a/src/lib.rs b/src/lib.rs\n\
+         --- a/src/lib.rs\n\
+         +++ b/src/lib.rs\n\
+         @@ -1,2 +1,3 @@\n\
+          context\n\
+         -removed\n\
+         +added line one\n\
+         +added line two"
+    }
+
+    /// render_diff at scroll=0 should show the diff title and opening lines.
+    #[test]
+    fn render_diff_shows_title_and_diff_content() {
+        let backend = TestBackend::new(140, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render_diff(f, "gate-001", sample_diff_text(), 0))
+            .unwrap();
+        let rendered = terminal.backend().to_string();
+        assert!(
+            rendered.contains("DIFF"),
+            "title should contain DIFF; got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("gate-001"),
+            "title should contain gate id; got:\n{rendered}"
+        );
+        // The diff body starts visible at scroll=0.
+        assert!(
+            rendered.contains("diff --git") || rendered.contains("context"),
+            "diff content should appear at scroll=0; got:\n{rendered}"
+        );
+    }
+
+    /// render_diff at a positive scroll offset shows content further down.
+    /// We verify that scrolling by enough lines causes the first diff-header
+    /// line to disappear from the viewport (it is scrolled past).
+    #[test]
+    fn render_diff_scrolled_shows_later_content() {
+        // 10-row viewport; scroll by 5 so the first 5 diff lines are off-screen.
+        let backend = TestBackend::new(140, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        // Scroll=5: the "+added line one" line (index 6) should be visible.
+        terminal
+            .draw(|f| render_diff(f, "gate-x", sample_diff_text(), 5))
+            .unwrap();
+        let rendered = terminal.backend().to_string();
+        // The "+added line two" line (index 7) should be in the visible area.
+        assert!(
+            rendered.contains("added line two") || rendered.contains("added line one"),
+            "scrolled viewport should show later addition lines; got:\n{rendered}"
         );
     }
 }

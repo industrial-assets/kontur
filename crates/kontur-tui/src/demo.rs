@@ -102,12 +102,12 @@ pub async fn run(demo: Demo) -> std::io::Result<()> {
         terminal.draw(|f| render(f, &view))?;
         if closed {
             // Draw the final frame, then wait for a quit key.
-            if let Some(Action::Quit) = poll_action(Duration::from_millis(200), false)? {
+            if let Some(Action::Quit) = poll_action(Duration::from_millis(200), false, false)? {
                 break;
             }
             continue;
         }
-        match poll_action(Duration::from_millis(200), false)? {
+        match poll_action(Duration::from_millis(200), false, false)? {
             Some(Action::Quit) => break,
             Some(Action::Go) => {
                 let _ = demo.host().submit_verdict(&gid, demo.go_a(&gid, dh)).await;

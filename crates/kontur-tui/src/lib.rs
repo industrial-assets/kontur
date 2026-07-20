@@ -5,6 +5,7 @@ pub mod fleet;
 pub mod input;
 pub mod viewmodel;
 pub mod render;
+pub mod diffview;
 pub mod app;
 pub mod demo;
 pub mod remote;

@@ -76,7 +76,7 @@ kontur join --addr host:7777 --seed 2
 ```
 
 **Console keys:** `y` ready · `p` edit prompt · `o` open diff (required before `g`) ·
-`g` go · `r` no-go + steer · `e` hand-edit · `l` invite LAN/WAN · `k` abandon (confirm) · `q` quit.
+`g` go (also works inside the diff viewer) · `r` no-go + steer · `e` edit a file in $EDITOR (opens diff first if not open; `[tab]` cycles between files in the diff) · `j`/`k` scroll diff down/up · `PgDn`/`PgUp` page diff · `l` invite LAN/WAN · `k` abandon (confirm) · `q` quit.
 
 Invite codes carry the secret the operator's key is derived from — send privately; operator-supplied keys with host-side approval are future work.
 
@@ -120,8 +120,8 @@ audit chain keeps every resolved gate.
 
 The design lives in:
 
-- **`PRD-coop-supervisor.md`** — problem, requirements, architecture, and the two-signatory four-eyes mechanism.
-- **`UX-kontur.md`** — console anatomy, screen states, and the interaction model.
+- **`docs/PRD-coop-supervisor.md`** — problem, requirements, architecture, and the two-signatory four-eyes mechanism.
+- **`docs/UX-kontur.md`** — console anatomy, screen states, and the interaction model.
 
 ## Built on
 

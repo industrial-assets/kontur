@@ -21,8 +21,8 @@ Everything in this file exists to keep that guarantee — and the decisions that
 Design decisions live in the doc set. Treat them as authoritative:
 
 - **`README.md`** — what Kontur is, in brief.
-- **The PRD** (`PRD-coop-supervisor.md`) — problem, requirements (FR-*), architecture, and the two-signatory four-eyes mechanism (§10.1).
-- **The UX doc** (`UX-kontur.md`) — console anatomy, screen states, interaction model.
+- **The PRD** (`docs/PRD-coop-supervisor.md`) — problem, requirements (FR-*), architecture, and the two-signatory four-eyes mechanism (§10.1).
+- **The UX doc** (`docs/UX-kontur.md`) — console anatomy, screen states, interaction model.
 
 **If a request contradicts a decision recorded in these docs, stop and flag it — do not silently diverge in code.** These decisions were argued through carefully; surface the conflict rather than relitigating it in an implementation. When a change alters behaviour the PRD or UX describes, update the doc in the same change.
 
@@ -139,7 +139,7 @@ cargo run -p kontur-tui --bin kontur -- join --addr 127.0.0.1:7777 --seed 2
 
 ## Status & future work
 
-**Working today (v0.2):** the four-eyes engine (`kontur-core`), the MCP enforcement plane with real git effects (`kontur-mcp`), the two-seat networked session with live agent-activity streaming (`kontur-net`), and the console + `kontur` binary (`kontur-tui`). Zero-config hosting (`kontur` in a git repo); **real Claude Code as the agent** (`--claude`, permission-restricted at spawn); agent-proposed plan gate; in-console prompt entry (edits reset consent); compact 52-char invites (derived keys + pinned-TLS fingerprints) with a LAN/WAN toggle; blind dual sign-off; FR-24 (a `go` requires the opened diff; review depth signed truthfully); no-go-with-steer; hand-edit; park-on-disconnect; session kill-switch (`[k]`, agent stopped, nothing merges); blocked-and-satisfied gates both audited; session squash-merge with `Reviewed-by:` trailers.
+**Working today (v0.2):** the four-eyes engine (`kontur-core`), the MCP enforcement plane with real git effects (`kontur-mcp`), the two-seat networked session with live agent-activity streaming (`kontur-net`), and the console + `kontur` binary (`kontur-tui`). Zero-config hosting (`kontur` in a git repo); **real Claude Code as the agent** (`--claude`, permission-restricted at spawn); agent-proposed plan gate; in-console prompt entry (edits reset consent); compact 52-char invites (derived keys + pinned-TLS fingerprints) with a LAN/WAN toggle; blind dual sign-off; FR-24 (a `go` requires the opened diff; review depth signed truthfully); no-go-with-steer; hand-edit; park-on-disconnect; session kill-switch (`[k]`, agent stopped, nothing merges); blocked-and-satisfied gates both audited; session squash-merge with `Reviewed-by:` trailers. **Colored scrollable diff review** (`[o]`): unified-diff text rendered with per-line colour (file headers bold, `@@` cyan, `+` green, `-` red), scrollable with `j`/`k`/PgDn/PgUp, per-file aware with `[tab]` file cycling; `[g]` approve from inside the viewer (FR-24); **in-viewer `$EDITOR` hand-edits** (`[e]` while diff open): fetches file from server, suspends TUI, launches `$EDITOR`/`vi`, sends `hand_edit` if changed.
 
 **Recorded future work** (see PRD §9/§13 for detail): audit-chain hardening (operator-side record replication + external chain-head anchoring via Rekor/OpenTimestamps/RFC 3161 — a deliberate non-blockchain decision, reasoning in PRD §9); operator-supplied keys with host-side approval (replacing magic-link invites); OS-level sandboxing of the agent (enforcement today is CC's own permission flags); live collaborative prompt co-editing (simple in-console entry shipped) and plan editing; claiming; risk tiers; discuss threads; third-signatory escalation actions.
 
