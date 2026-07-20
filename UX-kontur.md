@@ -113,6 +113,8 @@ Both linked, no fleet, empty prompt buffer. The console invites an instruction.
 ### 6.2 Prompt co-construction — the dispatch gate
 Either seat drafts; the other reviews live and can suggest inline. This *is* the dispatch gate — a continuous review, not a separate checkpoint (PRD §5). The prompt can't be dispatched until both mark ready.
 
+> **Supersession note (2026-07-20):** simplified in-console prompt entry is now implemented: `[p]` opens a compose line (empty seed); submitting replaces the prompt on both consoles and resets both ready flags — consent must re-signal against the text actually shown (same anchoring rule as the plan gate). The co-editing sketch below (dual-cursor inline suggestions) remains future work.
+
 ```
  [ PROMPT ]  drafting · host: you · operator reviewing live
  ┌────────────────────────────────────────────────────────────────────┐

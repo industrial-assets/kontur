@@ -20,7 +20,7 @@ Pair programming assumed a driver at the keyboard and a navigator watching the c
 
 ## How it works
 
-- **Confirm the prompt.** Both seats see the instruction and mark ready before it dispatches.
+- **Compose the prompt.** Either seat drafts/edits it in-console ([p]); every edit resets both ready marks; both mark ready to dispatch.
 - **Plan first.** The agent returns a task list of bounded, single-concern changes. Both seats approve the plan before a line is written.
 - **One task at a time.** Agents work sequentially; each finished change parks at a gate.
 - **Two keys, independent.** On high-risk gates the first verdict is sealed until the second is cast — no anchoring, no rubber-stamp. A no-go must carry its fix. A hand-edit applies instantly for emergencies but still needs both keys before it merges.

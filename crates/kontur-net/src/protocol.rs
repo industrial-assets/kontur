@@ -17,6 +17,7 @@ pub enum ClientMsg {
     HandEdit { path: String, contents: String },
     Abandon,
     Bye,
+    SetPrompt { prompt: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

@@ -28,6 +28,7 @@ enum ComposeTarget {
     HandEditPath,
     HandEditContents { path: String },
     ConfirmAbandon,
+    Prompt,
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +346,23 @@ pub async fn run_remote(
         if matches!(compose, ComposeTarget::ConfirmAbandon) && view.notice.is_none() {
             view.notice = Some("abandon session? [y] confirm · [esc] cancel".into());
         }
+        // Prompt compose: show draft in the notice row (consistent with remedy
+        // compose). Keep any active rejection visible alongside the draft —
+        // otherwise "prompt cannot be empty" would be clobbered on the next
+        // frame and the operator would get silent refusals.
+        if matches!(compose, ComposeTarget::Prompt) {
+            let warn = if rejected_ttl > 0 {
+                rejected_msg
+                    .as_deref()
+                    .map(|m| format!(" · {m}"))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            view.notice = Some(format!(
+                "prompt > {compose_buf}  [↵] submit · [esc] cancel{warn}"
+            ));
+        }
 
         terminal.draw(|f| {
             if diff_open {
@@ -385,6 +403,16 @@ pub async fn run_remote(
             Some(Action::NoGoBegin) => {
                 compose = ComposeTarget::Remedy;
                 compose_buf.clear();
+            }
+
+            // Prompt edit → start composing (valid only in DispatchReady region).
+            Some(Action::PromptBegin) => {
+                if matches!(view.active, ActiveRegion::Prompt { .. }) {
+                    compose = ComposeTarget::Prompt;
+                    compose_buf.clear();
+                    // Seed empty so the operator types the full new prompt.
+                    // Draft is shown via the notice row while composing.
+                }
             }
 
             // Abandon → request confirmation.
@@ -469,6 +497,17 @@ pub async fn run_remote(
                         // Enter on confirm-abandon cancels (no bare confirm via Enter)
                         compose = ComposeTarget::None;
                         compose_buf.clear();
+                    }
+                    ComposeTarget::Prompt => {
+                        if compose_buf.trim().is_empty() {
+                            // no empty prompt: keep composing; server would also reject it
+                            rejected_msg = Some("prompt cannot be empty".into());
+                            rejected_ttl = 20;
+                        } else {
+                            let _ = client.set_prompt(&compose_buf).await;
+                            compose = ComposeTarget::None;
+                            compose_buf.clear();
+                        }
                     }
                     ComposeTarget::None => {}
                 }

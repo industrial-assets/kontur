@@ -159,6 +159,12 @@ impl SessionClient {
         self.send(ClientMsg::Abandon).await
     }
 
+    /// Send a prompt edit. Valid only during DispatchReady; the server will
+    /// Reject it otherwise and reset both ready flags on acceptance.
+    pub async fn set_prompt(&self, prompt: &str) -> io::Result<()> {
+        self.send(ClientMsg::SetPrompt { prompt: prompt.to_owned() }).await
+    }
+
     /// Sign a Go verdict against the gate described by `wire_gate` and send it.
     pub async fn cast_go(&self, gate: &WireGate, depth: ReviewDepth) -> io::Result<()> {
         let verdict = self.build_verdict(gate, Verdict::Go, depth);

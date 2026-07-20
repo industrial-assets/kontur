@@ -91,6 +91,10 @@ struct Net {
     finalizing: bool,
     started: Instant,
     agent_plan: Option<Vec<String>>,
+    /// Live session prompt. Initialised from cfg.prompt; updated in-console by
+    /// SetPrompt during DispatchReady. After dispatch it is locked — the agent
+    /// is running against the text that was actually consented to.
+    prompt: String,
 }
 
 struct Inner {
@@ -164,6 +168,7 @@ impl SessionServer {
             finalizing: false,
             started: Instant::now(),
             agent_plan: None,
+            prompt: cfg.prompt.clone(),
         };
 
         let server = SessionServer {
@@ -330,6 +335,13 @@ impl SessionServer {
         net.agent_done = true;
         drop(net);
         self.refresh_locked().await;
+    }
+
+    /// Return the current session prompt. During DispatchReady this may differ
+    /// from the CLI-time prompt (operators can edit it in-console). After
+    /// dispatch it is locked to the text both seats consented to.
+    pub async fn session_prompt(&self) -> String {
+        self.inner.net.lock().await.prompt.clone()
     }
 
     pub async fn attach<S: AsyncRead + AsyncWrite + Send + Unpin + 'static>(&self, stream: S) {
@@ -670,6 +682,40 @@ async fn handle_client_msg(
         ClientMsg::Bye => {
             // Reader task will handle disconnect naturally when the stream closes
         }
+        ClientMsg::SetPrompt { prompt } => {
+            let mut net = server.inner.net.lock().await;
+            // Prompt edits are only valid before dispatch. Once the agent is
+            // running, the prompt is locked — consent must be re-signalled
+            // against the text actually shown (same anchoring rule as plan gate).
+            if net.phase != Phase::DispatchReady {
+                let _ = conn_tx
+                    .send(ServerMsg::Rejected {
+                        reason: "prompt is locked after dispatch".into(),
+                    })
+                    .await;
+                return;
+            }
+            if prompt.trim().is_empty() {
+                let _ = conn_tx
+                    .send(ServerMsg::Rejected {
+                        reason: "prompt cannot be empty".into(),
+                    })
+                    .await;
+                return;
+            }
+            let label = net.seats[seat_idx].label.clone();
+            net.prompt = prompt.clone();
+            // Anchoring rule: any edit resets both ready flags so both seats
+            // must re-consent against the text they actually see. This prevents
+            // a seat from marking ready against one prompt and having the other
+            // seat silently dispatch a different one.
+            net.seats[0].ready = false;
+            net.seats[1].ready = false;
+            push_log(&mut net, &format!("{label} edited the prompt"));
+            drop(net);
+            server.inner.host.set_prompt(prompt).await;
+            server.refresh_locked().await;
+        }
     }
 }
 
@@ -717,12 +763,12 @@ impl SessionServer {
         // Compose the merge message
         let merge_msg = {
             let net = inner.net.lock().await;
-            let first_line = inner
-                .cfg
+            let first_line = net
                 .prompt
                 .lines()
                 .next()
-                .unwrap_or(&inner.cfg.prompt);
+                .map(|s| s.to_owned())
+                .unwrap_or_else(|| net.prompt.clone());
             let op0 = net.seats[0].operator;
             let op1 = net.seats[1].operator;
             let label0 = net.seats[0].label.clone();
@@ -772,7 +818,7 @@ impl SessionServer {
         let wire_phase = match &net.phase {
             Phase::AwaitOperators => WirePhase::AwaitOperators,
             Phase::DispatchReady => WirePhase::DispatchReady {
-                prompt: inner.cfg.prompt.clone(),
+                prompt: net.prompt.clone(),
             },
             Phase::PlanReview => WirePhase::PlanReview {
                 tasks: net.agent_plan.clone().unwrap_or_else(|| inner.cfg.plan.clone()),
@@ -1903,5 +1949,183 @@ mod tests {
             got_rejected,
             "post-abandon Cast must produce Rejected with 'abandoned' in reason"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // SetPrompt tests
+    // -----------------------------------------------------------------------
+
+    /// SetPrompt during DispatchReady:
+    /// - updates the wire prompt in the next WireState
+    /// - resets both ready flags (seat A readied; B edits; A's ready must be false)
+    #[tokio::test]
+    async fn set_prompt_updates_wire_and_resets_ready() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+
+        let (server, _ws) = make_server(op1, op2, vec!["t1".into()]);
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        drain_client(BufReader::new(cb_read)).await;
+
+        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(s.phase, WirePhase::DispatchReady { .. })
+        })).await.expect("DispatchReady");
+
+        // A marks ready.
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            s.seats.first().map(|s| s.ready).unwrap_or(false)
+        })).await.expect("A ready");
+
+        // B edits the prompt — should reset both ready flags.
+        write_json(&mut cb_write, &ClientMsg::SetPrompt { prompt: "new prompt text".into() }).await.unwrap();
+
+        let after_edit = tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(&s.phase, WirePhase::DispatchReady { prompt } if prompt == "new prompt text")
+        })).await.expect("prompt updated in wire state");
+
+        // Both ready flags must have been reset.
+        assert!(!after_edit.seats[0].ready, "A ready must be reset after prompt edit");
+        assert!(!after_edit.seats[1].ready, "B ready must be reset after prompt edit");
+
+        // The wire prompt must carry the new text.
+        match &after_edit.phase {
+            WirePhase::DispatchReady { prompt } => assert_eq!(prompt, "new prompt text"),
+            _ => panic!("expected DispatchReady"),
+        }
+    }
+
+    /// SetPrompt after dispatch (PlanReview phase) must return Rejected with
+    /// the reason "prompt is locked after dispatch".
+    #[tokio::test]
+    async fn set_prompt_after_dispatch_rejected() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+
+        let (server, _ws) = make_server(op1, op2, vec!["t1".into()]);
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+
+        // Keep A's read side to capture Rejected.
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(cb_read)).await;
+
+        let mut ca_reader = BufReader::new(ca_read);
+
+        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(s.phase, WirePhase::DispatchReady { .. })
+        })).await.expect("DispatchReady");
+
+        // Both ready → PlanReview.
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(s.phase, WirePhase::PlanReview { .. })
+        })).await.expect("PlanReview");
+
+        // Drain A's read side into a channel so we can inspect Rejected.
+        let (drain_tx, mut drain_rx) = tokio::sync::mpsc::channel::<ServerMsg>(64);
+        let drain_tx_clone = drain_tx.clone();
+        tokio::spawn(async move {
+            while let Ok(Some(msg)) = read_json::<_, ServerMsg>(&mut ca_reader).await {
+                let _ = drain_tx_clone.send(msg).await;
+            }
+        });
+
+        // SetPrompt in PlanReview phase → must be Rejected.
+        write_json(&mut ca_write, &ClientMsg::SetPrompt { prompt: "too late".into() }).await.unwrap();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        let mut got_locked = false;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() { break; }
+            match tokio::time::timeout(remaining, drain_rx.recv()).await {
+                Ok(Some(ServerMsg::Rejected { reason })) if reason.contains("locked") => {
+                    got_locked = true;
+                    break;
+                }
+                Ok(Some(_)) => continue,
+                _ => break,
+            }
+        }
+        assert!(got_locked, "SetPrompt after dispatch must be Rejected with 'locked' in reason");
+    }
+
+    /// SetPrompt with an empty/whitespace prompt must return Rejected with
+    /// "prompt cannot be empty".
+    #[tokio::test]
+    async fn set_prompt_empty_rejected() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+
+        let (server, _ws) = make_server(op1, op2, vec!["t1".into()]);
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(cb_read)).await;
+
+        let mut ca_reader = BufReader::new(ca_read);
+
+        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(s.phase, WirePhase::DispatchReady { .. })
+        })).await.expect("DispatchReady");
+
+        let (drain_tx, mut drain_rx) = tokio::sync::mpsc::channel::<ServerMsg>(64);
+        let drain_tx_clone = drain_tx.clone();
+        tokio::spawn(async move {
+            while let Ok(Some(msg)) = read_json::<_, ServerMsg>(&mut ca_reader).await {
+                let _ = drain_tx_clone.send(msg).await;
+            }
+        });
+
+        // Empty prompt → Rejected.
+        write_json(&mut ca_write, &ClientMsg::SetPrompt { prompt: "   ".into() }).await.unwrap();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        let mut got_empty_rejected = false;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() { break; }
+            match tokio::time::timeout(remaining, drain_rx.recv()).await {
+                Ok(Some(ServerMsg::Rejected { reason })) if reason.contains("empty") => {
+                    got_empty_rejected = true;
+                    break;
+                }
+                Ok(Some(_)) => continue,
+                _ => break,
+            }
+        }
+        assert!(got_empty_rejected, "empty SetPrompt must produce Rejected with 'empty' in reason");
     }
 }
