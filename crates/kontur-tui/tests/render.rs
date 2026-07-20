@@ -64,6 +64,7 @@ fn gate_shows_summary_and_sealed_key_never_value() {
         escalation_required: false,
         diff_preview: None,
         diff_opened: true, // diff already opened, so [g] go is visible
+        diff_truncated: false,
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
     assert!(s.contains("auth/session.rs"));
@@ -167,6 +168,7 @@ fn gate_unopened_diff_shows_required_hint() {
         escalation_required: false,
         diff_preview: None,
         diff_opened: false, // diff NOT yet opened
+        diff_truncated: false,
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
     assert!(
@@ -195,6 +197,7 @@ fn gate_opened_diff_shows_go_hint() {
         escalation_required: false,
         diff_preview: None,
         diff_opened: true, // diff opened
+        diff_truncated: false,
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
     assert!(
@@ -218,4 +221,15 @@ fn invite_panel_renders_remote_variant_line() {
     let s = draw(&view);
     assert!(s.contains("kontur://192.168.1.10:7777/aabb"));
     assert!(s.contains("remote (forward port 7777 first)"));
+}
+
+#[test]
+fn gate_truncated_flag_shows_truncated_in_diff_title() {
+    use kontur_tui::render::render_diff;
+    let diff_text = "diff --git a/big.rs b/big.rs\n+fn added() {}";
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 30)).unwrap();
+    // When the caller passes a title with (TRUNCATED), the diff header shows it.
+    terminal.draw(|f| render_diff(f, "gate-001 (TRUNCATED)", diff_text, 0)).unwrap();
+    let s = buf_string(terminal.backend().buffer());
+    assert!(s.contains("TRUNCATED"), "truncated diff must show TRUNCATED in title; got:\n{s}");
 }

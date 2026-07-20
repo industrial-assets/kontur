@@ -4,7 +4,7 @@ use std::process::Command;
 use kontur_core::TaskId;
 
 use crate::error::WorkspaceError;
-use crate::workspace::{CommandOutput, FrozenDiff, Workspace};
+use crate::workspace::{contained_join, CommandOutput, FrozenDiff, Workspace};
 
 /// Real git effects. The session lives on branch `kontur/<session>` in a
 /// dedicated worktree (under the system temp dir), leaving the user's checkout
@@ -68,7 +68,7 @@ impl GitWorkspace {
 
 impl Workspace for GitWorkspace {
     fn apply_write(&self, _task_id: &TaskId, path: &str, contents: &[u8]) -> Result<(), WorkspaceError> {
-        let full = self.worktree.join(path);
+        let full = contained_join(&self.worktree, path)?;
         if let Some(p) = full.parent() {
             std::fs::create_dir_all(p).map_err(|e| WorkspaceError::Io(e.to_string()))?;
         }
@@ -133,7 +133,7 @@ impl Workspace for GitWorkspace {
     }
 
     fn read_file(&self, _task_id: &TaskId, path: &str) -> Result<Option<Vec<u8>>, WorkspaceError> {
-        let full = self.worktree.join(path);
+        let full = contained_join(&self.worktree, path)?;
         match std::fs::read(&full) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -233,5 +233,32 @@ mod tests {
         let ws = GitWorkspace::create(repo, "s-rf2").unwrap();
         let t = TaskId("t1".into());
         assert_eq!(ws.read_file(&t, "does_not_exist.rs").unwrap(), None);
+    }
+
+    #[test]
+    fn apply_write_rejects_path_traversal() {
+        let repo = temp_repo();
+        let ws = GitWorkspace::create(repo, "s-sec1").unwrap();
+        let t = TaskId("t1".into());
+        let result = ws.apply_write(&t, "../escape.txt", b"x\n");
+        assert!(result.is_err(), "traversal path must be rejected");
+    }
+
+    #[test]
+    fn read_file_rejects_path_traversal() {
+        let repo = temp_repo();
+        let ws = GitWorkspace::create(repo, "s-sec2").unwrap();
+        let t = TaskId("t1".into());
+        let result = ws.read_file(&t, "../.ssh/id_ed25519");
+        assert!(result.is_err(), "traversal read path must be rejected");
+    }
+
+    #[test]
+    fn read_file_rejects_absolute_path() {
+        let repo = temp_repo();
+        let ws = GitWorkspace::create(repo, "s-sec3").unwrap();
+        let t = TaskId("t1".into());
+        let result = ws.read_file(&t, "/etc/passwd");
+        assert!(result.is_err(), "absolute read path must be rejected");
     }
 }

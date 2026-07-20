@@ -714,14 +714,39 @@ async fn handle_client_msg(
                         .await;
                 }
                 Ok(maybe_bytes) => {
-                    // Binary files cannot be round-tripped through a text editor;
-                    // lossy-decode so the TUI can show something useful.  If the
-                    // result is actually non-UTF-8, the TUI should advise editing
-                    // locally on the host instead.
-                    let contents = maybe_bytes.map(|b| String::from_utf8_lossy(&b).into_owned());
-                    let _ = conn_tx
-                        .send(ServerMsg::FileContent { path, contents })
-                        .await;
+                    match maybe_bytes {
+                        None => {
+                            // File does not exist in the worktree (new file).
+                            let _ = conn_tx
+                                .send(ServerMsg::FileContent { path, contents: None })
+                                .await;
+                        }
+                        Some(bytes) => {
+                            match std::str::from_utf8(&bytes) {
+                                Ok(text) => {
+                                    let _ = conn_tx
+                                        .send(ServerMsg::FileContent {
+                                            path,
+                                            contents: Some(text.to_owned()),
+                                        })
+                                        .await;
+                                }
+                                Err(_) => {
+                                    // Binary file: cannot round-trip through a text editor.
+                                    // Send FileContent with contents: None AND a Rejected
+                                    // notice so the operator knows to hand-edit on the host.
+                                    let _ = conn_tx
+                                        .send(ServerMsg::FileContent { path: path.clone(), contents: None })
+                                        .await;
+                                    let _ = conn_tx
+                                        .send(ServerMsg::Rejected {
+                                            reason: "binary file — hand-edit on the host machine".into(),
+                                        })
+                                        .await;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -903,8 +928,10 @@ impl SessionServer {
                 // Wire sanity cap: diffs above 64 KiB are truncated so a
                 // single giant task cannot exhaust the connection buffer.
                 // Operators who need the full diff can fetch it with FetchFile.
+                // diff_truncated is set when the cap fires so the TUI can warn
+                // the operator before accepting their go on a partial diff.
                 const DIFF_PREVIEW_CAP: usize = 64 * 1024;
-                let diff_preview = inner
+                let (diff_preview, diff_truncated) = inner
                     .host
                     .gate_diff(&gv.gate_id)
                     .await
@@ -912,11 +939,12 @@ impl SessionServer {
                     .map(|s| {
                         if s.chars().count() > DIFF_PREVIEW_CAP {
                             let truncated: String = s.chars().take(DIFF_PREVIEW_CAP).collect();
-                            format!("{truncated}\n… (diff truncated)")
+                            (Some(format!("{truncated}\n… (diff truncated)")), true)
                         } else {
-                            s
+                            (Some(s), false)
                         }
-                    });
+                    })
+                    .unwrap_or((None, false));
 
                 Some(WireGate {
                     gate_id: gv.gate_id.clone(),
@@ -927,6 +955,7 @@ impl SessionServer {
                     keys: gv.observed.clone(),
                     escalation_required: gv.escalation_required,
                     diff_preview,
+                    diff_truncated,
                 })
             } else {
                 None

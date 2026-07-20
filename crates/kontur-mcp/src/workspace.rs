@@ -177,6 +177,37 @@ impl Workspace for InMemoryWorkspace {
     }
 }
 
+/// Join `rel` onto `root`, refusing absolute paths and any traversal that
+/// escapes the root. Purely lexical (the target may not exist yet): rejects
+/// absolute paths and any `..` component. Case: `a/../b` inside root is
+/// still rejected — keep it strict and simple.
+///
+/// Path containment is enforced here and relied on by GitWorkspace,
+/// FsWorkspace `apply_write` and `read_file`. InMemoryWorkspace has no
+/// filesystem — containment is not applicable there (no escape path).
+pub fn contained_join(root: &std::path::Path, rel: &str) -> Result<std::path::PathBuf, WorkspaceError> {
+    use std::path::Component;
+    if rel.is_empty() {
+        return Err(WorkspaceError::Io("path must not be empty".into()));
+    }
+    let rel_path = std::path::Path::new(rel);
+    if rel_path.is_absolute() {
+        return Err(WorkspaceError::Io(format!("path must be relative: {rel}")));
+    }
+    for component in rel_path.components() {
+        match component {
+            Component::ParentDir => {
+                return Err(WorkspaceError::Io(format!("path traversal rejected: {rel}")));
+            }
+            Component::Prefix(_) => {
+                return Err(WorkspaceError::Io(format!("path prefix not allowed: {rel}")));
+            }
+            _ => {}
+        }
+    }
+    Ok(root.join(rel))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,5 +289,37 @@ mod tests {
         let ws = InMemoryWorkspace::new();
         // No writes at all — task doesn't exist.
         assert_eq!(ws.read_file(&TaskId("ghost".into()), "x.rs").unwrap(), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // contained_join tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn contained_join_accepts_normal_paths() {
+        let root = std::path::Path::new("/repo");
+        assert!(contained_join(root, "a/b.rs").is_ok());
+        assert!(contained_join(root, "src/x/y.txt").is_ok());
+        assert!(contained_join(root, "file.rs").is_ok());
+    }
+
+    #[test]
+    fn contained_join_rejects_parent_traversal() {
+        let root = std::path::Path::new("/repo");
+        assert!(contained_join(root, "../x").is_err());
+        assert!(contained_join(root, "a/../../x").is_err());
+        assert!(contained_join(root, "a/../b").is_err());
+    }
+
+    #[test]
+    fn contained_join_rejects_absolute_path() {
+        let root = std::path::Path::new("/repo");
+        assert!(contained_join(root, "/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn contained_join_rejects_empty() {
+        let root = std::path::Path::new("/repo");
+        assert!(contained_join(root, "").is_err());
     }
 }

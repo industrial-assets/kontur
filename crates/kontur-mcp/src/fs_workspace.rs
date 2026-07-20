@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use kontur_core::TaskId;
 
 use crate::error::WorkspaceError;
-use crate::workspace::{CommandOutput, FrozenDiff, Workspace};
+use crate::workspace::{contained_join, CommandOutput, FrozenDiff, Workspace};
 
 /// Filesystem-backed workspace: writes land under `root`, commands run via the
 /// system shell. `accept_task` records acceptance (the real git commit/merge is
@@ -48,9 +48,10 @@ impl FsWorkspace {
 }
 
 impl Workspace for FsWorkspace {
-    /// NOTE: `path` is trusted and not sanitised against traversal; the non-bypass/trust boundary is the deferred Claude Code binding slice.
+    /// Path containment enforced by `contained_join`: absolute paths and `..`
+    /// components are rejected before any filesystem operation.
     fn apply_write(&self, task_id: &TaskId, path: &str, contents: &[u8]) -> Result<(), WorkspaceError> {
-        let full = self.root.join(path);
+        let full = contained_join(&self.root, path)?;
         if let Some(parent) = full.parent() {
             std::fs::create_dir_all(parent).map_err(|e| WorkspaceError::Io(e.to_string()))?;
         }
@@ -109,7 +110,7 @@ impl Workspace for FsWorkspace {
     }
 
     fn read_file(&self, _task_id: &TaskId, path: &str) -> Result<Option<Vec<u8>>, WorkspaceError> {
-        let full = self.root.join(path);
+        let full = contained_join(&self.root, path)?;
         match std::fs::read(&full) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -191,5 +192,29 @@ mod tests {
         let ws = FsWorkspace::new(temp_root());
         let task = TaskId("t1".into());
         assert_eq!(ws.read_file(&task, "nope.rs").unwrap(), None);
+    }
+
+    #[test]
+    fn apply_write_rejects_path_traversal() {
+        let ws = FsWorkspace::new(temp_root());
+        let task = TaskId("t1".into());
+        let result = ws.apply_write(&task, "../escape.txt", b"x\n");
+        assert!(result.is_err(), "traversal path must be rejected by apply_write");
+    }
+
+    #[test]
+    fn apply_write_rejects_absolute_path() {
+        let ws = FsWorkspace::new(temp_root());
+        let task = TaskId("t1".into());
+        let result = ws.apply_write(&task, "/etc/passwd", b"x\n");
+        assert!(result.is_err(), "absolute path must be rejected by apply_write");
+    }
+
+    #[test]
+    fn read_file_rejects_path_traversal() {
+        let ws = FsWorkspace::new(temp_root());
+        let task = TaskId("t1".into());
+        let result = ws.read_file(&task, "../.ssh/id_ed25519");
+        assert!(result.is_err(), "traversal path must be rejected by read_file");
     }
 }

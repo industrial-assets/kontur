@@ -74,6 +74,9 @@ pub struct WireGate {
     pub keys: Vec<VerdictView>,
     pub escalation_required: bool,
     pub diff_preview: Option<String>,
+    /// True when `diff_preview` was capped at 64 KiB. Operators who approve
+    /// a truncated diff must explicitly acknowledge before their `go` is cast.
+    pub diff_truncated: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

@@ -192,6 +192,7 @@ fn wire_gate_to_card(wg: &WireGate, stations: &[Station; 2]) -> GateCard {
         diff_preview: wg.diff_preview.clone(),
         // diff_opened is runtime UI state, set by the run loop after this call.
         diff_opened: false,
+        diff_truncated: wg.diff_truncated,
     }
 }
 
@@ -320,6 +321,9 @@ pub async fn run_remote(
     let mut rejected_ttl: u8 = 0;
     // runtime-only UI state — the no-HashMap rule applies to canonical/hashed data, not here
     let mut opened_diffs: HashSet<String> = HashSet::new();
+    // Truncation acknowledgment: when the active gate's diff is truncated,
+    // the first `g` press sets this to the gate id; the second `g` casts.
+    let mut truncation_ack: Option<String> = None;
 
     loop {
         // Pick up any new rejection message.
@@ -355,6 +359,7 @@ pub async fn run_remote(
             }
             diff_scroll = 0;
             selected_file = 0;
+            truncation_ack = None;
             last_gate_id = active_gate_id.clone();
         }
 
@@ -409,7 +414,12 @@ pub async fn run_remote(
             if diff_open {
                 if let ActiveRegion::Gate(ref card) = view.active {
                     if let Some(preview) = &card.diff_preview {
-                        render_diff(f, &card.gate_id, preview, diff_scroll);
+                        let diff_title = if card.diff_truncated {
+                            format!("{} (TRUNCATED)", card.gate_id)
+                        } else {
+                            card.gate_id.clone()
+                        };
+                        render_diff(f, &diff_title, preview, diff_scroll);
                         return;
                     }
                 }
@@ -431,11 +441,25 @@ pub async fn run_remote(
             Some(Action::Go) => {
                 if let Some(wg) = &state.gate {
                     let opened = opened_diffs.contains(&wg.gate_id.0);
-                    if go_allowed(opened) {
-                        let _ = client.cast_go(wg, ReviewDepth::FullDiff).await;
-                    } else {
+                    if !go_allowed(opened) {
                         rejected_msg = Some("open the diff first — [o]".into());
                         rejected_ttl = 30;
+                    } else if wg.diff_truncated {
+                        // Truncated diff: require a second consecutive `g` to acknowledge.
+                        if truncation_ack.as_deref() == Some(&wg.gate_id.0) {
+                            // Already acknowledged on this gate — cast.
+                            let _ = client.cast_go(wg, ReviewDepth::FullDiff).await;
+                            truncation_ack = None;
+                        } else {
+                            // First `g`: show warning, set ack.
+                            truncation_ack = Some(wg.gate_id.0.clone());
+                            rejected_msg = Some(
+                                "diff was truncated at 64 KB — press [g] again to sign anyway".into(),
+                            );
+                            rejected_ttl = 60;
+                        }
+                    } else {
+                        let _ = client.cast_go(wg, ReviewDepth::FullDiff).await;
                     }
                 }
             }
@@ -731,6 +755,35 @@ fn run_editor_roundtrip(path: &str, contents: Option<&str>) -> io::Result<Option
 }
 
 // ---------------------------------------------------------------------------
+// Truncation-ack pure helper (unit-tested)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GoDecision {
+    /// Cast the verdict.
+    Cast,
+    /// Diff not opened yet — operator must open it first.
+    NeedOpen,
+    /// Diff was truncated and the first `g` was pressed — need a second `g`.
+    NeedAck,
+}
+
+/// Pure helper for the truncation-ack two-press flow. Encodes FR-24 + truncation logic.
+///
+/// - `opened`: operator has opened the diff for this gate.
+/// - `truncated`: the diff preview was capped at 64 KiB.
+/// - `acked`: this gate id is already in `truncation_ack` (first `g` already pressed).
+pub fn go_gate(opened: bool, truncated: bool, acked: bool) -> GoDecision {
+    if !opened {
+        return GoDecision::NeedOpen;
+    }
+    if truncated && !acked {
+        return GoDecision::NeedAck;
+    }
+    GoDecision::Cast
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -769,6 +822,7 @@ mod tests {
             keys,
             escalation_required: false,
             diff_preview: Some("diff --git a/a.rs b/a.rs\n+fn foo() {}".into()),
+            diff_truncated: false,
         }
     }
 
@@ -971,5 +1025,31 @@ mod tests {
             LinkMode::Lan
         )
         .is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // go_gate pure helper tests (truncation ack)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn go_gate_need_open_when_diff_not_opened() {
+        use super::GoDecision;
+        assert_eq!(super::go_gate(false, false, false), GoDecision::NeedOpen);
+        assert_eq!(super::go_gate(false, true, false), GoDecision::NeedOpen);
+        assert_eq!(super::go_gate(false, true, true), GoDecision::NeedOpen);
+    }
+
+    #[test]
+    fn go_gate_need_ack_on_first_g_with_truncated_diff() {
+        use super::GoDecision;
+        assert_eq!(super::go_gate(true, true, false), GoDecision::NeedAck);
+    }
+
+    #[test]
+    fn go_gate_cast_when_acked_or_not_truncated() {
+        use super::GoDecision;
+        assert_eq!(super::go_gate(true, false, false), GoDecision::Cast);
+        assert_eq!(super::go_gate(true, true, true), GoDecision::Cast);
+        assert_eq!(super::go_gate(true, false, true), GoDecision::Cast);
     }
 }

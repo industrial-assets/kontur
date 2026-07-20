@@ -557,11 +557,20 @@ impl GateHost {
         let task_ids: Vec<TaskId> = {
             let mut st = self.state.lock().await;
             st.abandoned = true;
-            st.holds
-                .iter()
-                .filter(|e| matches!(e.hold.state(), HoldState::Open | HoldState::Partial))
-                .map(|e| e.hold.task_id().clone())
-                .collect()
+            let mut tids = Vec::new();
+            for e in st.holds.iter().filter(|e| matches!(e.hold.state(), HoldState::Open | HoldState::Partial)) {
+                tids.push(e.hold.task_id().clone());
+                // Parked proposals must not hang forever: Blocked is the honest
+                // terminal for "will never be approved". Agents treat Blocked as
+                // rejection; gate_outcome returns remedy None on Blocked, which
+                // the ScriptedAgent rework path tolerates (None → "rework" string,
+                // no unwrap, no panic).
+                let _ = e.watch_tx.send(HoldState::Blocked);
+                for tx in &e.carried_watchers {
+                    let _ = tx.send(HoldState::Blocked);
+                }
+            }
+            tids
         };
         for task_id in task_ids {
             self.workspace.discard_task(&task_id)?;
@@ -1186,6 +1195,78 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // abandon wakes parked agents
+    // -----------------------------------------------------------------------
+
+    /// After `abandon_session`, a watch receiver parked on an Open gate must
+    /// immediately observe `Blocked` (not stay parked forever).
+    #[tokio::test]
+    async fn abandon_sends_blocked_to_parked_watchers() {
+        use std::time::Duration;
+
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let context = ctx(vec![op1, op2]);
+        let host = GateHost::new(context.clone(), ws.clone());
+
+        // Open a gate and park on its watch receiver.
+        let task = TaskId("t1".into());
+        ws.apply_write(&task, "a.rs", b"x\n").unwrap();
+        let (_gid, mut rx) = host.begin_task_gate(task, 10).await.unwrap();
+
+        // The receiver should currently see Open.
+        assert_eq!(*rx.borrow(), HoldState::Open);
+
+        // Abandon the session.
+        host.abandon_session().await.unwrap();
+
+        // The receiver must promptly observe Blocked.
+        let _ = tokio::time::timeout(Duration::from_millis(100), rx.changed()).await;
+        assert_eq!(
+            *rx.borrow_and_update(),
+            HoldState::Blocked,
+            "parked watch must observe Blocked after abandon_session"
+        );
+    }
+
+    /// Carried watchers (from superseded holds) also observe Blocked on abandon.
+    #[tokio::test]
+    async fn abandon_sends_blocked_to_carried_watchers() {
+        use std::time::Duration;
+
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let task = TaskId("t1".into());
+        // Pragmatic so op1 can hand-edit without strict exclusion complications.
+        let host = GateHost::new(
+            ctx(vec![op1, op2]).with_policy(kontur_core::GatePolicy {
+                independence: kontur_core::Independence::Pragmatic,
+                ..kontur_core::GatePolicy::default()
+            }),
+            ws.clone(),
+        );
+
+        // Agent opens a gate and parks on rx.
+        ws.apply_write(&task, "a.rs", b"agent\n").unwrap();
+        let (_orig_gid, mut orig_rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+
+        // Hand-edit supersedes: orig_rx becomes a carried watcher on the new entry.
+        host.hand_edit(task.clone(), "a.rs", b"human\n", op1).await.unwrap();
+
+        // Abandon — must wake the carried watcher too.
+        host.abandon_session().await.unwrap();
+
+        let _ = tokio::time::timeout(Duration::from_millis(100), orig_rx.changed()).await;
+        assert_eq!(
+            *orig_rx.borrow_and_update(),
+            HoldState::Blocked,
+            "carried watcher must observe Blocked after abandon_session"
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // hand_edit supersession tests
     // -----------------------------------------------------------------------
 
@@ -1318,7 +1399,7 @@ mod tests {
         let task = TaskId("t1".into());
         // Pragmatic so op1 (the editor) may co-sign.
         let host = GateHost::new(
-            ctx(vec![op1.clone(), op2.clone()]).with_policy(kontur_core::GatePolicy {
+            ctx(vec![op1, op2]).with_policy(kontur_core::GatePolicy {
                 independence: kontur_core::Independence::Pragmatic,
                 ..kontur_core::GatePolicy::default()
             }),
@@ -1378,7 +1459,7 @@ mod tests {
         let task = TaskId("t1".into());
         // Pragmatic: op1 (the editor) remains eligible to cast verdicts.
         let host = GateHost::new(
-            ctx(vec![op1.clone(), op2.clone()]).with_policy(kontur_core::GatePolicy {
+            ctx(vec![op1, op2]).with_policy(kontur_core::GatePolicy {
                 independence: kontur_core::Independence::Pragmatic,
                 ..kontur_core::GatePolicy::default()
             }),
@@ -1432,7 +1513,7 @@ mod tests {
         let task = TaskId("t1".into());
         // Pragmatic so both operators can co-sign regardless of edit history.
         let host = GateHost::new(
-            ctx(vec![op1.clone(), op2.clone()]).with_policy(kontur_core::GatePolicy {
+            ctx(vec![op1, op2]).with_policy(kontur_core::GatePolicy {
                 independence: kontur_core::Independence::Pragmatic,
                 ..kontur_core::GatePolicy::default()
             }),
