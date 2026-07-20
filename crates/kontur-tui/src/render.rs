@@ -8,24 +8,47 @@ use crate::view::{ActiveRegion, KeyStatus, SessionView};
 
 /// Draw the whole console. Pure: no I/O, no engine calls.
 pub fn render(frame: &mut Frame, view: &SessionView) {
+    // While the second station is unlinked, the invite is the one thing that
+    // needs the human — it gets its own loud row and vanishes once linked.
+    let invite_rows = if view.invite.is_some() { 4 } else { 0 };
     let rows = Layout::vertical([
-        Constraint::Length(1), // banner
-        Constraint::Length(1), // status strip
-        Constraint::Length(3), // stations
-        Constraint::Length(5), // fleet
-        Constraint::Min(3),    // log
-        Constraint::Length(8), // active region
-        Constraint::Length(1), // command line
+        Constraint::Length(1),           // banner
+        Constraint::Length(1),           // status strip
+        Constraint::Length(invite_rows), // invite (host, while unlinked)
+        Constraint::Length(3),           // stations
+        Constraint::Length(5),           // fleet
+        Constraint::Min(3),              // log
+        Constraint::Length(8),           // active region
+        Constraint::Length(1),           // command line
     ])
     .split(frame.area());
 
     banner(frame, rows[0], view);
     status(frame, rows[1], view);
-    stations(frame, rows[2], view);
-    fleet(frame, rows[3], view);
-    log(frame, rows[4], view);
-    active(frame, rows[5], view);
-    command(frame, rows[6]);
+    if let Some(link) = &view.invite {
+        invite(frame, rows[2], link);
+    }
+    stations(frame, rows[3], view);
+    fleet(frame, rows[4], view);
+    log(frame, rows[5], view);
+    active(frame, rows[6], view);
+    command(frame, rows[7]);
+}
+
+fn invite(frame: &mut Frame, area: Rect, link: &str) {
+    let lines = vec![
+        Line::from(Span::styled(
+            format!(" {link}"),
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(" send over a private channel — the link IS the operator's key"),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(Block::bordered().title("INVITE — OPERATOR NOT LINKED"))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn banner(frame: &mut Frame, area: Rect, view: &SessionView) {
@@ -240,6 +263,7 @@ mod tests {
             fleet: vec![],
             log: vec![],
             active,
+        invite: None,
         }
     }
 

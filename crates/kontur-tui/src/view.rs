@@ -117,6 +117,9 @@ pub struct SessionView {
     pub fleet: Vec<AgentCard>,
     pub log: Vec<LogLine>,
     pub active: ActiveRegion,
+    /// Host-side only: the operator invite, shown loudly while the second
+    /// station is unlinked and hidden the moment both stations link.
+    pub invite: Option<String>,
 }
 
 #[cfg(test)]

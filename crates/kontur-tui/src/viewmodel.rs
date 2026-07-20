@@ -45,7 +45,7 @@ pub async fn build_session_view(
         ActiveRegion::Idle
     };
 
-    SessionView { banner, status, stations, fleet: agents, log, active }
+    SessionView { banner, status, stations, fleet: agents, log, active, invite: None }
 }
 
 fn gate_card(gv: &GateView, stations: &[Station; 2], diff_preview: Option<String>) -> GateCard {

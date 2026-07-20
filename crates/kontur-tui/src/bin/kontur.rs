@@ -275,7 +275,8 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         println!("\nkontur host shutting down.");
     } else {
         let host_addr = format!("127.0.0.1:{}", op_addr.port());
-        run_remote(&host_addr, "HOST".into(), seed_a).await?;
+        let invite_cmd = format!("kontur join {invite_link}");
+        run_remote(&host_addr, "HOST".into(), seed_a, Some(invite_cmd)).await?;
     }
     Ok(())
 }
@@ -290,7 +291,7 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
         if first.starts_with("kontur://") {
             let (addr, seed) = parse_invite(first)
                 .map_err(|e| err(format!("invalid invite link: {e}")))?;
-            return run_remote(&addr, "OPERATOR".into(), seed).await;
+            return run_remote(&addr, "OPERATOR".into(), seed, None).await;
         }
     }
 
@@ -320,7 +321,7 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
     let seed_val_str = seed_str.ok_or_else(|| err("kontur join: --seed is required".into()))?;
     let seed = parse_seed_arg(&seed_val_str, "--seed")?;
 
-    run_remote(&addr, "OPERATOR".into(), seed).await
+    run_remote(&addr, "OPERATOR".into(), seed, None).await
 }
 
 // ---------------------------------------------------------------------------

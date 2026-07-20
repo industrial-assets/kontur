@@ -156,6 +156,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId) -> SessionView {
         fleet,
         log,
         active,
+        invite: None,
     }
 }
 
@@ -193,7 +194,12 @@ fn wire_gate_to_card(wg: &WireGate, stations: &[Station; 2]) -> GateCard {
 // ---------------------------------------------------------------------------
 
 /// Connect to a kontur-net session server, enter the TUI, and loop until quit.
-pub async fn run_remote(addr: &str, seat: String, seed: [u8; 32]) -> io::Result<()> {
+pub async fn run_remote(
+    addr: &str,
+    seat: String,
+    seed: [u8; 32],
+    invite: Option<String>,
+) -> io::Result<()> {
     let (client, mut rx) = SessionClient::connect_tcp(addr, seat, seed).await?;
     let own = client.operator();
 
@@ -246,7 +252,12 @@ pub async fn run_remote(addr: &str, seat: String, seed: [u8; 32]) -> io::Result<
         }
 
         let state = state_rx.borrow().clone();
-        let view = wire_to_view(&state, own);
+        let mut view = wire_to_view(&state, own);
+        // The invite is decision-relevant only while the stations are not both
+        // linked; the moment they are, it disappears (calm default).
+        if !view.status.linked {
+            view.invite = invite.clone();
+        }
 
         terminal.draw(|f| {
             if diff_open {
@@ -497,5 +508,25 @@ mod tests {
 
         let view = wire_to_view(&state, op(1));
         assert!(!view.status.linked);
+    }
+
+    #[test]
+    fn invite_gating_follows_linked_status() {
+        // Mirrors the run_remote gating: invite shows only while not both linked.
+        let mut state = base_state(WirePhase::Executing);
+        state.seats[1].linked = false;
+        let mut view = wire_to_view(&state, op(1));
+        let invite = Some("kontur join kontur://x:7777/aa".to_string());
+        if !view.status.linked {
+            view.invite = invite.clone();
+        }
+        assert!(view.invite.is_some());
+
+        let state2 = base_state(WirePhase::Executing);
+        let mut view2 = wire_to_view(&state2, op(1));
+        if !view2.status.linked {
+            view2.invite = invite.clone();
+        }
+        assert!(view2.invite.is_none());
     }
 }

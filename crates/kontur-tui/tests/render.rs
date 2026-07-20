@@ -31,6 +31,7 @@ fn base(active: ActiveRegion) -> SessionView {
         fleet: vec![],
         log: vec![],
         active,
+        invite: None,
     }
 }
 
@@ -129,4 +130,21 @@ fn session_close_no_longer_says_unanimous() {
     let s = draw(&base(ActiveRegion::SessionClosed(summary)));
     assert!(s.contains("4 gates"));
     assert!(!s.contains("unanimous"));
+}
+
+#[test]
+fn invite_panel_shows_full_link_when_set() {
+    let mut view = base(ActiveRegion::Idle);
+    view.status.linked = false;
+    view.invite = Some("kontur join kontur://203.0.113.5:7777/aabbccdd".into());
+    let s = draw(&view);
+    assert!(s.contains("INVITE — OPERATOR NOT LINKED"));
+    assert!(s.contains("kontur join kontur://203.0.113.5:7777/aabbccdd"));
+    assert!(s.contains("the link IS the operator's key"));
+}
+
+#[test]
+fn invite_panel_absent_when_none() {
+    let s = draw(&base(ActiveRegion::Idle));
+    assert!(!s.contains("INVITE"));
 }
