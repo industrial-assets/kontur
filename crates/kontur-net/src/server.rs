@@ -513,6 +513,9 @@ async fn handle_client_msg(
                         // over the scripted config plan; if both are empty, refuse.
                         let effective_plan = net.agent_plan.clone().unwrap_or_else(|| server.inner.cfg.plan.clone());
                         if effective_plan.is_empty() {
+                            // Consent must be re-signalled against the actual plan (no anchoring).
+                            net.seats[0].ready = false;
+                            net.seats[1].ready = false;
                             push_log(&mut net, "waiting for agent plan");
                             drop(net);
                             server.refresh_locked().await;

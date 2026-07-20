@@ -243,6 +243,29 @@ async fn real_agent_over_tcp() {
         })
         .await;
 
+        // --- 5. Test empty-plan refusal: both Ready while plan is empty --------
+        // Both seats send Ready while cfg.plan and agent_plan are still empty.
+        // Server must refuse the advance and clear both ready flags.
+        client_a.ready().await.unwrap();
+        client_b.ready().await.unwrap();
+
+        // Assert phase remains PlanReview and both seats show ready:false in state.
+        let _refusal_state = cur_a
+            .await_matching("A:plan-review-after-refusal", |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+                    && !s.seats[0].ready
+                    && !s.seats[1].ready
+            })
+            .await;
+
+        cur_b
+            .await_matching("B:plan-review-after-refusal", |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+                    && !s.seats[0].ready
+                    && !s.seats[1].ready
+            })
+            .await;
+
         // --- 5. Spawn the "real agent": rmcp client over TCP ------------------
         // The agent calls propose_plan {tasks:["t1: add guard"]} which blocks
         // until both operators approve the plan.
