@@ -64,6 +64,18 @@ struct HoldEntry {
     provenance: Provenance,
     watch_tx: watch::Sender<HoldState>,
     escalation_required: bool,
+    /// Senders from superseded gates that this entry now speaks for.
+    ///
+    /// When a hand-edit supersedes a pending gate, the old gate's watch sender
+    /// is transferred here rather than fired with a fake `Satisfied`. When
+    /// `submit_verdict` resolves this hold (either Satisfied or Blocked), it
+    /// publishes the real outcome on `watch_tx` AND on every sender here, so
+    /// agents parked on old receivers wake with the true combined-gate result.
+    ///
+    /// On double-supersede (hand-edit on a hand-edit), the intermediate entry's
+    /// `carried_watchers` are appended into the newest entry, so the original
+    /// agent's receiver is always reachable.
+    carried_watchers: Vec<watch::Sender<HoldState>>,
 }
 
 struct SessionState {
@@ -85,6 +97,16 @@ struct SessionState {
     /// resets to the new HEAD (harmless, audit coherent). A cast after the
     /// flag is refused → no accept post-abandon.
     abandoned: bool,
+    /// Supersession redirect table: `(old_gate_id, new_gate_id)`.
+    ///
+    /// When `hand_edit` supersedes a pending gate, a mapping from the old id
+    /// to the fresh gate's id is recorded here. `gate_outcome` follows the
+    /// chain transitively (a hand-edit on a hand-edit chains) so an agent
+    /// querying ANY earlier gate id gets the terminal outcome of whichever
+    /// live gate now owns that task's diff. The table is append-only and
+    /// never mutated once written — old entries remain to support queries for
+    /// any point in the supersession chain.
+    superseded: Vec<(GateId, GateId)>,
 }
 
 /// Owns session state behind a single lock and drives `kontur-core`.
@@ -108,6 +130,7 @@ impl GateHost {
                 plan_approved_tx,
                 _plan_approved_rx,
                 abandoned: false,
+                superseded: Vec::new(),
             })),
             workspace,
             events,
@@ -209,7 +232,7 @@ impl GateHost {
             Authorship::Agent,
         );
         let (tx, rx) = watch::channel(HoldState::Open);
-        st.holds.push(HoldEntry { hold, provenance, watch_tx: tx, escalation_required: false });
+        st.holds.push(HoldEntry { hold, provenance, watch_tx: tx, escalation_required: false, carried_watchers: vec![] });
         drop(st);
         let _ = self.events.send(HostEvent::GateOpened {
             gate_id: id.clone(),
@@ -265,7 +288,15 @@ impl GateHost {
         };
 
         let escalation_required = st.holds[idx].escalation_required;
+        // Publish the new state on the primary watch channel.
         let _ = st.holds[idx].watch_tx.send(state);
+        // Also publish on every carried sender — these belong to agents that
+        // were parked on a superseded gate's receiver and were transferred here
+        // by `hand_edit` instead of being given a fake Satisfied signal. They
+        // now receive the true combined-gate outcome.
+        for tx in &st.holds[idx].carried_watchers {
+            let _ = tx.send(state);
+        }
         let gate_id_for_event = gate_id.clone();
         drop(st);
         if matches!(state, HoldState::Satisfied | HoldState::Blocked) {
@@ -333,16 +364,45 @@ impl GateHost {
 
     /// Read a gate's terminal outcome (for the awaiting agent handler).
     /// Returns Some for a gate in ANY state; callers must inspect `state` before acting.
+    ///
+    /// # Supersession redirect
+    ///
+    /// When a `hand_edit` supersedes a pending gate it records a mapping
+    /// `(old_gate_id → new_gate_id)` in `SessionState::superseded`. This
+    /// method follows those mappings transitively before lookup, so an agent
+    /// querying an old gate id (because it called `begin_task_gate` before the
+    /// hand-edit arrived) gets the terminal outcome of the live gate that now
+    /// owns the combined diff. Chains are followed to completion — a hand-edit
+    /// on a hand-edit is handled correctly because each step appends its own
+    /// redirect.
     pub async fn gate_outcome(&self, gate_id: &GateId) -> Option<GateFinal> {
         let st = self.state.lock().await;
-        let e = st.holds.iter().find(|e| e.hold.gate_id() == gate_id)?;
+
+        // Follow supersession chain transitively.
+        let mut effective_id = gate_id;
+        // Use a step counter to guard against any hypothetical cycle (the
+        // table is append-only so cycles cannot form, but we bound the walk
+        // defensively).
+        let mut steps = 0usize;
+        while let Some((_, new_id)) = st.superseded.iter().find(|(old, _)| old == effective_id) {
+            effective_id = new_id;
+            steps += 1;
+            // Safety bound: more redirects than entries is impossible in a
+            // well-formed table. Break and fall through to a not-found result
+            // rather than looping forever.
+            if steps > st.superseded.len() {
+                break;
+            }
+        }
+
+        let e = st.holds.iter().find(|e| e.hold.gate_id() == effective_id)?;
         let state = e.hold.state();
         let remedy = e.hold.blocking_remedy();
         let reviewed_by = st
             .chain
             .records()
             .iter()
-            .find(|r| &r.core.gate_id == gate_id)
+            .find(|r| &r.core.gate_id == effective_id)
             .map(core_reviewed_by)
             .unwrap_or_default();
         Some(GateFinal { state, remedy, reviewed_by })
@@ -392,26 +452,48 @@ impl GateHost {
         // records stand. Verdicts on a superseded hold must return UnknownGate
         // ("superseded by hand-edit; verdicts must bind the combined diff").
         //
-        // Signal Satisfied through each superseded hold's watch channel before
-        // dropping the HoldEntry. This lets any awaiting agent task unblock
-        // cleanly rather than seeing a channel-closed error.
-        let superseded_ids: Vec<GateId> = st
-            .holds
-            .iter()
-            .filter(|e| {
-                e.hold.task_id() == &task_id
-                    && matches!(e.hold.state(), HoldState::Open | HoldState::Partial)
-            })
-            .map(|e| e.hold.gate_id().clone())
-            .collect();
-        // Signal before removing so watch receivers see Satisfied, not channel-closed.
-        for e in st.holds.iter().filter(|e| superseded_ids.contains(e.hold.gate_id())) {
-            let _ = e.watch_tx.send(HoldState::Satisfied);
-        }
-        st.holds
-            .retain(|e| !superseded_ids.contains(e.hold.gate_id()));
+        // CORRECTNESS: do NOT send any signal on the superseded holds' watch
+        // channels here. Sending `Satisfied` would tell a parked
+        // `propose_task_complete` that the task was APPROVED before the
+        // combined diff has been reviewed. If the fresh gate is then no-go'd,
+        // the agent has already moved on — workflow integrity broken.
+        //
+        // Instead we TRANSFER: the new `HoldEntry` collects the superseded
+        // entries' watch senders in `carried_watchers`. When `submit_verdict`
+        // resolves the fresh gate it publishes the real outcome on every
+        // carried sender, so the parked agent wakes with the true result.
+        //
+        // On double-supersede (hand-edit on a hand-edit), the intermediate
+        // entry's `carried_watchers` are appended too — every generation's
+        // receivers end up in the newest entry.
 
-        st.holds.push(HoldEntry { hold, provenance, watch_tx: tx, escalation_required });
+        // Phase 1: partition holds into superseded vs. kept. Collect the
+        // senders from superseded entries before dropping their HoldEntry
+        // values (moving out of the vec before retain removes the items).
+        let mut kept_holds: Vec<HoldEntry> = Vec::new();
+        let mut carried_watchers: Vec<watch::Sender<HoldState>> = Vec::new();
+        let mut superseded_ids: Vec<GateId> = Vec::new();
+        for entry in st.holds.drain(..) {
+            if entry.hold.task_id() == &task_id
+                && matches!(entry.hold.state(), HoldState::Open | HoldState::Partial)
+            {
+                superseded_ids.push(entry.hold.gate_id().clone());
+                // Transfer the primary sender and any already-carried senders
+                // into the new entry's carry list.
+                carried_watchers.push(entry.watch_tx);
+                carried_watchers.extend(entry.carried_watchers);
+            } else {
+                kept_holds.push(entry);
+            }
+        }
+        st.holds = kept_holds;
+
+        // Record supersession redirects so `gate_outcome` can follow chains.
+        for old_id in &superseded_ids {
+            st.superseded.push((old_id.clone(), id.clone()));
+        }
+
+        st.holds.push(HoldEntry { hold, provenance, watch_tx: tx, escalation_required, carried_watchers });
         drop(st);
 
         // Emit supersession events after the lock drops (best-effort display).
@@ -1212,5 +1294,209 @@ mod tests {
 
         // The resolved gate is findable via reviewed_by (it's in the chain).
         assert!(host.reviewed_by(&gid1).await.is_some(), "resolved gate must still be auditable");
+    }
+
+    // -----------------------------------------------------------------------
+    // Carried-watcher correctness tests (fix for supersede-sends-Satisfied bug)
+    // -----------------------------------------------------------------------
+
+    /// When `hand_edit` supersedes a pending gate, the agent parked on the
+    /// ORIGINAL rx must NOT observe `Satisfied` until the FRESH gate is
+    /// actually resolved with two go verdicts.
+    ///
+    /// Sequence:
+    ///   begin_task_gate (keep rx) → hand_edit same task → assert rx still
+    ///   shows Open/Partial → cast two go verdicts on fresh gate → assert rx
+    ///   now shows Satisfied.
+    #[tokio::test]
+    async fn superseded_agent_watch_gets_combined_outcome() {
+        use std::time::Duration;
+
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let task = TaskId("t1".into());
+        // Pragmatic so op1 (the editor) may co-sign.
+        let host = GateHost::new(
+            ctx(vec![op1.clone(), op2.clone()]).with_policy(kontur_core::GatePolicy {
+                independence: kontur_core::Independence::Pragmatic,
+                ..kontur_core::GatePolicy::default()
+            }),
+            ws.clone(),
+        );
+
+        // Agent opens gate and parks on the watch receiver.
+        ws.apply_write(&task, "a.rs", b"agent\n").unwrap();
+        let (original_gid, mut original_rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+
+        // Operator hand-edits, superseding the original gate.
+        let (fresh_gid, _fresh_rx) = host
+            .hand_edit(task.clone(), "a.rs", b"human\n", op1)
+            .await
+            .unwrap();
+        assert_ne!(fresh_gid, original_gid);
+
+        // IMPORTANT: after the hand-edit but BEFORE any verdicts, the original
+        // rx must still show Open or Partial — NOT Satisfied.
+        let state_mid = *original_rx.borrow();
+        assert!(
+            matches!(state_mid, HoldState::Open | HoldState::Partial),
+            "original rx must not observe Satisfied before fresh gate resolves; got: {state_mid:?}"
+        );
+
+        // Now resolve the fresh gate with two go verdicts.
+        let fresh_dh = host.pending_gates().await[0].diff_hash;
+        host.submit_verdict(&fresh_gid, go_verdict(1, &fresh_gid, fresh_dh)).await.unwrap();
+        host.submit_verdict(&fresh_gid, go_verdict(2, &fresh_gid, fresh_dh)).await.unwrap();
+
+        // The original rx must now observe Satisfied (the real combined outcome).
+        let _ = tokio::time::timeout(Duration::from_millis(100), original_rx.changed()).await;
+        let state_final = *original_rx.borrow_and_update();
+        assert_eq!(
+            state_final,
+            HoldState::Satisfied,
+            "original rx must observe Satisfied after fresh gate resolves"
+        );
+
+        // And the task must actually have been accepted.
+        assert_eq!(ws.accepted_tasks(), vec![task]);
+    }
+
+    /// When the fresh gate after a hand-edit is no-go'd, the original rx must
+    /// observe `Blocked` (not `Satisfied`). `gate_outcome` on the original gid
+    /// must redirect to the fresh gate's remedy via the supersession chain.
+    ///
+    /// Uses pragmatic policy so op1 (the editor) remains eligible to co-sign,
+    /// allowing a go from op2 followed by a no-go from op1 to resolve Blocked.
+    #[tokio::test]
+    async fn superseded_watch_gets_blocked_outcome() {
+        use std::time::Duration;
+
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let task = TaskId("t1".into());
+        // Pragmatic: op1 (the editor) remains eligible to cast verdicts.
+        let host = GateHost::new(
+            ctx(vec![op1.clone(), op2.clone()]).with_policy(kontur_core::GatePolicy {
+                independence: kontur_core::Independence::Pragmatic,
+                ..kontur_core::GatePolicy::default()
+            }),
+            ws.clone(),
+        );
+
+        ws.apply_write(&task, "a.rs", b"agent\n").unwrap();
+        let (original_gid, mut original_rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+
+        let (fresh_gid, _fresh_rx) = host
+            .hand_edit(task.clone(), "a.rs", b"human\n", op1)
+            .await
+            .unwrap();
+
+        // Resolve fresh gate as no-go: op2 go, then op1 no-go.
+        let fresh_dh = host.pending_gates().await[0].diff_hash;
+        host.submit_verdict(&fresh_gid, go_verdict(2, &fresh_gid, fresh_dh)).await.unwrap();
+        host.submit_verdict(&fresh_gid, nogo_verdict(1, &fresh_gid, fresh_dh, "rework needed")).await.unwrap();
+
+        // Original rx must observe Blocked.
+        let _ = tokio::time::timeout(Duration::from_millis(100), original_rx.changed()).await;
+        let state_final = *original_rx.borrow_and_update();
+        assert_eq!(
+            state_final,
+            HoldState::Blocked,
+            "original rx must observe Blocked when fresh gate is no-go'd"
+        );
+
+        // gate_outcome on original gid must redirect to the fresh gate's
+        // terminal outcome (including the remedy).
+        let outcome = host.gate_outcome(&original_gid).await.unwrap();
+        assert_eq!(outcome.state, HoldState::Blocked);
+        assert_eq!(
+            outcome.remedy,
+            Some(kontur_core::Remedy::Steer("rework needed".into())),
+            "gate_outcome must follow redirect and return fresh gate's remedy"
+        );
+    }
+
+    /// A double hand-edit (hand-edit on a hand-edit) must chain correctly:
+    /// the original rx AND the first-hand-edit rx must both observe the final
+    /// gate's outcome. `gate_outcome` must follow the redirect chain
+    /// transitively.
+    #[tokio::test]
+    async fn double_supersede_chains() {
+        use std::time::Duration;
+
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let task = TaskId("t1".into());
+        // Pragmatic so both operators can co-sign regardless of edit history.
+        let host = GateHost::new(
+            ctx(vec![op1.clone(), op2.clone()]).with_policy(kontur_core::GatePolicy {
+                independence: kontur_core::Independence::Pragmatic,
+                ..kontur_core::GatePolicy::default()
+            }),
+            ws.clone(),
+        );
+
+        // Agent gate.
+        ws.apply_write(&task, "a.rs", b"agent\n").unwrap();
+        let (gid_orig, mut rx_orig) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+
+        // First hand-edit: supersedes agent gate.
+        let (gid_mid, mut rx_mid) = host
+            .hand_edit(task.clone(), "a.rs", b"human-v1\n", op1)
+            .await
+            .unwrap();
+
+        // Second hand-edit: supersedes the first hand-edit gate.
+        let (gid_final, _rx_final) = host
+            .hand_edit(task.clone(), "a.rs", b"human-v2\n", op2)
+            .await
+            .unwrap();
+
+        assert_ne!(gid_orig, gid_mid);
+        assert_ne!(gid_mid, gid_final);
+
+        // Before any verdicts: both rx_orig and rx_mid must still show non-Satisfied.
+        let s_orig = *rx_orig.borrow();
+        let s_mid = *rx_mid.borrow();
+        assert!(
+            matches!(s_orig, HoldState::Open | HoldState::Partial),
+            "rx_orig must not prematurely show Satisfied; got: {s_orig:?}"
+        );
+        assert!(
+            matches!(s_mid, HoldState::Open | HoldState::Partial),
+            "rx_mid must not prematurely show Satisfied; got: {s_mid:?}"
+        );
+
+        // Resolve the final gate.
+        let final_dh = host.pending_gates().await[0].diff_hash;
+        host.submit_verdict(&gid_final, go_verdict(1, &gid_final, final_dh)).await.unwrap();
+        host.submit_verdict(&gid_final, go_verdict(2, &gid_final, final_dh)).await.unwrap();
+
+        // Both rx_orig and rx_mid must observe Satisfied.
+        let _ = tokio::time::timeout(Duration::from_millis(100), rx_orig.changed()).await;
+        let _ = tokio::time::timeout(Duration::from_millis(100), rx_mid.changed()).await;
+        assert_eq!(
+            *rx_orig.borrow_and_update(),
+            HoldState::Satisfied,
+            "rx_orig must observe final gate's Satisfied"
+        );
+        assert_eq!(
+            *rx_mid.borrow_and_update(),
+            HoldState::Satisfied,
+            "rx_mid must observe final gate's Satisfied"
+        );
+
+        // gate_outcome follows the redirect chain transitively.
+        let outcome_orig = host.gate_outcome(&gid_orig).await.unwrap();
+        assert_eq!(outcome_orig.state, HoldState::Satisfied, "gate_outcome(gid_orig) must redirect to final gate");
+
+        let outcome_mid = host.gate_outcome(&gid_mid).await.unwrap();
+        assert_eq!(outcome_mid.state, HoldState::Satisfied, "gate_outcome(gid_mid) must redirect to final gate");
+
+        // And the task was accepted exactly once.
+        assert_eq!(ws.accepted_tasks(), vec![task]);
     }
 }
