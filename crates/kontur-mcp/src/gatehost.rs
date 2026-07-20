@@ -110,6 +110,16 @@ impl GateHost {
     /// to `true` when both operators approve. Re-proposal overwrites (idempotent).
     pub async fn propose_plan(&self, tasks: Vec<String>) -> watch::Receiver<bool> {
         let mut st = self.state.lock().await;
+        // BUG CLASS: approval state lifetime must match proposal, not session.
+        // Create a fresh watch channel on each proposal. Prior subscribers are
+        // closed (their changed() errors), correctly surfacing "plan superseded".
+        // This prevents the stale-approval bypass: after approve_plan() sets
+        // `true`, a re-proposal returning a subscriber from the *old* channel
+        // would immediately read true without operator action.
+        let (new_tx, new_rx) = watch::channel(false);
+        st.plan_approved_tx = new_tx;
+        st._plan_approved_rx = new_rx;
+
         st.plan = Some(tasks.clone());
         // Return a new subscriber BEFORE releasing the lock so the initial
         // `false` is always visible and `send_replace(true)` from approve_plan
@@ -659,37 +669,28 @@ mod tests {
         }
         assert!(got_event, "PlanProposed event not received");
 
-        // Obtain a second receiver BEFORE approving.
-        let mut rx2 = host.propose_plan(tasks.clone()).await;
+        // Obtain a fresh receiver on the same proposal channel.
+        let mut rx2 = {
+            let st = host.state.lock().await;
+            st.plan_approved_tx.subscribe()
+        };
         assert!(!*rx2.borrow());
 
         // Approve.
         host.approve_plan().await;
 
-        // Both the original receiver and rx2 (obtained before approve) observe true.
-        // Allow async propagation.
+        // Both receivers on the current channel observe true after approval.
         let _ = tokio::time::timeout(Duration::from_millis(100), rx.changed()).await;
         let _ = tokio::time::timeout(Duration::from_millis(100), rx2.changed()).await;
-        assert!(*rx.borrow_and_update(), "original rx must see true after approve");
-        assert!(*rx2.borrow_and_update(), "rx2 (pre-approve subscribe) must see true");
+        assert!(*rx.borrow_and_update(), "rx must see true after approve");
+        assert!(*rx2.borrow_and_update(), "rx2 (direct subscribe) must see true");
 
-        // A receiver obtained AFTER approve also sees true (send_replace property).
-        let rx3 = host.propose_plan(tasks.clone()).await;
-        // Re-propose clears and re-emits; approve_plan was called on the old channel,
-        // so this is a fresh channel. Approve again and verify.
-        host.approve_plan().await;
-        let _ = tokio::time::timeout(Duration::from_millis(100), {
-            let mut r = rx3;
-            async move { r.changed().await }
-        }).await;
-        // Simpler: just get a fresh rx from the already-approved channel via another subscribe.
-        // The real property to check: a receiver returned by propose_plan after approve_plan
-        // on the same plan-channel sees true immediately.
-        let rx4 = {
+        // A receiver obtained AFTER approve on the same channel sees true immediately (send_replace property).
+        let rx3 = {
             let st = host.state.lock().await;
             st.plan_approved_tx.subscribe()
         };
-        assert!(*rx4.borrow(), "subscriber after send_replace(true) must see true immediately");
+        assert!(*rx3.borrow(), "subscriber after send_replace(true) must see true immediately");
     }
 
     #[tokio::test]
@@ -707,6 +708,40 @@ mod tests {
             host.proposed_plan().await,
             Some(vec!["task-b".to_string(), "task-c".to_string()])
         );
+    }
+
+    #[tokio::test]
+    async fn reproposal_resets_approval() {
+        use std::time::Duration;
+
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let host = GateHost::new(ctx(vec![op1, op2]), ws);
+
+        // Propose plan A and approve it.
+        let mut rx1 = host.propose_plan(vec!["task-a".to_string()]).await;
+        host.approve_plan().await;
+
+        // The original receiver sees true.
+        let _ = tokio::time::timeout(Duration::from_millis(100), rx1.changed()).await;
+        assert!(*rx1.borrow_and_update(), "original rx must see true after approve");
+
+        // Re-propose plan B: fresh watch channel, state reset to false.
+        let mut rx2 = host.propose_plan(vec!["task-b".to_string()]).await;
+        assert!(!*rx2.borrow(), "re-proposal must reset approval to false");
+
+        // The old receiver's changed() now errors (channel closed by the swap).
+        let changed_result = tokio::time::timeout(Duration::from_millis(100), rx1.changed()).await;
+        assert!(
+            changed_result.is_err() || matches!(changed_result, Ok(Err(_))),
+            "old receiver's changed() must fail after channel swap"
+        );
+
+        // Approve the new plan: fresh watch transitions to true.
+        host.approve_plan().await;
+        let _ = tokio::time::timeout(Duration::from_millis(100), rx2.changed()).await;
+        assert!(*rx2.borrow_and_update(), "new rx must see true after fresh approve");
     }
 
     #[tokio::test]
