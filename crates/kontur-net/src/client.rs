@@ -108,16 +108,6 @@ impl SessionClient {
         Ok((client, rx))
     }
 
-    /// Connect to a TCP endpoint and attach.
-    pub async fn connect_tcp(
-        addr: &str,
-        seat: String,
-        seed: [u8; 32],
-    ) -> io::Result<(SessionClient, mpsc::Receiver<ServerMsg>)> {
-        let stream = tokio::net::TcpStream::connect(addr).await?;
-        Self::attach(stream, seat, seed).await
-    }
-
     /// Connect to a TCP endpoint without TLS. Only for in-process/loopback tests
     /// (e.g., tests using `attach` directly with duplex streams).
     /// Production operator connections use `connect_pinned_tls`.

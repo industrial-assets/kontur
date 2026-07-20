@@ -101,6 +101,9 @@ Agent writes, commands, and gate openings stream live into the operator console
 as they happen — no keypress needed. Every task completion parks at a four-eyes
 gate until both operators cast a verdict. Enforcement is permission-level: native
 mutation tools are denied via CC's `--allowedTools`/`--disallowedTools` flags.
+Enforcement relies on Claude Code's own permission flags, not an OS-level sandbox.
+The operator wire is TLS-encrypted with the cert pinned via the fingerprint embedded
+in the invite link.
 
 The design lives in:
 

@@ -281,10 +281,10 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
 
         // Build the prompt from the session prompt.
         let full_prompt = agent_prompt(&effective_prompt);
-        let cmd = build_claude_command(
-            mcp_config_path.to_str().unwrap_or("/tmp/kontur-mcp.json"),
-            &full_prompt,
-        );
+        let mcp_config_str = mcp_config_path
+            .to_str()
+            .ok_or_else(|| err("session temp path is not valid UTF-8".into()))?;
+        let cmd = build_claude_command(mcp_config_str, &full_prompt);
 
         let log_path_clone = log_path.clone();
         let server_clone = server.clone();

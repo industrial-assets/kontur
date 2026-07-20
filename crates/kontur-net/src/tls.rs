@@ -277,12 +277,14 @@ mod tests {
             result.is_err(),
             "wrong pin must cause connect_pinned to fail"
         );
+        // The error message is forwarded from the rustls General error we emit
+        // in PinnedVerifier::verify_server_cert; confirm it mentions the mismatch.
+        // (If rustls ever wraps the message in a way that obscures the text, the
+        // is_err() assertion above is still the load-bearing check.)
         let err_str = result.unwrap_err().to_string();
-        // The error should mention the mismatch (via the rustls error message
-        // forwarded through io::Error).
         assert!(
-            err_str.contains("mismatch") || err_str.contains("fingerprint") || !err_str.is_empty(),
-            "expected error mentioning mismatch; got: {err_str}"
+            err_str.contains("mismatch") || err_str.contains("fingerprint"),
+            "expected error mentioning mismatch or fingerprint; got: {err_str}"
         );
     }
 

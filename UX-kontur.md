@@ -69,7 +69,7 @@ Persistent chrome, top to bottom. Regions are fixed; only their contents change 
 ## 5. Interaction model
 
 ### 5.1 Keyboard
-Global keys are always live (dispatch, help, session). Panel actions apply to the focused panel. Gate actions (`[g]` go, `[r]` no-go+remedy, `[e]` hand-edit, `[d]` discuss) appear only when a gate is active. Every on-screen action shows its key inline — no hidden verbs.
+Global keys are always live (dispatch, help, session). Panel actions apply to the focused panel. Gate actions (`[g]` go, `[r]` no-go+remedy, `[e]` hand-edit, `[d]` discuss) appear only when a gate is active. Additional keys: `[o]` diff (required before go) · `[l]` invite link toggle · `[k]` abandon (confirm). Every on-screen action shows its key inline — no hidden verbs.
 
 ### 5.2 Claiming
 The shared review queue and any active gate can be **claimed** by one operator, which shows on the other's console ("j.reed reviewing gate-03"). Claiming prevents both operators babysitting the same thing while other agents run unwatched (PRD FR-3). It's a soft signal, not a lock on the *other's* right to weigh in — but only one operator drives a given gate's interaction at a time.

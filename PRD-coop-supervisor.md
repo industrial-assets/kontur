@@ -117,13 +117,13 @@ Co-op Supervisor reintroduces the pair, one layer up. Instead of two people at o
 - **FR-21** The final merge commit carries maker-checker **git trailers** (`Reviewed-by: …` per operator) plus a content-addressed link to the full record. An inline session transcript in the commit message is **optional**; capturing the record itself is not.
 
 ### Exception handling
-- **FR-22** Blocked (dependency unresolved), Failed (agent error/stuck → human decision: retry / re-prompt / abandon), and Abandoned (supervisor kill-switch, terminal) states are first-class.
+- **FR-22** Blocked (dependency unresolved), Failed (agent error/stuck → human decision: retry / re-prompt / abandon), and Abandoned (supervisor kill-switch, terminal) states are first-class. *(kill-switch/ABANDONED implemented 20 Jul 2026; FAILED surfaced on agent exit)*
 
 ### Independence & rotation
 - **FR-23** Role rotation (driver ↔ navigator) supported per task or session; by default the operator who navigated the prompt leads the merge review.
 
   > **Superseded (20 Jul 2026):** driver/navigator rotation is replaced by structural **Host/Operator** seats (the Host provides the agent backend; both seats are co-equal checkers; no rotation). Independence now rests on the two-distinct-keys requirement alone.
-- **FR-24** Approvals require genuine engagement — an operator cannot approve from a summary alone; the actual diff must be opened. (proposed)
+- **FR-24** Approvals require genuine engagement — an operator cannot approve from a summary alone; the actual diff must be opened. (proposed) *(implemented: go requires the opened diff; review depth recorded truthfully in the signed verdict — 20 Jul 2026)*
 
 ### Risk-tiering (proposed / optional)
 - **FR-25** Optional per-path risk tiers: low-risk tasks may allow lighter review; flagged paths (auth, payments, migrations) always require both operators, full-diff review, and green tests. *Note: current decision is uniform dual approval everywhere; tiering is offered as a throughput valve to consider, not a committed requirement.*
