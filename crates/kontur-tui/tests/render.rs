@@ -32,6 +32,7 @@ fn base(active: ActiveRegion) -> SessionView {
         log: vec![],
         active,
         invite: None,
+        notice: None,
     }
 }
 

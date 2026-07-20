@@ -125,6 +125,9 @@ pub struct SessionView {
     /// Host-side only: the operator invite, shown loudly while the second
     /// station is unlinked and hidden the moment both stations link.
     pub invite: Option<String>,
+    /// Transient notice shown on the command row (bold) for a few frames —
+    /// e.g. rejection hints or confirm prompts. None → plain " > " prompt.
+    pub notice: Option<String>,
 }
 
 #[cfg(test)]

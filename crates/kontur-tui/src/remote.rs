@@ -160,6 +160,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId) -> SessionView {
         log,
         active,
         invite: None,
+        notice: None,
     }
 }
 
@@ -334,6 +335,17 @@ pub async fn run_remote(
             }
         }
 
+        // Transient notice: while ttl > 0 the rejection/confirm message is
+        // shown on the command row inside the TUI (never via eprintln).
+        if rejected_ttl > 0 {
+            view.notice = rejected_msg.clone();
+        }
+        // ConfirmAbandon state: surface the confirm prompt via notice while
+        // composing (ttl may not be set yet if the state was just entered).
+        if matches!(compose, ComposeTarget::ConfirmAbandon) && view.notice.is_none() {
+            view.notice = Some("abandon session? [y] confirm · [esc] cancel".into());
+        }
+
         terminal.draw(|f| {
             if diff_open {
                 if let ActiveRegion::Gate(ref card) = view.active {
@@ -467,11 +479,6 @@ pub async fn run_remote(
             }
 
             Some(_) => {}
-        }
-
-        // Show rejection reason as transient hint (mirrors the Rejected mechanism).
-        if let Some(ref msg) = rejected_msg {
-            eprintln!("REJECTED: {}", msg);
         }
     }
 

@@ -35,7 +35,7 @@ pub fn render(frame: &mut Frame, view: &SessionView) {
     fleet(frame, rows[4], view);
     log(frame, rows[5], view);
     active(frame, rows[6], view);
-    command(frame, rows[7]);
+    command(frame, rows[7], view);
 }
 
 fn invite(frame: &mut Frame, area: Rect, link: &str) {
@@ -259,8 +259,19 @@ fn active(frame: &mut Frame, area: Rect, view: &SessionView) {
     }
 }
 
-fn command(frame: &mut Frame, area: Rect) {
-    frame.render_widget(Paragraph::new(" > "), area);
+fn command(frame: &mut Frame, area: Rect, view: &SessionView) {
+    let text = match &view.notice {
+        Some(msg) => {
+            use ratatui::text::Line;
+            let line = Line::from(Span::styled(
+                format!(" > {msg}"),
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+            Paragraph::new(line)
+        }
+        None => Paragraph::new(" > "),
+    };
+    frame.render_widget(text, area);
 }
 
 /// Render a full-screen diff view with a close hint.
@@ -296,7 +307,8 @@ mod tests {
             fleet: vec![],
             log: vec![],
             active,
-        invite: None,
+            invite: None,
+            notice: None,
         }
     }
 
@@ -354,6 +366,35 @@ mod tests {
         assert!(
             !rendered.contains("Reviewed-by"),
             "must not show Reviewed-by when abandoned"
+        );
+    }
+
+    /// Golden test: notice=Some renders bold hint on the command row;
+    /// notice=None renders the bare " > " prompt.
+    #[test]
+    fn command_row_renders_notice_when_some() {
+        let backend = TestBackend::new(120, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut view = minimal_view(ActiveRegion::Idle);
+        view.notice = Some("open the diff first — [o]".into());
+        terminal.draw(|f| render(f, &view)).unwrap();
+        let rendered = terminal.backend().to_string();
+        assert!(
+            rendered.contains("open the diff first"),
+            "expected notice text in rendered output; got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn command_row_renders_bare_prompt_when_notice_none() {
+        let backend = TestBackend::new(120, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let view = minimal_view(ActiveRegion::Idle);
+        terminal.draw(|f| render(f, &view)).unwrap();
+        let rendered = terminal.backend().to_string();
+        assert!(
+            rendered.contains(" > "),
+            "expected bare prompt ' > ' in rendered output; got:\n{rendered}"
         );
     }
 

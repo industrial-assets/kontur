@@ -339,6 +339,11 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
                 .args(&cmd.args)
                 .stdout(Stdio::from(log_file))
                 .stderr(Stdio::from(stderr_file))
+                // Backstop: if this task is dropped (e.g. the process exits
+                // before the select! below can send SIGKILL), the OS child is
+                // still killed. tokio::process::Child does NOT kill on drop by
+                // default, so we opt-in explicitly.
+                .kill_on_drop(true)
                 .spawn()
             {
                 Ok(c) => {
@@ -363,35 +368,65 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
                 }
             };
 
-            // Await child exit.
-            match child.wait().await {
-                Ok(status) if status.success() => {
-                    server_clone.agent_done().await;
+            // Watch for session close (abandoned or normal) so we can kill the
+            // child promptly. select! races the child's own exit against a
+            // WirePhase::Closed observation. Whichever fires first wins.
+            let mut close_rx = server_clone.state_rx();
+            tokio::select! {
+                // Branch 1: child exited on its own.
+                wait_result = child.wait() => {
+                    match wait_result {
+                        Ok(status) if status.success() => {
+                            server_clone.agent_done().await;
+                        }
+                        Ok(status) => {
+                            let code = status
+                                .code()
+                                .map(|c| c.to_string())
+                                .unwrap_or_else(|| "signal".into());
+                            server_clone
+                                .agent_log(format!(
+                                    "claude agent exited with status {code} — see {}",
+                                    log_path_clone.display()
+                                ))
+                                .await;
+                            use kontur_net::WireFleetCard;
+                            server_clone
+                                .agent_status(WireFleetCard {
+                                    id: "claude-01".into(),
+                                    status: format!("FAILED — see {}", log_path_clone.display()),
+                                    tokens: 0,
+                                    needs_signoff: false,
+                                })
+                                .await;
+                        }
+                        Err(e) => {
+                            server_clone
+                                .agent_log(format!("claude agent: wait error: {e}"))
+                                .await;
+                        }
+                    }
                 }
-                Ok(status) => {
-                    let code = status
-                        .code()
-                        .map(|c| c.to_string())
-                        .unwrap_or_else(|| "signal".into());
+                // Branch 2: session closed (abandoned or normal close) before
+                // the child exited — send SIGKILL so the child does not linger.
+                _ = async {
+                    loop {
+                        {
+                            let state = close_rx.borrow_and_update().clone();
+                            if matches!(state.phase, WirePhase::Closed { .. }) {
+                                break;
+                            }
+                        }
+                        if close_rx.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                } => {
+                    // Session closed — kill the child and wait for it to reap.
+                    let _ = child.start_kill();
+                    let _ = child.wait().await;
                     server_clone
-                        .agent_log(format!(
-                            "claude agent exited with status {code} — see {}",
-                            log_path_clone.display()
-                        ))
-                        .await;
-                    use kontur_net::WireFleetCard;
-                    server_clone
-                        .agent_status(WireFleetCard {
-                            id: "claude-01".into(),
-                            status: format!("FAILED — see {}", log_path_clone.display()),
-                            tokens: 0,
-                            needs_signoff: false,
-                        })
-                        .await;
-                }
-                Err(e) => {
-                    server_clone
-                        .agent_log(format!("claude agent: wait error: {e}"))
+                        .agent_log("claude agent stopped (session closed)".into())
                         .await;
                 }
             }
