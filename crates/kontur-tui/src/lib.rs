@@ -8,6 +8,7 @@ pub mod render;
 pub mod app;
 pub mod demo;
 pub mod remote;
+pub mod link;
 
 pub use view::{
     ActiveRegion, AgentCard, AuditSummary, Banner, GateCard, InterventionCard, KeyStatus, KeyView,
