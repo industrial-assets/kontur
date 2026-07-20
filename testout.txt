@@ -1,0 +1,14 @@
+
+running 12 tests
+test protocol::tests::sealed_key_on_the_wire_carries_no_value ... ok
+test codec::tests::roundtrip_client_rotate ... ok
+test codec::tests::roundtrip_client_hand_edit ... ok
+test codec::tests::roundtrip_server_rejected ... ok
+test codec::tests::roundtrip_server_welcome ... ok
+test codec::tests::roundtrip_server_state ... ok
+test codec::tests::roundtrip_client_bye ... ok
+test codec::tests::roundtrip_client_ready ... ok
+test codec::tests::read_json_eof has been running for over 60 seconds
+test codec::tests::read_json_invalid has been running for over 60 seconds
+test codec::tests::roundtrip_client_cast has been running for over 60 seconds
+test codec::tests::roundtrip_client_hello has been running for over 60 seconds
