@@ -259,7 +259,7 @@ pub async fn run_remote(
     seat: String,
     seed: [u8; 32],
     invite: Option<crate::link::InviteLinks>,
-    fingerprint: Option<[u8; 32]>,
+    fingerprint: Option<[u8; 16]>,
 ) -> io::Result<()> {
     let (client, mut rx) = match fingerprint {
         Some(fp) => SessionClient::connect_pinned_tls(addr, seat, seed, fp).await?,
