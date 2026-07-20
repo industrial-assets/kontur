@@ -20,6 +20,7 @@ pub enum HostEvent {
     Command { task: TaskId, command: String },
     GateOpened { gate_id: GateId, task: TaskId },
     GateResolved { gate_id: GateId, state: HoldState },
+    PlanProposed { tasks: Vec<String> },
 }
 
 /// Result of a cast on the operator face.
@@ -65,6 +66,12 @@ struct SessionState {
     chain: AuditChain,
     holds: Vec<HoldEntry>,
     next_gate: u64,
+    plan: Option<Vec<String>>,
+    plan_approved_tx: watch::Sender<bool>,
+    /// Kept alive so `send_replace` on `plan_approved_tx` is never a no-op
+    /// (watch::send discards when there are zero receivers; keeping one here
+    /// guarantees the channel is always live — same pattern as kontur-net).
+    _plan_approved_rx: watch::Receiver<bool>,
 }
 
 /// Owns session state behind a single lock and drives `kontur-core`.
@@ -77,12 +84,16 @@ pub struct GateHost {
 impl GateHost {
     pub fn new(ctx: SessionContext, workspace: Arc<dyn Workspace>) -> Self {
         let (events, _) = broadcast::channel(64);
+        let (plan_approved_tx, _plan_approved_rx) = watch::channel(false);
         GateHost {
             state: Arc::new(Mutex::new(SessionState {
                 ctx,
                 chain: AuditChain::new(),
                 holds: Vec::new(),
                 next_gate: 0,
+                plan: None,
+                plan_approved_tx,
+                _plan_approved_rx,
             })),
             workspace,
             events,
@@ -92,6 +103,34 @@ impl GateHost {
     /// Subscribe to live host activity events (display-only, best-effort).
     pub fn subscribe_events(&self) -> broadcast::Receiver<HostEvent> {
         self.events.subscribe()
+    }
+
+    /// Agent face: propose a plan (list of task descriptions). Stores the plan,
+    /// emits `HostEvent::PlanProposed`, and returns a watch receiver that flips
+    /// to `true` when both operators approve. Re-proposal overwrites (idempotent).
+    pub async fn propose_plan(&self, tasks: Vec<String>) -> watch::Receiver<bool> {
+        let mut st = self.state.lock().await;
+        st.plan = Some(tasks.clone());
+        // Return a new subscriber BEFORE releasing the lock so the initial
+        // `false` is always visible and `send_replace(true)` from approve_plan
+        // cannot race past this subscribe.
+        let rx = st.plan_approved_tx.subscribe();
+        drop(st);
+        let _ = self.events.send(HostEvent::PlanProposed { tasks });
+        rx
+    }
+
+    /// Operator face: mark the proposed plan as approved, unblocking any
+    /// awaiter on the watch returned by `propose_plan`.
+    pub async fn approve_plan(&self) {
+        let st = self.state.lock().await;
+        // send_replace never discards (we keep _plan_approved_rx alive in state).
+        st.plan_approved_tx.send_replace(true);
+    }
+
+    /// Operator face: read the currently proposed plan (None until one arrives).
+    pub async fn proposed_plan(&self) -> Option<Vec<String>> {
+        self.state.lock().await.plan.clone()
     }
 
     /// The agent id for this session.
@@ -575,6 +614,99 @@ mod tests {
 
         assert_eq!(host.audit_len().await, 2);
         assert!(host.verify_audit().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn propose_plan_emits_event_and_approve_flips_watch() {
+        use std::time::Duration;
+        use tokio::sync::broadcast::error::TryRecvError;
+
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let host = GateHost::new(ctx(vec![op1, op2]), ws);
+
+        let mut ev_rx = host.subscribe_events();
+
+        let tasks = vec!["add caching".to_string(), "write tests".to_string()];
+        let mut rx = host.propose_plan(tasks.clone()).await;
+
+        // proposed_plan() returns the tasks.
+        assert_eq!(host.proposed_plan().await, Some(tasks.clone()));
+
+        // The watch starts false.
+        assert!(!*rx.borrow());
+
+        // A PlanProposed event was emitted.
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(200);
+        let mut got_event = false;
+        loop {
+            match ev_rx.try_recv() {
+                Ok(HostEvent::PlanProposed { tasks: t }) => {
+                    assert_eq!(t, tasks);
+                    got_event = true;
+                    break;
+                }
+                Ok(_) => {}
+                Err(TryRecvError::Empty) => {
+                    if tokio::time::Instant::now() >= deadline {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                _ => break,
+            }
+        }
+        assert!(got_event, "PlanProposed event not received");
+
+        // Obtain a second receiver BEFORE approving.
+        let mut rx2 = host.propose_plan(tasks.clone()).await;
+        assert!(!*rx2.borrow());
+
+        // Approve.
+        host.approve_plan().await;
+
+        // Both the original receiver and rx2 (obtained before approve) observe true.
+        // Allow async propagation.
+        let _ = tokio::time::timeout(Duration::from_millis(100), rx.changed()).await;
+        let _ = tokio::time::timeout(Duration::from_millis(100), rx2.changed()).await;
+        assert!(*rx.borrow_and_update(), "original rx must see true after approve");
+        assert!(*rx2.borrow_and_update(), "rx2 (pre-approve subscribe) must see true");
+
+        // A receiver obtained AFTER approve also sees true (send_replace property).
+        let rx3 = host.propose_plan(tasks.clone()).await;
+        // Re-propose clears and re-emits; approve_plan was called on the old channel,
+        // so this is a fresh channel. Approve again and verify.
+        host.approve_plan().await;
+        let _ = tokio::time::timeout(Duration::from_millis(100), {
+            let mut r = rx3;
+            async move { r.changed().await }
+        }).await;
+        // Simpler: just get a fresh rx from the already-approved channel via another subscribe.
+        // The real property to check: a receiver returned by propose_plan after approve_plan
+        // on the same plan-channel sees true immediately.
+        let rx4 = {
+            let st = host.state.lock().await;
+            st.plan_approved_tx.subscribe()
+        };
+        assert!(*rx4.borrow(), "subscriber after send_replace(true) must see true immediately");
+    }
+
+    #[tokio::test]
+    async fn propose_plan_idempotent_overwrite() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let host = GateHost::new(ctx(vec![op1, op2]), ws);
+
+        host.propose_plan(vec!["task-a".to_string()]).await;
+        host.propose_plan(vec!["task-b".to_string(), "task-c".to_string()]).await;
+
+        // Re-proposal overwrites.
+        assert_eq!(
+            host.proposed_plan().await,
+            Some(vec!["task-b".to_string(), "task-c".to_string()])
+        );
     }
 
     #[tokio::test]

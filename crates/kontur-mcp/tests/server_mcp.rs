@@ -9,6 +9,7 @@ use kontur_mcp::{GateHost, InMemoryWorkspace, KonturServer, SessionContext};
 use rmcp::model::CallToolRequestParams;
 use rmcp::{serve_server, ServiceExt};
 
+
 fn go(seed: u8, gate_id: &GateId, dh: Hash) -> CastVerdict {
     let signer = Ed25519Signer::from_seed([seed; 32]);
     CastVerdict::create(&signer, &FixedClock(1000 + seed as i64), gate_id, dh, Verdict::Go, ReviewDepth::FullDiff, None)
@@ -80,4 +81,69 @@ async fn agent_write_then_propose_gated_by_two_operators() {
     assert!(host.verify_audit().await.is_ok());
     assert_eq!(ws.accepted_tasks(), vec![TaskId("t1".into())]);
     assert_eq!(host.reviewed_by(&gate_id).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn propose_plan_blocks_until_approved() {
+    let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+    let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+    let ws = Arc::new(InMemoryWorkspace::new());
+    let ctx = SessionContext::new("plan gate test", op1, "agent-02", "claude", "1.0", vec![op1, op2]);
+    let host = Arc::new(GateHost::new(ctx, ws));
+
+    let (server_io, client_io) = tokio::io::duplex(8192);
+    let server = KonturServer::new(host.clone());
+    tokio::spawn(async move {
+        if let Ok(running) = serve_server(server, server_io).await {
+            let _ = running.waiting().await;
+        }
+    });
+    let client = ().serve(client_io).await.expect("client handshake");
+
+    let plan_args = serde_json::json!({ "tasks": ["add caching", "write tests"] })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+    let client2 = client.clone();
+    let propose = tokio::spawn(async move {
+        client2
+            .call_tool(CallToolRequestParams::new("propose_plan").with_arguments(plan_args))
+            .await
+    });
+
+    // Poll until the plan is stored (the spawned task has called propose_plan on the host).
+    for _ in 0..2000 {
+        if host.proposed_plan().await.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert_eq!(
+        host.proposed_plan().await,
+        Some(vec!["add caching".to_string(), "write tests".to_string()]),
+        "plan must be stored before approve"
+    );
+
+    // Assert the tool call has NOT yet completed (plan not approved).
+    assert!(!propose.is_finished(), "propose_plan must still be blocking");
+
+    // Approve — should unblock the tool call.
+    host.approve_plan().await;
+
+    let result = tokio::time::timeout(Duration::from_secs(5), propose)
+        .await
+        .expect("approve must unblock within 5s")
+        .expect("task join")
+        .expect("propose_plan tool call ok");
+
+    assert_eq!(result.is_error, Some(false));
+    // Verify the returned JSON contains approved:true.
+    let content = &result.content[0];
+    let text = match content {
+        rmcp::model::ContentBlock::Text(t) => &t.text,
+        other => panic!("unexpected content: {other:?}"),
+    };
+    let v: serde_json::Value = serde_json::from_str(text).expect("valid json");
+    assert_eq!(v["approved"], serde_json::Value::Bool(true));
 }

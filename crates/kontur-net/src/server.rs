@@ -265,6 +265,24 @@ impl SessionServer {
                 let _ = gate_id;
                 self.refresh_locked().await;
             }
+            HostEvent::PlanProposed { tasks } => {
+                let n = tasks.len();
+                let mut net = self.inner.net.lock().await;
+                if let Some(existing) = net.fleet.iter_mut().find(|c| c.id == agent_id) {
+                    existing.status = format!("plan: {n} task(s) awaiting approval");
+                    existing.needs_signoff = true;
+                } else {
+                    net.fleet.push(WireFleetCard {
+                        id: agent_id.to_owned(),
+                        status: format!("plan: {n} task(s) awaiting approval"),
+                        tokens: 0,
+                        needs_signoff: true,
+                    });
+                }
+                push_log(&mut net, &format!("{agent_id} proposed plan ({n} tasks)"));
+                drop(net);
+                self.refresh_locked().await;
+            }
         }
     }
 

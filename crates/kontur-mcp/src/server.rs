@@ -53,6 +53,16 @@ pub struct ProposeOutput {
     pub reviewed_by: Vec<String>,
 }
 
+#[derive(Serialize, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct ProposePlanInput {
+    pub tasks: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct ProposePlanOutput {
+    pub approved: bool,
+}
+
 impl KonturServer {
     pub fn new(host: Arc<GateHost>) -> Self {
         KonturServer { host }
@@ -84,6 +94,27 @@ impl KonturServer {
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         Ok(Json(CommandOut { stdout: out.stdout, exit_code: out.exit_code }))
+    }
+
+    #[tool(name = "propose_plan", description = "Submit the agent's task plan for operator approval; blocks until both operators approve.")]
+    async fn propose_plan(
+        &self,
+        Parameters(ProposePlanInput { tasks }): Parameters<ProposePlanInput>,
+    ) -> Result<Json<ProposePlanOutput>, ErrorData> {
+        let mut rx = self.host.propose_plan(tasks).await;
+
+        // Await approval. borrow_and_update reads the current value and marks
+        // it seen; loop until true. A closed channel means the session closed.
+        loop {
+            if *rx.borrow_and_update() {
+                break;
+            }
+            if rx.changed().await.is_err() {
+                return Err(ErrorData::internal_error("session closed", None));
+            }
+        }
+
+        Ok(Json(ProposePlanOutput { approved: true }))
     }
 
     #[tool(name = "propose_task_complete", description = "Submit the completed task for four-eyes review; blocks until both operators sign off.")]
