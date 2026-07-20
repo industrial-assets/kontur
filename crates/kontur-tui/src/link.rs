@@ -221,6 +221,21 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    fn base32_known_answer_rfc4648() {
+        // RFC 4648 §10 vectors (lowercased, unpadded) — catches a
+        // systematically-wrong-but-invertible codec that roundtrips would miss.
+        assert_eq!(base32_encode(b""), "");
+        assert_eq!(base32_encode(b"f"), "my");
+        assert_eq!(base32_encode(b"fo"), "mzxq");
+        assert_eq!(base32_encode(b"foo"), "mzxw6");
+        assert_eq!(base32_encode(b"foob"), "mzxw6yq");
+        assert_eq!(base32_encode(b"fooba"), "mzxw6ytb");
+        assert_eq!(base32_encode(b"foobar"), "mzxw6ytboi");
+        assert_eq!(base32_decode("mzxw6ytboi").unwrap(), b"foobar");
+        assert_eq!(base32_decode("MZXW6YTBOI").unwrap(), b"foobar"); // uppercase accepted
+    }
+
+    #[test]
     fn base32_roundtrip_all_zeros() {
         let input = [0u8; 32];
         let encoded = base32_encode(&input);
