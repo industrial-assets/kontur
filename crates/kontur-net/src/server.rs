@@ -89,6 +89,7 @@ struct Net {
     agent_done: bool,
     finalizing: bool,
     started: Instant,
+    agent_plan: Option<Vec<String>>,
 }
 
 struct Inner {
@@ -161,6 +162,7 @@ impl SessionServer {
             agent_done: false,
             finalizing: false,
             started: Instant::now(),
+            agent_plan: None,
         };
 
         let server = SessionServer {
@@ -268,6 +270,7 @@ impl SessionServer {
             HostEvent::PlanProposed { tasks } => {
                 let n = tasks.len();
                 let mut net = self.inner.net.lock().await;
+                net.agent_plan = Some(tasks);
                 if let Some(existing) = net.fleet.iter_mut().find(|c| c.id == agent_id) {
                     existing.status = format!("plan: {n} task(s) awaiting approval");
                     existing.needs_signoff = true;
@@ -279,7 +282,7 @@ impl SessionServer {
                         needs_signoff: true,
                     });
                 }
-                push_log(&mut net, &format!("{agent_id} proposed plan ({n} tasks)"));
+                push_log(&mut net, &format!("agent proposed {n} tasks"));
                 drop(net);
                 self.refresh_locked().await;
             }
@@ -506,12 +509,25 @@ async fn handle_client_msg(
                         push_log(&mut net, "dispatch confirmed · plan review");
                     }
                     Phase::PlanReview => {
+                        // Determine the effective plan: agent-proposed takes priority
+                        // over the scripted config plan; if both are empty, refuse.
+                        let effective_plan = net.agent_plan.clone().unwrap_or_else(|| server.inner.cfg.plan.clone());
+                        if effective_plan.is_empty() {
+                            push_log(&mut net, "waiting for agent plan");
+                            drop(net);
+                            server.refresh_locked().await;
+                            return;
+                        }
                         net.phase = Phase::Executing;
                         net.seats[0].ready = false;
                         net.seats[1].ready = false;
                         push_log(&mut net, "plan approved · executing");
                         let plan_tx = server.inner.plan_tx.clone();
+                        let host = server.inner.host.clone();
                         drop(net);
+                        // Approve the real-agent's propose_plan (releases the parked
+                        // MCP call). A no-op when no real agent has called propose_plan.
+                        host.approve_plan().await;
                         // send_replace, NOT send: watch::Sender::send discards the
                         // value when no receiver is subscribed yet, and the agent
                         // task may not have subscribed under scheduler load — the
@@ -707,7 +723,7 @@ impl SessionServer {
                 prompt: inner.cfg.prompt.clone(),
             },
             Phase::PlanReview => WirePhase::PlanReview {
-                tasks: inner.cfg.plan.clone(),
+                tasks: net.agent_plan.clone().unwrap_or_else(|| inner.cfg.plan.clone()),
             },
             Phase::Executing => WirePhase::Executing,
             Phase::Closed { gates, chain_verified, reviewers, merged } => WirePhase::Closed {
@@ -1361,7 +1377,8 @@ mod tests {
         let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
         let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
 
-        let (server, ws) = make_server(op1, op2, vec![]);
+        // Non-empty plan so both-ready transitions through PlanReview.
+        let (server, ws) = make_server(op1, op2, vec!["dummy".into()]);
         let mut state_rx = server.state_rx();
 
         // Drive both seats through to Executing manually (no agent tasks).
