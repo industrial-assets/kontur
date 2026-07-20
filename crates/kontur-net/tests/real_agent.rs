@@ -185,7 +185,7 @@ async fn real_agent_over_tcp() {
 
         // Generate per-session TLS.
         let session_tls = generate_tls();
-        let fingerprint = session_tls.fingerprint;
+        let fingerprint = session_tls.fingerprint16();
         let acceptor = session_tls.acceptor.clone();
 
         {

@@ -125,9 +125,9 @@ impl SessionClient {
         addr: &str,
         seat: String,
         seed: [u8; 32],
-        fingerprint: [u8; 32],
+        fp16: [u8; 16],
     ) -> io::Result<(SessionClient, mpsc::Receiver<ServerMsg>)> {
-        let tls_stream = crate::tls::connect_pinned(addr, fingerprint).await?;
+        let tls_stream = crate::tls::connect_pinned(addr, fp16).await?;
         Self::attach(tls_stream, seat, seed).await
     }
 

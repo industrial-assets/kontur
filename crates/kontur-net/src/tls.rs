@@ -29,6 +29,17 @@ pub struct SessionTls {
     pub fingerprint: [u8; 32],
 }
 
+impl SessionTls {
+    /// First 16 bytes of the SHA-256 cert-DER fingerprint.
+    /// Second-preimage resistance at 128 bits is adequate for cert pinning;
+    /// full collision resistance (birthday bound) is irrelevant here.
+    pub fn fingerprint16(&self) -> [u8; 16] {
+        let mut out = [0u8; 16];
+        out.copy_from_slice(&self.fingerprint[..16]);
+        out
+    }
+}
+
 /// Generate a per-session self-signed TLS certificate (CN "kontur-session").
 /// Returns a `SessionTls` containing the `TlsAcceptor` and the cert fingerprint.
 pub fn generate() -> SessionTls {
@@ -65,19 +76,19 @@ pub fn generate() -> SessionTls {
 // ---------------------------------------------------------------------------
 
 /// Connect to `addr` over TLS, verifying that the server certificate's
-/// SHA-256 DER fingerprint matches `fingerprint`.
+/// SHA-256 DER fingerprint (first 16 bytes) matches `fp16`.
 ///
 /// No CA chain, no hostname check: the pin (delivered via the private invite
 /// link) is the sole trust root.
 pub async fn connect_pinned(
     addr: &str,
-    fingerprint: [u8; 32],
+    fp16: [u8; 16],
 ) -> io::Result<ClientTlsStream<TcpStream>> {
     let stream = TcpStream::connect(addr).await?;
 
     let client_config = rustls::ClientConfig::builder()
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(PinnedVerifier { fingerprint }))
+        .with_custom_certificate_verifier(Arc::new(PinnedVerifier { fp16 }))
         .with_no_client_auth();
 
     let connector = TlsConnector::from(Arc::new(client_config));
@@ -97,7 +108,7 @@ pub async fn connect_pinned(
 
 #[derive(Debug)]
 struct PinnedVerifier {
-    fingerprint: [u8; 32],
+    fp16: [u8; 16],
 }
 
 impl rustls::client::danger::ServerCertVerifier for PinnedVerifier {
@@ -110,13 +121,13 @@ impl rustls::client::danger::ServerCertVerifier for PinnedVerifier {
         _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
         let got: [u8; 32] = Sha256::digest(end_entity.as_ref()).into();
-        if got == self.fingerprint {
+        if got[..16] == self.fp16 {
             Ok(rustls::client::danger::ServerCertVerified::assertion())
         } else {
             Err(rustls::Error::General(format!(
                 "certificate fingerprint mismatch: expected {}, got {}",
-                fp_hex(&self.fingerprint),
-                fp_hex(&got),
+                fp16_hex(&self.fp16),
+                fp16_hex(&got[..16].try_into().unwrap()),
             )))
         }
     }
@@ -162,6 +173,11 @@ impl rustls::client::danger::ServerCertVerifier for PinnedVerifier {
 
 /// Encode a 32-byte fingerprint as 64 lowercase hex characters.
 pub fn fp_hex(fp: &[u8; 32]) -> String {
+    fp.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Encode a 16-byte fingerprint prefix as 32 lowercase hex characters.
+fn fp16_hex(fp: &[u8; 16]) -> String {
     fp.iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -270,7 +286,7 @@ mod tests {
         });
 
         // Use a wrong (all-zeros) fingerprint.
-        let wrong_fp = [0u8; 32];
+        let wrong_fp = [0u8; 16];
         let result = connect_pinned(&addr, wrong_fp).await;
 
         assert!(
@@ -297,7 +313,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
         let session_tls = generate();
-        let fingerprint = session_tls.fingerprint;
+        let fingerprint = session_tls.fingerprint16();
         let acceptor = session_tls.acceptor.clone();
 
         // Dummy server: accept TLS.

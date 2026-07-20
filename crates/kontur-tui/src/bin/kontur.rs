@@ -5,7 +5,7 @@ use kontur_mcp::{GateHost, GitWorkspace, InMemoryWorkspace, SessionContext};
 use kontur_net::{ScriptedAgent, SessionConfig, SessionServer, WirePhase, serve_agent_endpoint, generate_tls, attach_tls};
 use kontur_tui::claude_agent::{build_claude_command, mcp_config_json, agent_prompt};
 use kontur_tui::demo::{run, Demo};
-use kontur_tui::link::{discover_ip, format_invite, parse_invite};
+use kontur_tui::link::{derive_seed, discover_ip, format_invite, parse_invite};
 use kontur_tui::remote::run_remote;
 
 // ---------------------------------------------------------------------------
@@ -140,9 +140,29 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
 
     // Determine working repo path: explicit --repo, or cwd.
     // If neither --mem nor --repo is given, cwd must be a git repo.
-    let (seed_a, seed_b) = match explicit_seeds {
-        Some(seeds) => seeds,
-        None => (gen_random_seed()?, gen_random_seed()?),
+
+    // Determine whether seeds come from explicit flags or are derived from
+    // freshly-generated 16-byte secrets (v2 invite model).
+    enum SeedMode {
+        /// Seeds supplied explicitly via --seeds; no invite can be derived.
+        Explicit([u8; 32], [u8; 32]),
+        /// Seeds derived from randomly-generated secrets; invite links are available.
+        Derived { secret_a: [u8; 16], secret_b: [u8; 16] },
+    }
+
+    let seed_mode = match explicit_seeds {
+        Some((sa, sb)) => SeedMode::Explicit(sa, sb),
+        None => SeedMode::Derived {
+            secret_a: gen_random_16()?,
+            secret_b: gen_random_16()?,
+        },
+    };
+
+    let (seed_a, seed_b) = match &seed_mode {
+        SeedMode::Explicit(a, b) => (*a, *b),
+        SeedMode::Derived { secret_a, secret_b } => {
+            (derive_seed(secret_a), derive_seed(secret_b))
+        }
     };
 
     let (effective_repo, use_cwd) = if mem {
@@ -238,7 +258,7 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
 
     // Generate per-session TLS for the operator wire.
     let session_tls = generate_tls();
-    let tls_fingerprint = session_tls.fingerprint;
+    let fp16 = session_tls.fingerprint16();
     let acceptor = session_tls.acceptor.clone();
 
     // Spawn operator accept loop (TLS).
@@ -441,14 +461,20 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
     let lan_ip = kontur_tui::link::discover_lan_ip();
     let public_ip = kontur_tui::link::discover_public_ip();
     let ip = lan_ip.clone().unwrap_or_else(discover_ip);
-    let invite_link = format_invite(&ip, op_addr.port(), &seed_b, &tls_fingerprint);
-    // A remote (off-LAN) operator needs the public address + a router
-    // port-forward; only offer it when it differs from the primary.
-    let remote_link = match &public_ip {
-        Some(pubip) if Some(pubip) != lan_ip.as_ref() => {
-            Some(format_invite(pubip, op_addr.port(), &seed_b, &tls_fingerprint))
+
+    // Invite links are only available when seeds are derived (not explicit).
+    let (invite_link, remote_link) = match &seed_mode {
+        SeedMode::Explicit(_, _) => (None, None),
+        SeedMode::Derived { secret_b, .. } => {
+            let link = format_invite(&ip, op_addr.port(), secret_b, &fp16);
+            let remote = match &public_ip {
+                Some(pubip) if Some(pubip) != lan_ip.as_ref() => {
+                    Some(format_invite(pubip, op_addr.port(), secret_b, &fp16))
+                }
+                _ => None,
+            };
+            (Some(link), remote)
         }
-        _ => None,
     };
 
     // Print session info and invite block.
@@ -456,12 +482,16 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
     println!("  operator port : {op_addr}");
     println!("  agent port    : {agent_addr}");
     println!();
-    println!("  invite your operator — send them this (over a private channel; the link IS their key):");
-    println!("    kontur join {invite_link}");
-    if let Some(remote) = &remote_link {
-        println!();
-        println!("  remote operator (off your network)? forward port {} on your router, then send:", op_addr.port());
-        println!("    kontur join {remote}");
+    if let Some(ref link) = invite_link {
+        println!("  invite your operator — send them this (over a private channel; the link IS their key):");
+        println!("    kontur join {link}");
+        if let Some(remote) = &remote_link {
+            println!();
+            println!("  remote operator (off your network)? forward port {} on your router, then send:", op_addr.port());
+            println!("    kontur join {remote}");
+        }
+    } else {
+        println!("  explicit seeds: share connection details manually; join with --addr/--seed");
     }
     println!();
     if let Some(ref log_path) = claude_log_path {
@@ -489,17 +519,22 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         println!("\nkontur host shutting down.");
     } else {
         let host_addr = format!("127.0.0.1:{}", op_addr.port());
-        let links = kontur_tui::link::InviteLinks {
-            lan: lan_ip
-                .as_ref()
-                .map(|ip| format!("kontur join {}", format_invite(ip, op_addr.port(), &seed_b, &tls_fingerprint)))
-                .or_else(|| Some(format!("kontur join {invite_link}"))),
-            wan: remote_link
-                .as_ref()
-                .map(|remote| format!("kontur join {remote}")),
-            port: op_addr.port(),
+        let links = match &seed_mode {
+            SeedMode::Explicit(_, _) => None,
+            SeedMode::Derived { secret_b, .. } => {
+                let lan_cmd = lan_ip
+                    .as_ref()
+                    .map(|lip| format!("kontur join {}", format_invite(lip, op_addr.port(), secret_b, &fp16)))
+                    .or_else(|| invite_link.as_ref().map(|l| format!("kontur join {l}")));
+                let wan_cmd = remote_link.as_ref().map(|r| format!("kontur join {r}"));
+                Some(kontur_tui::link::InviteLinks {
+                    lan: lan_cmd,
+                    wan: wan_cmd,
+                    port: op_addr.port(),
+                })
+            }
         };
-        run_remote(&host_addr, "HOST".into(), seed_a, Some(links), Some(tls_fingerprint)).await?;
+        run_remote(&host_addr, "HOST".into(), seed_a, links, Some(fp16)).await?;
     }
     Ok(())
 }
@@ -512,9 +547,10 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
     // If the first arg looks like a kontur:// link, parse it directly.
     if let Some(first) = args.first() {
         if first.starts_with("kontur://") {
-            let (addr, seed, fp) = parse_invite(first)
+            let (addr, secret16, fp16) = parse_invite(first)
                 .map_err(|e| err(format!("invalid invite link: {e}")))?;
-            return run_remote(&addr, "OPERATOR".into(), seed, None, Some(fp)).await;
+            let seed = derive_seed(&secret16);
+            return run_remote(&addr, "OPERATOR".into(), seed, None, Some(fp16)).await;
         }
     }
 
@@ -593,9 +629,9 @@ fn hex_nibble(b: u8) -> Option<u8> {
     }
 }
 
-/// Generate 32 random bytes using getrandom.
-fn gen_random_seed() -> std::io::Result<[u8; 32]> {
-    let mut buf = [0u8; 32];
+/// Generate 16 random bytes using getrandom (for v2 invite secrets).
+fn gen_random_16() -> std::io::Result<[u8; 16]> {
+    let mut buf = [0u8; 16];
     gen_random_bytes(&mut buf)?;
     Ok(buf)
 }
