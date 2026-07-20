@@ -70,25 +70,37 @@ cargo run -p kontur-tui --bin kontur -- join --addr host:7777 --seed 2
 
 Invite links carry the operator's key — send privately; operator-supplied keys with host-side approval are future work.
 
-The `host` command also binds an MCP endpoint (default port 7778). A real Claude
-Code agent connects via a stdio bridge — save as `kontur-mcp.json`:
-
-```json
-{"mcpServers":{"kontur":{"command":"nc","args":["127.0.0.1","7778"]}}}
-```
-
-Then run:
+The `host` command also binds an MCP endpoint (default port 7778). Use `--claude`
+to have kontur spawn a permission-restricted Claude Code agent automatically once
+both seats approve the dispatch gate:
 
 ```sh
+# Primary path — kontur spawns the agent for you:
+kontur host --prompt "add auth module" --claude
+
+# The agent launches with native file/shell tools denied at CC's permission level;
+# only mcp__kontur__* tools are allowed. Output goes to a session log (path printed
+# on startup).
+```
+
+Alternatively, attach Claude Code manually (advanced / alternative):
+
+```sh
+# 1. Save as kontur-mcp.json:
+{"mcpServers":{"kontur":{"command":"nc","args":["127.0.0.1","7778"]}}}
+
+# 2. Run:
 claude --mcp-config kontur-mcp.json \
-  -p "Use ONLY the kontur MCP tools (write_file, run_command, propose_task_complete). Task t1: <your task>. When done call propose_task_complete with task_id t1 and wait for the review verdict."
+  --allowedTools "mcp__kontur__*" \
+  --disallowedTools Write Edit MultiEdit NotebookEdit Bash \
+  --permission-mode default \
+  -p "<your protocol prompt>"
 ```
 
 Agent writes, commands, and gate openings stream live into the operator console
 as they happen — no keypress needed. Every task completion parks at a four-eyes
-gate until both operators cast a verdict. Tool-level enforcement (blocking Claude
-Code's native file tools) is not yet wired; instruct the agent to use the kontur
-tools, and review the diff — the gate itself is enforced server-side.
+gate until both operators cast a verdict. Enforcement is permission-level: native
+mutation tools are denied via CC's `--allowedTools`/`--disallowedTools` flags.
 
 The design lives in:
 

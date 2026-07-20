@@ -897,6 +897,7 @@ dependencies = [
  "kontur-mcp",
  "kontur-net",
  "ratatui",
+ "serde_json",
  "tokio",
 ]
 

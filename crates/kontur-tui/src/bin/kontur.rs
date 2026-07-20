@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use kontur_core::{Ed25519Signer, Signer};
 use kontur_mcp::{GateHost, GitWorkspace, InMemoryWorkspace, SessionContext};
-use kontur_net::{ScriptedAgent, SessionConfig, SessionServer, serve_agent_endpoint};
+use kontur_net::{ScriptedAgent, SessionConfig, SessionServer, WirePhase, serve_agent_endpoint};
+use kontur_tui::claude_agent::{build_claude_command, mcp_config_json, agent_prompt};
 use kontur_tui::demo::{run, Demo};
 use kontur_tui::link::{discover_ip, format_invite, parse_invite};
 use kontur_tui::remote::run_remote;
@@ -42,12 +43,15 @@ fn print_usage() {
         "Usage:
   kontur                              # zero-config: host in current git repo
   kontur host [--repo <path>] [--mem] [--operator-port 7777] [--agent-port 7778]
-              [--prompt \"...\"] [--demo-agent] [--seeds <hex32a,hex32b>]
+              [--prompt \"...\"] [--claude | --demo-agent] [--seeds <hex32a,hex32b>]
               [--session <name>] [--headless]
   kontur join <kontur://ip:port/token>
   kontur join --addr host:port --seed <hex32>
   kontur demo
-  kontur help"
+  kontur help
+
+  --claude      spawn a real Claude Code agent (permission-restricted via --allowedTools /
+                --disallowedTools); mutually exclusive with --demo-agent"
     );
 }
 
@@ -63,6 +67,7 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
     let mut agent_port: u16 = 7778;
     let mut prompt: Option<String> = None;
     let mut demo_agent = false;
+    let mut claude_agent = false;
     let mut explicit_seeds: Option<([u8; 32], [u8; 32])> = None;
     let mut session: Option<String> = None;
     let mut headless = false;
@@ -98,6 +103,9 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
             "--demo-agent" => {
                 demo_agent = true;
             }
+            "--claude" => {
+                claude_agent = true;
+            }
             "--seeds" => {
                 i += 1;
                 let v = require_arg(args, i, "--seeds")?;
@@ -121,6 +129,13 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
             }
         }
         i += 1;
+    }
+
+    // Mutual exclusivity: --claude and --demo-agent cannot be combined.
+    if claude_agent && demo_agent {
+        return Err(err(
+            "kontur host: --claude and --demo-agent are mutually exclusive".into(),
+        ));
     }
 
     // Determine working repo path: explicit --repo, or cwd.
@@ -245,6 +260,142 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         });
     }
 
+    // Optionally spawn the real Claude Code agent.
+    // Build the MCP config file path now (session-scoped temp dir).
+    let claude_log_path = if claude_agent {
+        let tmp_dir = std::env::temp_dir().join(format!("kontur-{session_name}"));
+        std::fs::create_dir_all(&tmp_dir)?;
+
+        let mcp_config_path = tmp_dir.join("kontur-mcp.json");
+        let log_path = tmp_dir.join("claude-agent.log");
+
+        // Write the MCP bridge config.
+        let config_json = mcp_config_json(agent_port);
+        std::fs::write(&mcp_config_path, &config_json)?;
+
+        // Build the prompt from the session prompt.
+        let full_prompt = agent_prompt(&effective_prompt);
+        let cmd = build_claude_command(
+            mcp_config_path.to_str().unwrap_or("/tmp/kontur-mcp.json"),
+            &full_prompt,
+        );
+
+        let log_path_clone = log_path.clone();
+        let server_clone = server.clone();
+        tokio::spawn(async move {
+            // Wait until the dispatch gate clears and the phase reaches PlanReview.
+            let mut state_rx = server_clone.state_rx();
+            loop {
+                {
+                    let state = state_rx.borrow_and_update().clone();
+                    if matches!(state.phase, WirePhase::PlanReview { .. })
+                        || matches!(state.phase, WirePhase::Executing)
+                        || matches!(state.phase, WirePhase::Closed { .. })
+                    {
+                        break;
+                    }
+                }
+                if state_rx.changed().await.is_err() {
+                    break;
+                }
+            }
+
+            // Open the log file for stdout/stderr.
+            let log_file = match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path_clone)
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    server_clone
+                        .agent_log(format!("claude agent: failed to open log: {e}"))
+                        .await;
+                    return;
+                }
+            };
+
+            // Spawn the claude child. Use tokio::process for async wait.
+            let stderr_file = match log_file.try_clone() {
+                Ok(f) => f,
+                Err(e) => {
+                    server_clone
+                        .agent_log(format!("claude agent: failed to clone log fd: {e}"))
+                        .await;
+                    return;
+                }
+            };
+
+            use std::process::Stdio;
+            use tokio::process::Command as TokioCommand;
+
+            let mut child = match TokioCommand::new(&cmd.program)
+                .args(&cmd.args)
+                .stdout(Stdio::from(log_file))
+                .stderr(Stdio::from(stderr_file))
+                .spawn()
+            {
+                Ok(c) => {
+                    server_clone
+                        .agent_log(format!(
+                            "claude agent launched (log: {})",
+                            log_path_clone.display()
+                        ))
+                        .await;
+                    c
+                }
+                Err(e) => {
+                    let msg = if e.kind() == std::io::ErrorKind::NotFound {
+                        format!(
+                            "claude agent: 'claude' not found on PATH — install Claude Code first. Error: {e}"
+                        )
+                    } else {
+                        format!("claude agent: failed to spawn: {e}")
+                    };
+                    server_clone.agent_log(msg).await;
+                    return;
+                }
+            };
+
+            // Await child exit.
+            match child.wait().await {
+                Ok(status) if status.success() => {
+                    server_clone.agent_done().await;
+                }
+                Ok(status) => {
+                    let code = status
+                        .code()
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "signal".into());
+                    server_clone
+                        .agent_log(format!(
+                            "claude agent exited with status {code} — see {}",
+                            log_path_clone.display()
+                        ))
+                        .await;
+                    use kontur_net::WireFleetCard;
+                    server_clone
+                        .agent_status(WireFleetCard {
+                            id: "claude-01".into(),
+                            status: format!("FAILED — see {}", log_path_clone.display()),
+                            tokens: 0,
+                            needs_signoff: false,
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    server_clone
+                        .agent_log(format!("claude agent: wait error: {e}"))
+                        .await;
+                }
+            }
+        });
+
+        Some(log_path)
+    } else {
+        None
+    };
+
     // Discover IP and format invite link.
     let lan_ip = kontur_tui::link::discover_lan_ip();
     let public_ip = kontur_tui::link::discover_public_ip();
@@ -272,14 +423,23 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         println!("    kontur join {remote}");
     }
     println!();
-    println!("  attach a real Claude Code as the agent:");
-    println!("    1. save as kontur-mcp.json:");
-    println!("       {{\"mcpServers\":{{\"kontur\":{{\"command\":\"nc\",\"args\":[\"127.0.0.1\",\"{}\"]}}}}}}",  agent_addr.port());
-    println!("    2. run: claude --mcp-config kontur-mcp.json \\");
-    println!("         -p \"Use ONLY the kontur MCP tools (write_file, run_command, propose_task_complete). Task t1: <your task>. When done call propose_task_complete with task_id t1 and wait for the review verdict.\"");
-    println!("    note: tool-level enforcement (blocking Claude Code's native file tools) is not");
-    println!("    yet wired; instruct the agent to use kontur tools, and review the diff — the");
-    println!("    gate itself is enforced server-side.");
+    if let Some(ref log_path) = claude_log_path {
+        println!("  spawning claude code as the agent (log: {})", log_path.display());
+        println!("  the agent will launch once both seats approve the dispatch gate.");
+    } else {
+        println!("  attach a real Claude Code as the agent (--claude flag, or manually):");
+        println!("  primary path:");
+        println!("    kontur host --claude --prompt \"<your task>\"");
+        println!();
+        println!("  alternative (manual bridge):");
+        println!("    1. save as kontur-mcp.json:");
+        println!("       {{\"mcpServers\":{{\"kontur\":{{\"command\":\"nc\",\"args\":[\"127.0.0.1\",\"{}\"]}}}}}}",  agent_addr.port());
+        println!("    2. run: claude --mcp-config kontur-mcp.json \\");
+        println!("         --allowedTools \"mcp__kontur__*\" \\");
+        println!("         --disallowedTools Write Edit MultiEdit NotebookEdit Bash \\");
+        println!("         --permission-mode default \\");
+        println!("         -p \"<your protocol prompt>\"");
+    }
     println!();
 
     if headless {

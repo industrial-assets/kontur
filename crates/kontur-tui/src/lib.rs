@@ -9,6 +9,7 @@ pub mod app;
 pub mod demo;
 pub mod remote;
 pub mod link;
+pub mod claude_agent;
 
 pub use view::{
     ActiveRegion, AgentCard, AuditSummary, Banner, GateCard, InterventionCard, KeyStatus, KeyView,

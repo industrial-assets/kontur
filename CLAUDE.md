@@ -116,6 +116,12 @@ kontur join kontur://…
 # host a session (in-memory workspace; demo scripted agent)
 cargo run -p kontur-tui --bin kontur -- host --mem --demo-agent
 
+# host with a real Claude Code agent (primary path):
+cargo run -p kontur-tui --bin kontur -- host --prompt "add auth module" --claude
+# kontur spawns claude with --allowedTools mcp__kontur__* and --disallowedTools
+# Write Edit MultiEdit NotebookEdit Bash once both seats approve the dispatch gate.
+# Agent output goes to a session log (path printed on startup).
+
 # join as operator (legacy --addr/--seed form; still works)
 cargo run -p kontur-tui --bin kontur -- join --addr 127.0.0.1:7777 --seed 2
 ```
