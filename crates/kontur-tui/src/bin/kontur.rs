@@ -4,6 +4,7 @@ use kontur_core::{Ed25519Signer, Signer};
 use kontur_mcp::{GateHost, GitWorkspace, InMemoryWorkspace, SessionContext};
 use kontur_net::{ScriptedAgent, SessionConfig, SessionServer, serve_agent_endpoint};
 use kontur_tui::demo::{run, Demo};
+use kontur_tui::link::{discover_ip, format_invite, parse_invite};
 use kontur_tui::remote::run_remote;
 
 // ---------------------------------------------------------------------------
@@ -15,10 +16,10 @@ async fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     match args.get(1).map(String::as_str) {
-        None | Some("demo") => {
-            // Default: local self-contained demo.
-            run(Demo::new()).await
-        }
+        // Bare `kontur` with no subcommand → zero-config host in cwd.
+        None => host_cmd(&[]).await,
+
+        Some("demo") => run(Demo::new()).await,
         Some("host") => host_cmd(&args[2..]).await,
         Some("join") => join_cmd(&args[2..]).await,
         Some("help") | Some("--help") | Some("-h") => {
@@ -36,11 +37,13 @@ async fn main() -> std::io::Result<()> {
 fn print_usage() {
     eprintln!(
         "Usage:
+  kontur                              # zero-config: host in current git repo
+  kontur host [--repo <path>] [--mem] [--operator-port 7777] [--agent-port 7778]
+              [--prompt \"...\"] [--demo-agent] [--seeds <hex32a,hex32b>]
+              [--session <name>] [--headless]
+  kontur join <kontur://ip:port/token>
+  kontur join --addr host:port --seed <hex32>
   kontur demo
-  kontur host --repo <path> [--mem] [--operator-port 7777] [--agent-port 7778]
-              [--prompt \"...\"] [--demo-agent] [--seeds 1,2] [--session <name>]
-              [--headless]
-  kontur join --addr host:port --seed <n>
   kontur help"
     );
 }
@@ -50,15 +53,15 @@ fn print_usage() {
 // ---------------------------------------------------------------------------
 
 async fn host_cmd(args: &[String]) -> std::io::Result<()> {
-    // Defaults
+    // Defaults — populated from random bytes or explicit flags.
     let mut repo: Option<String> = None;
     let mut mem = false;
     let mut operator_port: u16 = 7777;
     let mut agent_port: u16 = 7778;
-    let mut prompt = String::from("kontur session");
+    let mut prompt: Option<String> = None;
     let mut demo_agent = false;
-    let mut seeds: [u8; 2] = [1, 2];
-    let mut session = String::from("s1");
+    let mut explicit_seeds: Option<([u8; 32], [u8; 32])> = None;
+    let mut session: Option<String> = None;
     let mut headless = false;
 
     let mut i = 0;
@@ -87,7 +90,7 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
             }
             "--prompt" => {
                 i += 1;
-                prompt = require_arg(args, i, "--prompt")?;
+                prompt = Some(require_arg(args, i, "--prompt")?);
             }
             "--demo-agent" => {
                 demo_agent = true;
@@ -95,22 +98,17 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
             "--seeds" => {
                 i += 1;
                 let v = require_arg(args, i, "--seeds")?;
-                let parts: Vec<&str> = v.split(',').collect();
+                let parts: Vec<&str> = v.splitn(2, ',').collect();
                 if parts.len() != 2 {
-                    return Err(err("--seeds: expected two comma-separated integers, e.g. 1,2".into()));
+                    return Err(err("--seeds: expected two comma-separated values".into()));
                 }
-                seeds[0] = parts[0]
-                    .trim()
-                    .parse()
-                    .map_err(|_| err(format!("--seeds: invalid seed '{}'", parts[0])))?;
-                seeds[1] = parts[1]
-                    .trim()
-                    .parse()
-                    .map_err(|_| err(format!("--seeds: invalid seed '{}'", parts[1])))?;
+                let sa = parse_seed_arg(parts[0].trim(), "--seeds")?;
+                let sb = parse_seed_arg(parts[1].trim(), "--seeds")?;
+                explicit_seeds = Some((sa, sb));
             }
             "--session" => {
                 i += 1;
-                session = require_arg(args, i, "--session")?;
+                session = Some(require_arg(args, i, "--session")?);
             }
             "--headless" => {
                 headless = true;
@@ -122,13 +120,70 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         i += 1;
     }
 
+    // Determine working repo path: explicit --repo, or cwd.
+    // If neither --mem nor --repo is given, cwd must be a git repo.
+    let (seed_a, seed_b) = match explicit_seeds {
+        Some(seeds) => seeds,
+        None => (gen_random_seed()?, gen_random_seed()?),
+    };
+
+    let (effective_repo, use_cwd) = if mem {
+        (None, false)
+    } else if let Some(r) = repo.clone() {
+        (Some(r), false)
+    } else {
+        // Zero-config: use cwd. Validate it's a git repo.
+        let cwd = std::env::current_dir()?;
+        let git_check = std::process::Command::new("git")
+            .args(["rev-parse", "--git-dir"])
+            .current_dir(&cwd)
+            .output();
+        match git_check {
+            Ok(out) if out.status.success() => (Some(cwd.to_string_lossy().into_owned()), true),
+            _ => {
+                eprintln!(
+                    "error: current directory is not a git repository.\n\
+                     hint: run `git init` first, or use `kontur host --mem` for an in-memory session."
+                );
+                std::process::exit(1);
+            }
+        }
+    };
+
+    // Session name: explicit, or auto-generated s-<6hex>.
+    let session_name = match session {
+        Some(s) => s,
+        None => {
+            let mut b = [0u8; 3];
+            gen_random_bytes(&mut b)?;
+            format!("s-{:02x}{:02x}{:02x}", b[0], b[1], b[2])
+        }
+    };
+
+    // Default prompt: "supervise agent tasks in <repo dir name>".
+    let effective_prompt = match prompt {
+        Some(p) => p,
+        None => {
+            if use_cwd || effective_repo.is_some() && !mem {
+                let dir_name = effective_repo
+                    .as_deref()
+                    .and_then(|p| std::path::Path::new(p).file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("project");
+                format!("supervise agent tasks in {dir_name}")
+            } else {
+                "kontur session".to_string()
+            }
+        }
+    };
+
     // Derive operators from seeds.
-    let op_a = Ed25519Signer::from_seed([seeds[0]; 32]).operator_id();
-    let op_b = Ed25519Signer::from_seed([seeds[1]; 32]).operator_id();
+    let op_a = Ed25519Signer::from_seed(seed_a).operator_id();
+    let op_b = Ed25519Signer::from_seed(seed_b).operator_id();
 
     // Build session context + workspace.
     let ctx = SessionContext::new(
-        &prompt,
+        &effective_prompt,
         op_a,
         "agent-01",
         "external",
@@ -136,19 +191,19 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         vec![op_a, op_b],
     );
 
-    let host: Arc<GateHost> = if mem || repo.is_none() {
+    let host: Arc<GateHost> = if mem || effective_repo.is_none() {
         let ws = Arc::new(InMemoryWorkspace::new());
         Arc::new(GateHost::new(ctx, ws))
     } else {
-        let repo_path = std::path::PathBuf::from(repo.as_deref().unwrap());
-        let ws = GitWorkspace::create(repo_path, &session)
+        let repo_path = std::path::PathBuf::from(effective_repo.as_deref().unwrap());
+        let ws = GitWorkspace::create(repo_path, &session_name)
             .map_err(|e| err(format!("git workspace: {e}")))?;
         Arc::new(GateHost::new(ctx, Arc::new(ws)))
     };
 
     // Session server.
     let cfg = SessionConfig {
-        prompt: prompt.clone(),
+        prompt: effective_prompt.clone(),
         plan: vec!["external agent tasks".into()],
         seats: [("HOST".into(), op_a), ("OPERATOR".into(), op_b)],
     };
@@ -187,12 +242,19 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         });
     }
 
-    // Print join hints.
-    println!("kontur host running");
+    // Discover IP and format invite link.
+    let ip = discover_ip();
+    let invite_link = format_invite(&ip, op_addr.port(), &seed_b);
+
+    // Print session info and invite block.
+    println!("kontur host running  ·  session {session_name}");
     println!("  operator port : {op_addr}");
     println!("  agent port    : {agent_addr}");
     println!();
-    println!("  operator joins with: kontur join --addr 127.0.0.1:{} --seed {}", op_addr.port(), seeds[1]);
+    println!("  invite your operator — send them this (over a private channel; the link IS their key):");
+    println!("    kontur join {invite_link}");
+    println!();
+    println!("  link uses your public/LAN IP — if NATed, forward port {} or share your LAN address", op_addr.port());
     println!();
     println!("  attach a real Claude Code as the agent:");
     println!("    1. save as kontur-mcp.json:");
@@ -206,14 +268,11 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
 
     if headless {
         println!("Press Ctrl-C to stop.");
-        // Park until Ctrl-C.
         tokio::signal::ctrl_c().await?;
         println!("\nkontur host shutting down.");
     } else {
-        // The Host's terminal is itself a console seat: attach it directly.
-        let seed_a_bytes = [seeds[0]; 32];
         let host_addr = format!("127.0.0.1:{}", op_addr.port());
-        run_remote(&host_addr, "HOST".into(), seed_a_bytes).await?;
+        run_remote(&host_addr, "HOST".into(), seed_a).await?;
     }
     Ok(())
 }
@@ -223,8 +282,18 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn join_cmd(args: &[String]) -> std::io::Result<()> {
+    // If the first arg looks like a kontur:// link, parse it directly.
+    if let Some(first) = args.first() {
+        if first.starts_with("kontur://") {
+            let (addr, seed) = parse_invite(first)
+                .map_err(|e| err(format!("invalid invite link: {e}")))?;
+            return run_remote(&addr, "OPERATOR".into(), seed).await;
+        }
+    }
+
+    // Legacy form: kontur join --addr X --seed N
     let mut addr: Option<String> = None;
-    let mut seed_val: u8 = 1;
+    let mut seed_str: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -235,10 +304,7 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
             }
             "--seed" => {
                 i += 1;
-                let v = require_arg(args, i, "--seed")?;
-                seed_val = v
-                    .parse()
-                    .map_err(|_| err(format!("--seed: not a valid integer: {v}")))?;
+                seed_str = Some(require_arg(args, i, "--seed")?);
             }
             other => {
                 return Err(err(format!("kontur join: unknown flag '{other}'")));
@@ -248,10 +314,67 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
     }
 
     let addr = addr.ok_or_else(|| err("kontur join: --addr is required".into()))?;
+    let seed_val_str = seed_str.ok_or_else(|| err("kontur join: --seed is required".into()))?;
+    let seed = parse_seed_arg(&seed_val_str, "--seed")?;
 
-    // Seat claim is keyed on OperatorId (derived from seed); label comes from server config.
-    let seed_bytes = [seed_val; 32];
-    run_remote(&addr, "OPERATOR".into(), seed_bytes).await
+    run_remote(&addr, "OPERATOR".into(), seed).await
+}
+
+// ---------------------------------------------------------------------------
+// Seed helpers
+// ---------------------------------------------------------------------------
+
+/// Parse a seed argument: accepts either a small integer (1..=255, for
+/// backward-compat with old --seeds 1,2 form) OR a 64-char hex string (full
+/// 32-byte seed).
+fn parse_seed_arg(s: &str, flag: &str) -> std::io::Result<[u8; 32]> {
+    // Try 64-char hex first.
+    if s.len() == 64 {
+        if let Some(seed) = hex_to_seed_opt(s) {
+            return Ok(seed);
+        }
+    }
+    // Try small integer (backward-compat).
+    if let Ok(n) = s.parse::<u8>() {
+        return Ok([n; 32]);
+    }
+    Err(err(format!(
+        "{flag}: invalid seed '{s}': expected a small integer (1-255) or 64 hex chars"
+    )))
+}
+
+fn hex_to_seed_opt(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, chunk) in s.as_bytes().chunks(2).enumerate() {
+        let hi = hex_nibble(chunk[0])?;
+        let lo = hex_nibble(chunk[1])?;
+        out[i] = (hi << 4) | lo;
+    }
+    Some(out)
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Generate 32 random bytes using getrandom.
+fn gen_random_seed() -> std::io::Result<[u8; 32]> {
+    let mut buf = [0u8; 32];
+    gen_random_bytes(&mut buf)?;
+    Ok(buf)
+}
+
+fn gen_random_bytes(buf: &mut [u8]) -> std::io::Result<()> {
+    getrandom::getrandom(buf)
+        .map_err(|e| err(format!("getrandom: {e}")))
 }
 
 // ---------------------------------------------------------------------------

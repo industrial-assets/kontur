@@ -107,10 +107,16 @@ cargo clippy --all-targets -- -D warnings
 # run the self-contained local demo
 cargo run -p kontur-tui --bin kontur -- demo
 
+# zero-config host in cwd (must be a git repo with at least one commit)
+cd your-project && kontur
+
+# join as operator — paste the invite link the host printed:
+kontur join kontur://…
+
 # host a session (in-memory workspace; demo scripted agent)
 cargo run -p kontur-tui --bin kontur -- host --mem --demo-agent
 
-# join as operator (after `host` prints the join line)
+# join as operator (legacy --addr/--seed form; still works)
 cargo run -p kontur-tui --bin kontur -- join --addr 127.0.0.1:7777 --seed 2
 ```
 

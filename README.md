@@ -45,18 +45,26 @@ Brutalist: raw, structural, honest. Every element on screen earns its place or i
 ## Running it
 
 ```sh
+# Zero-config: host in your current git repo (prints an invite link, opens your console):
+cd your-project && kontur
+
+# Operator: paste the invite link printed by the host:
+kontur join kontur://…
+
 # Self-contained local demo (both seats, scripted agent, in-memory workspace):
 cargo run -p kontur-tui --bin kontur -- demo
 
 # Host a real session on a git repo with a scripted demo agent:
 cargo run -p kontur-tui --bin kontur -- host --repo /path/to/repo --demo-agent
 
-# Host with a custom prompt and operator seeds:
+# Host with a custom prompt and operator seeds (backward-compat, integer form):
 cargo run -p kontur-tui --bin kontur -- host --mem --prompt "add auth gate" --seeds 1,2
 
-# Join as operator (run this on the remote machine):
+# Join as operator (legacy --addr/--seed form still works):
 cargo run -p kontur-tui --bin kontur -- join --addr host:7777 --seed 2
 ```
+
+Invite links carry the operator's key — send privately; operator-supplied keys with host-side approval are future work.
 
 The `host` command also binds an MCP endpoint (default port 7778). A real Claude
 Code agent connects via a stdio bridge — save as `kontur-mcp.json`:

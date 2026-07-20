@@ -9,6 +9,7 @@ kontur-mcp = { path = "../kontur-mcp" }
 kontur-net = { path = "../kontur-net" }
 ratatui = "0.30"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal"] }
+getrandom = "0.2"
 
 [[bin]]
 name = "kontur"
