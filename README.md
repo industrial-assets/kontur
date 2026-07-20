@@ -75,7 +75,7 @@ kontur host --mem --prompt "initial text (editable in-console)"
 kontur join --addr host:7777 --seed 2
 ```
 
-**Console keys:** `y` ready · `p` edit prompt · `g` go (diff always visible in right pane while gate is pending; `[tab]` cycles between files) · `r` no-go + steer · `e` edit a file in $EDITOR · `j`/`k` scroll diff down/up · `PgDn`/`PgUp` page diff · `l` invite LAN/WAN · `k` abandon (confirm) · `q` quit.
+**Console keys:** `y` ready · `p` edit prompt · `j`/`k` scroll diff · `tab` select file · `g` go (2× if truncated) · `r` no-go+steer · `e` edit file · `l` invite LAN/WAN · `K` abandon (confirm) · `q` quit.
 
 Invite codes carry the secret the operator's key is derived from — send privately; operator-supplied keys with host-side approval are future work.
 

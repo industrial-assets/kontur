@@ -140,13 +140,31 @@ fn panes(
     // Right pane: gate surface or phase card.
     match &view.active {
         ActiveRegion::Gate(card) => {
-            // Files bar: Length(4), diff: Min, verdict bar: Length(6).
-            let right =
-                Layout::vertical([Constraint::Length(4), Constraint::Min(3), Constraint::Length(6)])
-                    .split(cols[1]);
-            render_files_bar(frame, right[0], card, selected_file);
-            render_diff_pane(frame, right[1], card, diff_scroll);
-            render_verdict_bar(frame, right[2], card);
+            // Files bar: Length(4), diff: Min(5), verdict bar: Length(6).
+            // Guard: if right pane height < 15, skip files bar to preserve diff.
+            let (files_height, diff_min) = if cols[1].height < 15 {
+                (0, Constraint::Min(5))
+            } else {
+                (4, Constraint::Min(5))
+            };
+
+            let constraints = if files_height > 0 {
+                vec![Constraint::Length(files_height), diff_min, Constraint::Length(6)]
+            } else {
+                vec![diff_min, Constraint::Length(6)]
+            };
+
+            let right = Layout::vertical(constraints).split(cols[1]);
+
+            if files_height > 0 {
+                render_files_bar(frame, right[0], card, selected_file);
+                render_diff_pane(frame, right[1], card, diff_scroll);
+                render_verdict_bar(frame, right[2], card);
+            } else {
+                // Files bar dropped: diff is right[0], verdict is right[1]
+                render_diff_pane(frame, right[0], card, diff_scroll);
+                render_verdict_bar(frame, right[1], card);
+            }
         }
         other => {
             render_phase_card(frame, cols[1], other);
@@ -168,7 +186,7 @@ fn render_files_bar(
         .collect::<Vec<_>>()
         .join("  ");
     let lines = vec![
-        Line::from(format!(" {files_str}")),
+        Line::from(format!(" {} · +{} loc", files_str, card.loc)),
         Line::from(" [tab] select · [e] edit"),
     ];
     frame.render_widget(
@@ -213,7 +231,7 @@ fn render_verdict_bar(frame: &mut Frame, area: Rect, card: &crate::view::GateCar
         )));
     }
     lines.push(Line::from(
-        " [g] go · [r] no-go+steer · [e] edit · [k] abandon",
+        " [g] go · [r] no-go+steer · [e] edit · [K] abandon",
     ));
     frame.render_widget(
         Paragraph::new(lines)
@@ -519,9 +537,9 @@ mod tests {
         assert!(!rendered.contains("■ NO-GO"), "sealed key must not show NO-GO; got:\n{rendered}");
     }
 
-    /// Gate: files bar shows ▶ selection marker.
+    /// Gate: files bar shows ▶ selection marker and LOC count.
     #[test]
-    fn gate_files_bar_shows_selection_marker() {
+    fn gate_files_bar_shows_selection_marker_and_loc() {
         let card = GateCard {
             gate_id: "gate-002".into(),
             task: "t2".into(),
@@ -537,6 +555,7 @@ mod tests {
         terminal.draw(|f| render(f, &minimal_view(ActiveRegion::Gate(card)), 0, 1)).unwrap();
         let rendered = terminal.backend().to_string();
         assert!(rendered.contains("▶ b.rs"), "selected file must be marked with ▶; got:\n{rendered}");
+        assert!(rendered.contains("+10 loc"), "files bar must show LOC count; got:\n{rendered}");
     }
 
     /// Gate: truncated diff shows (TRUNCATED) in title.

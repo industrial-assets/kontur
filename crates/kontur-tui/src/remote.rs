@@ -391,22 +391,19 @@ pub async fn run_remote(
             // Go verdict — truncation requires a second `g` to acknowledge.
             Some(Action::Go) => {
                 if let Some(wg) = &state.gate {
-                    if wg.diff_truncated {
-                        // Truncated diff: require a second consecutive `g` to acknowledge.
-                        if truncation_ack.as_deref() == Some(&wg.gate_id.0) {
-                            // Already acknowledged on this gate — cast.
+                    let acked = truncation_ack.as_deref() == Some(&wg.gate_id.0);
+                    match go_gate(wg.diff_truncated, acked) {
+                        GoDecision::Cast => {
                             let _ = client.cast_go(wg, ReviewDepth::FullDiff).await;
                             truncation_ack = None;
-                        } else {
-                            // First `g`: show warning, set ack.
+                        }
+                        GoDecision::NeedAck => {
                             truncation_ack = Some(wg.gate_id.0.clone());
                             rejected_msg = Some(
                                 "diff was truncated at 64 KB — press [g] again to sign anyway".into(),
                             );
                             rejected_ttl = 60;
                         }
-                    } else {
-                        let _ = client.cast_go(wg, ReviewDepth::FullDiff).await;
                     }
                 }
             }

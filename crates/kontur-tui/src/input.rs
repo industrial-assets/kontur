@@ -56,9 +56,9 @@ pub fn map_key(code: KeyCode, composing_remedy: bool) -> Action {
         KeyCode::Char('p') => Action::PromptBegin,
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('q') => Action::Quit,
-        KeyCode::Char('k') => Action::AbandonBegin,
+        KeyCode::Char('K') => Action::AbandonBegin,
         KeyCode::Char('j') | KeyCode::Down => Action::ScrollDown,
-        KeyCode::Up => Action::ScrollUp,
+        KeyCode::Char('k') | KeyCode::Up => Action::ScrollUp,
         KeyCode::PageDown => Action::PageDown,
         KeyCode::PageUp => Action::PageUp,
         _ => Action::None,
@@ -93,9 +93,17 @@ mod tests {
     fn scroll_keys_always_active() {
         assert_eq!(map_key(KeyCode::Char('j'), false), Action::ScrollDown);
         assert_eq!(map_key(KeyCode::Down, false), Action::ScrollDown);
+        assert_eq!(map_key(KeyCode::Char('k'), false), Action::ScrollUp);
         assert_eq!(map_key(KeyCode::Up, false), Action::ScrollUp);
         assert_eq!(map_key(KeyCode::PageDown, false), Action::PageDown);
         assert_eq!(map_key(KeyCode::PageUp, false), Action::PageUp);
+    }
+
+    #[test]
+    fn abandon_begin_requires_uppercase_k() {
+        assert_eq!(map_key(KeyCode::Char('K'), false), Action::AbandonBegin);
+        // lowercase k is scroll up, not abandon
+        assert_eq!(map_key(KeyCode::Char('k'), false), Action::ScrollUp);
     }
 
     #[test]
