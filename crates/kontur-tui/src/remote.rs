@@ -705,7 +705,7 @@ pub fn go_gate(truncated: bool, acked: bool) -> GoDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kontur_core::{ReviewDepth, VerdictStatus, OperatorId};
+    use kontur_core::{VerdictStatus, OperatorId};
     use kontur_net::{WireGate, WirePhase, WireRole, WireSeat, WireState};
     use kontur_core::GateId;
     use kontur_core::Hash;
