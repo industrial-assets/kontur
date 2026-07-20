@@ -273,6 +273,21 @@ impl SessionServer {
                 let _ = gate_id;
                 self.refresh_locked().await;
             }
+            HostEvent::GateSuperseded { old_gate_id, new_gate_id } => {
+                // The stale pending hold has been removed; the fresh gate now
+                // carries the combined diff. Log and refresh so the wire
+                // projects the fresh gate immediately — realtime property.
+                let mut net = self.inner.net.lock().await;
+                push_log(
+                    &mut net,
+                    &format!(
+                        "gate {} superseded by hand-edit → {}",
+                        old_gate_id.0, new_gate_id.0
+                    ),
+                );
+                drop(net);
+                self.refresh_locked().await;
+            }
             HostEvent::PlanProposed { tasks } => {
                 let n = tasks.len();
                 let mut net = self.inner.net.lock().await;
@@ -2174,16 +2189,14 @@ mod tests {
     // -----------------------------------------------------------------------
     // Test: hand_edit_realtime_diff_sync
     //
-    // After a HandEdit over the wire:
+    // After a HandEdit over the wire (fix: stale pending gate is superseded):
     //   1. The server broadcasts a state update to ALL seats (realtime property).
-    //   2. The host records a second pending gate with a fresh gate_id.
-    //   3. The hand-edit content is retrievable via FetchFile immediately.
-    //
-    // Note: build_wire_state projects the FIRST pending gate (original from the
-    // scripted agent) so the displayed diff_preview belongs to that gate. The
-    // second pending gate (hand-edit) is available via pending_gates(). The
-    // realtime property is that BOTH seats receive a fresh broadcast after the
-    // edit — captured here by waiting for a log entry mentioning "hand-edit".
+    //   2. The stale original gate is removed; ONLY the fresh hand-edit gate
+    //      remains in pending_gates.
+    //   3. BOTH seats' next WireState carries the new gate_id AND a diff_preview
+    //      containing the edited content — proving the wire projects the fresh
+    //      gate, not the stale one.
+    //   4. The hand-edit content is in the workspace immediately.
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -2236,34 +2249,38 @@ mod tests {
             matches!(s.phase, WirePhase::Executing)
         })).await.expect("Executing");
 
-        // Wait for the first gate.
+        // Wait for the first gate (opened by the scripted agent).
         let state_with_gate = tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx_a, |s| {
             s.gate.is_some()
         })).await.expect("first gate");
         let original_gate_id = state_with_gate.gate.as_ref().unwrap().gate_id.clone();
 
         // A sends HandEdit.
+        let edit_contents = "// edited by hand\npub fn guard() { todo!() }\n";
         write_json(&mut ca_write, &ClientMsg::HandEdit {
             path: "src/guard.rs".into(),
-            contents: "// edited by hand\npub fn guard() { todo!() }\n".into(),
+            contents: edit_contents.into(),
         }).await.unwrap();
 
-        // Realtime property: BOTH seats receive a broadcast containing a log
-        // line that mentions "hand-edit" (confirming the state was pushed to
-        // all connections, not just the editing seat's conn_tx).
-        let log_check = |s: &WireState| s.log.iter().any(|l| l.contains("hand-edit"));
+        // Realtime property: BOTH seats receive a broadcast where the wire
+        // projects the FRESH gate (not the stale original), and the
+        // diff_preview contains the edited content.
+        let fresh_gate_check = |s: &WireState| {
+            s.gate.as_ref().map(|g| {
+                g.gate_id != original_gate_id
+                    && g.diff_preview.as_deref().map(|d| d.contains("edited by hand")).unwrap_or(false)
+            }).unwrap_or(false)
+        };
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx_a, log_check))
-            .await.expect("A: sees hand-edit log after broadcast");
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx_b, log_check))
-            .await.expect("B: sees hand-edit log after broadcast");
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx_a, fresh_gate_check))
+            .await.expect("A: wire projects fresh gate with edited content after hand-edit");
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx_b, fresh_gate_check))
+            .await.expect("B: wire projects fresh gate with edited content after hand-edit");
 
-        // The host now has a SECOND pending gate with a fresh id.
+        // After supersession: ONLY the fresh gate remains pending (stale removed).
         let pending = server.inner.host.pending_gates().await;
-        assert!(pending.len() >= 2, "two pending gates expected after hand-edit");
-        let hand_edit_gate = pending.iter().find(|g| g.gate_id != original_gate_id)
-            .expect("hand-edit gate must have a fresh id");
-        assert_ne!(hand_edit_gate.gate_id, original_gate_id);
+        assert_eq!(pending.len(), 1, "only the fresh hand-edit gate must remain pending");
+        assert_ne!(pending[0].gate_id, original_gate_id, "fresh gate must have a new id");
 
         // The workspace holds the hand-edit content immediately.
         let task = kontur_core::TaskId("t1".into());

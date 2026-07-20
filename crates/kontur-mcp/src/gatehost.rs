@@ -20,6 +20,10 @@ pub enum HostEvent {
     Command { task: TaskId, command: String },
     GateOpened { gate_id: GateId, task: TaskId },
     GateResolved { gate_id: GateId, state: HoldState },
+    /// Emitted after `hand_edit` removes a stale pending hold and replaces it
+    /// with a fresh one over the combined diff. The wire then projects the
+    /// fresh gate — realtime property.
+    GateSuperseded { old_gate_id: GateId, new_gate_id: GateId },
     PlanProposed { tasks: Vec<String> },
     SessionAbandoned,
 }
@@ -372,7 +376,7 @@ impl GateHost {
         let provenance = build_provenance(&st.ctx, &task_id, dh, &frozen, 0);
         let hold = DualHold::reopen_handedit(
             id.clone(),
-            task_id,
+            task_id.clone(),
             dh,
             st.ctx.policy,
             MakerSet::new(),
@@ -382,8 +386,41 @@ impl GateHost {
         );
         let (tx, rx) = watch::channel(hold.state());
         let escalation_required = hold.escalation_required();
+
+        // Within the same lock: remove all prior Open/Partial holds for this
+        // task_id. Resolved holds (Satisfied/Blocked) are kept — their audit
+        // records stand. Verdicts on a superseded hold must return UnknownGate
+        // ("superseded by hand-edit; verdicts must bind the combined diff").
+        //
+        // Signal Satisfied through each superseded hold's watch channel before
+        // dropping the HoldEntry. This lets any awaiting agent task unblock
+        // cleanly rather than seeing a channel-closed error.
+        let superseded_ids: Vec<GateId> = st
+            .holds
+            .iter()
+            .filter(|e| {
+                e.hold.task_id() == &task_id
+                    && matches!(e.hold.state(), HoldState::Open | HoldState::Partial)
+            })
+            .map(|e| e.hold.gate_id().clone())
+            .collect();
+        // Signal before removing so watch receivers see Satisfied, not channel-closed.
+        for e in st.holds.iter().filter(|e| superseded_ids.contains(e.hold.gate_id())) {
+            let _ = e.watch_tx.send(HoldState::Satisfied);
+        }
+        st.holds
+            .retain(|e| !superseded_ids.contains(e.hold.gate_id()));
+
         st.holds.push(HoldEntry { hold, provenance, watch_tx: tx, escalation_required });
         drop(st);
+
+        // Emit supersession events after the lock drops (best-effort display).
+        for old_id in &superseded_ids {
+            let _ = self.events.send(HostEvent::GateSuperseded {
+                old_gate_id: old_id.clone(),
+                new_gate_id: id.clone(),
+            });
+        }
         let _ = self.events.send(HostEvent::GateOpened {
             gate_id: id.clone(),
             task: task_id_for_event,
@@ -1064,5 +1101,116 @@ mod tests {
 
         let err = host.propose_plan(vec!["task-a".to_string()]).await.unwrap_err();
         assert_eq!(err, GateHostError::SessionAbandoned);
+    }
+
+    // -----------------------------------------------------------------------
+    // hand_edit supersession tests
+    // -----------------------------------------------------------------------
+
+    /// `hand_edit` must remove all Open/Partial holds for the same task, leaving
+    /// only the fresh gate in `pending_gates`. The task_id is preserved.
+    #[tokio::test]
+    async fn hand_edit_supersedes_stale_pending_hold() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let task = TaskId("t1".into());
+        let host = GateHost::new(
+            ctx(vec![op1, op2]).with_policy(kontur_core::GatePolicy {
+                independence: kontur_core::Independence::Pragmatic,
+                ..kontur_core::GatePolicy::default()
+            }),
+            ws.clone(),
+        );
+
+        // Open the initial gate (simulates begin_task_gate after agent writes).
+        ws.apply_write(&task, "a.rs", b"agent\n").unwrap();
+        let (original_gate_id, _rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+
+        // Confirm one pending gate exists.
+        assert_eq!(host.pending_gates().await.len(), 1);
+        assert_eq!(host.pending_gates().await[0].gate_id, original_gate_id);
+
+        // Hand-edit: must remove the stale gate and open a fresh one.
+        let (fresh_gate_id, _rx2) = host
+            .hand_edit(task.clone(), "a.rs", b"human\n", op1)
+            .await
+            .unwrap();
+
+        // pending_gates shows ONLY the fresh gate; task_id is preserved.
+        let pending = host.pending_gates().await;
+        assert_eq!(pending.len(), 1, "only the fresh gate must remain pending");
+        assert_eq!(pending[0].gate_id, fresh_gate_id, "fresh gate must be the only pending gate");
+        assert_ne!(fresh_gate_id, original_gate_id, "fresh gate must have a new id");
+        assert_eq!(pending[0].task_id, task, "task_id must be preserved");
+    }
+
+    /// After `hand_edit` supersedes the original gate, casting a verdict on the
+    /// OLD gate id must return `UnknownGate`.
+    #[tokio::test]
+    async fn cast_on_superseded_gate_returns_unknown_gate() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let task = TaskId("t1".into());
+        let host = GateHost::new(ctx(vec![op1, op2]), ws.clone());
+
+        ws.apply_write(&task, "a.rs", b"agent\n").unwrap();
+        let (original_gate_id, _rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+        let original_dh = host.pending_gates().await[0].diff_hash;
+
+        // Supersede with a hand-edit.
+        host.hand_edit(task.clone(), "a.rs", b"human\n", op1).await.unwrap();
+
+        // Cast on the now-superseded original gate → UnknownGate.
+        // superseded by hand-edit; verdicts must bind the combined diff
+        let err = host
+            .submit_verdict(&original_gate_id, go_verdict(2, &original_gate_id, original_dh))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, GateHostError::UnknownGate(_)),
+            "expected UnknownGate on superseded gate, got: {err:?}"
+        );
+    }
+
+    /// A RESOLVED (Satisfied/Blocked) gate for the same task must NOT be
+    /// removed by a subsequent `hand_edit`. Audit chain length is unchanged
+    /// and still verifies.
+    #[tokio::test]
+    async fn hand_edit_does_not_remove_resolved_gate() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let task = TaskId("t1".into());
+        let host = GateHost::new(ctx(vec![op1, op2]), ws.clone());
+
+        // Open, satisfy (resolve) the first gate.
+        ws.apply_write(&task, "a.rs", b"v1\n").unwrap();
+        let (gid1, _rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+        let dh1 = host.pending_gates().await[0].diff_hash;
+        host.submit_verdict(&gid1, go_verdict(1, &gid1, dh1)).await.unwrap();
+        host.submit_verdict(&gid1, go_verdict(2, &gid1, dh1)).await.unwrap();
+
+        let audit_before = host.audit_len().await;
+        assert_eq!(audit_before, 1, "one audit record for the satisfied gate");
+        assert!(host.verify_audit().await.is_ok());
+
+        // Now open a second gate for the same task (simulates rework) and then
+        // hand-edit to supersede it. The resolved gate's record must survive.
+        ws.apply_write(&task, "a.rs", b"v2\n").unwrap();
+        host.begin_task_gate(task.clone(), 10).await.unwrap();
+
+        // Hand-edit supersedes the second (Open) gate. The first (Satisfied) gate
+        // was already removed from holds at satisfaction time (it's in the chain,
+        // not in holds). Audit chain must be unchanged.
+        host.hand_edit(task.clone(), "a.rs", b"v3\n", op1).await.unwrap();
+
+        // Audit chain still has only the original resolved record — not corrupted.
+        assert_eq!(host.audit_len().await, audit_before, "audit chain must not shrink");
+        assert!(host.verify_audit().await.is_ok(), "audit chain must still verify");
+
+        // The resolved gate is findable via reviewed_by (it's in the chain).
+        assert!(host.reviewed_by(&gid1).await.is_some(), "resolved gate must still be auditable");
     }
 }
