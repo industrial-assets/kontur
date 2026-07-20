@@ -85,7 +85,7 @@ Co-op Supervisor reintroduces the pair, one layer up. Instead of two people at o
 - **FR-3** A shared review/"needs-you" queue either operator can pull from, with **claiming** to prevent redundant double-supervision.
 
 ### Prompt co-construction (dispatch gate)
-- **FR-4** Collaborative prompt editing; default driver-types / navigator-suggests, with optional simultaneous two-cursor editing (opt-in, per session).
+- **FR-4** Collaborative prompt editing; default driver-types / navigator-suggests, with optional simultaneous two-cursor editing (opt-in, per session). *(simplified in-console prompt entry with edit-resets-consent implemented 2026-07-20; live co-editing still future work)*
 - **FR-5** A prompt cannot be dispatched without the dispatch gate being satisfied (both operators have seen/accepted the instruction). (exact bar — TBD)
 
 ### Planning

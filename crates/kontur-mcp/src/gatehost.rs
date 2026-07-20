@@ -161,6 +161,13 @@ impl GateHost {
         self.state.lock().await.ctx.agent_id.clone()
     }
 
+    /// Operator face: update the session prompt. Called when an operator edits
+    /// the prompt in-console during DispatchReady. Subsequent gate provenance
+    /// (built from ctx.prompt at gate-open time) carries the updated text.
+    pub async fn set_prompt(&self, prompt: String) {
+        self.state.lock().await.ctx.prompt = prompt;
+    }
+
     /// Agent face: record a worktree write on a task (not gated).
     pub async fn record_write(&self, task_id: &TaskId, path: &str, contents: &[u8]) -> Result<(), GateHostError> {
         self.workspace.apply_write(task_id, path, contents)?;
@@ -999,6 +1006,40 @@ mod tests {
 
     /// After `abandon_session`, calling `propose_plan` must return
     /// `Err(GateHostError::SessionAbandoned)`.
+    /// set_prompt updates the session context so that subsequent gate provenance
+    /// (built from ctx.prompt) carries the new text. We verify by opening a gate
+    /// after the update and inspecting the satisfied audit record.
+    #[tokio::test]
+    async fn set_prompt_updates_provenance() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let context = ctx(vec![op1, op2]);
+        let host = GateHost::new(context.clone(), ws.clone());
+
+        // Update the prompt before the gate opens.
+        host.set_prompt("updated in-console".to_string()).await;
+
+        // Verify the context was updated.
+        assert_eq!(host.state.lock().await.ctx.prompt, "updated in-console");
+
+        // Open a gate and satisfy it so provenance is captured in the audit record.
+        let task = TaskId("t1".into());
+        ws.apply_write(&task, "a.rs", b"x\n").unwrap();
+        let (gid, _rx) = host.begin_task_gate(task, 0).await.unwrap();
+        let dh = host.pending_gates().await[0].diff_hash;
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
+        host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+
+        // The satisfied gate's audit record must carry the updated prompt.
+        let st = host.state.lock().await;
+        let record = st.chain.records().iter().find(|r| r.core.gate_id == gid).unwrap();
+        assert_eq!(
+            record.core.provenance.prompt, "updated in-console",
+            "audit record must carry the in-console-edited prompt"
+        );
+    }
+
     #[tokio::test]
     async fn propose_plan_refused_after_abandon() {
         let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();

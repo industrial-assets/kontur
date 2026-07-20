@@ -299,17 +299,17 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         let config_json = mcp_config_json(agent_port);
         std::fs::write(&mcp_config_path, &config_json)?;
 
-        // Build the prompt from the session prompt.
-        let full_prompt = agent_prompt(&effective_prompt);
         let mcp_config_str = mcp_config_path
             .to_str()
-            .ok_or_else(|| err("session temp path is not valid UTF-8".into()))?;
-        let cmd = build_claude_command(mcp_config_str, &full_prompt);
+            .ok_or_else(|| err("session temp path is not valid UTF-8".into()))?
+            .to_owned();
 
         let log_path_clone = log_path.clone();
         let server_clone = server.clone();
         tokio::spawn(async move {
             // Wait until the dispatch gate clears and the phase reaches PlanReview.
+            // We wait here (not at CLI time) so that any in-console prompt edits
+            // made during DispatchReady are captured by session_prompt() below.
             let mut state_rx = server_clone.state_rx();
             loop {
                 {
@@ -325,6 +325,11 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
                     break;
                 }
             }
+
+            // Fetch the (potentially edited) prompt after dispatch cleared.
+            let dispatched_prompt = server_clone.session_prompt().await;
+            let full_prompt = agent_prompt(&dispatched_prompt);
+            let cmd = build_claude_command(&mcp_config_str, &full_prompt);
 
             // Open the log file for stdout/stderr.
             let log_file = match std::fs::OpenOptions::new()

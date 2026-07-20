@@ -140,7 +140,7 @@ fn active(frame: &mut Frame, area: Rect, view: &SessionView) {
                     " DISPATCH GATE   A ⟨{}⟩ ready   B ⟨{}⟩ ready",
                     a_mark, b_mark
                 )),
-                Line::from(" [y] mark ready — needs both"),
+                Line::from(" [p] edit prompt · [y] mark ready — needs both"),
             ];
             frame.render_widget(
                 Paragraph::new(lines).block(Block::bordered().title("PROMPT")),
@@ -395,6 +395,31 @@ mod tests {
         assert!(
             rendered.contains(" > "),
             "expected bare prompt ' > ' in rendered output; got:\n{rendered}"
+        );
+    }
+
+    /// Prompt region must show "[p] edit prompt" hint.
+    #[test]
+    fn prompt_region_shows_edit_hint() {
+        let backend = TestBackend::new(120, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let view = minimal_view(ActiveRegion::Prompt {
+            prompt: "do the thing".into(),
+            ready: [false, false],
+        });
+        terminal.draw(|f| render(f, &view)).unwrap();
+        let rendered = terminal.backend().to_string();
+        assert!(
+            rendered.contains("[p] edit prompt"),
+            "expected '[p] edit prompt' in rendered Prompt region; got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("[y] mark ready"),
+            "expected '[y] mark ready' in rendered Prompt region; got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("do the thing"),
+            "expected prompt text in rendered output; got:\n{rendered}"
         );
     }
 
