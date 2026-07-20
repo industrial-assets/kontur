@@ -26,6 +26,9 @@ async fn main() -> std::io::Result<()> {
             print_usage();
             Ok(())
         }
+        // Bare `kontur --flag ...` → zero-config host in cwd with those flags
+        // (same as `kontur host --flag ...`).
+        Some(flag) if flag.starts_with("--") => host_cmd(&args[1..]).await,
         Some(other) => {
             eprintln!("kontur: unknown subcommand '{other}'");
             print_usage();
