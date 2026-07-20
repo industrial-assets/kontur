@@ -13,7 +13,7 @@ use kontur_core::{Ed25519Signer, ReviewDepth, Signer};
 use kontur_mcp::{GateHost, GitWorkspace, SessionContext};
 use kontur_net::{
     ScriptedAgent, ScriptedTask, SessionClient, SessionConfig, SessionServer,
-    WirePhase,
+    WirePhase, generate_tls, attach_tls,
 };
 
 // ---------------------------------------------------------------------------
@@ -189,13 +189,18 @@ async fn e2e_two_clients_scripted_agent_real_tcp_git() {
         };
         let server = SessionServer::new(host.clone(), cfg);
 
+        // Generate per-session TLS.
+        let session_tls = generate_tls();
+        let fingerprint = session_tls.fingerprint;
+        let acceptor = session_tls.acceptor.clone();
+
         // Accept-loop task.
         {
             let server_clone = server.clone();
             tokio::spawn(async move {
                 loop {
                     let Ok((stream, _)) = op_listener.accept().await else { break };
-                    server_clone.attach(stream).await;
+                    attach_tls(&server_clone, &acceptor, stream).await;
                 }
             });
         }
@@ -213,16 +218,16 @@ async fn e2e_two_clients_scripted_agent_real_tcp_git() {
             tokio::spawn(async move { agent.run(server_clone).await });
         }
 
-        // --- 4. Two clients connect via TCP ------------------------------------
+        // --- 4. Two clients connect via TLS ------------------------------------
         let addr_str = op_addr.to_string();
 
         let (client_a, rx_a) =
-            SessionClient::connect_tcp(&addr_str, "A".into(), seed_a)
+            SessionClient::connect_pinned_tls(&addr_str, "A".into(), seed_a, fingerprint)
                 .await
                 .expect("client A connect failed");
 
         let (client_b, rx_b) =
-            SessionClient::connect_tcp(&addr_str, "B".into(), seed_b)
+            SessionClient::connect_pinned_tls(&addr_str, "B".into(), seed_b, fingerprint)
                 .await
                 .expect("client B connect failed");
 

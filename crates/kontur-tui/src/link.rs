@@ -1,7 +1,9 @@
 //! Invite-link formatting, parsing, and IP discovery for zero-config hosting.
 //!
-//! Link format: `kontur://<ip>:<port>/<64-hex-token>`
-//! The token is the operator seat's 32-byte seed, hex-encoded.
+//! Link format: `kontur://<ip>:<port>/<64-hex-seed>#<64-hex-fp>`
+//! The seed is the operator seat's 32-byte seed, hex-encoded.
+//! The fragment (#) carries the TLS certificate fingerprint (SHA-256 of DER).
+//! Links without the `#fp` fragment are rejected — they predate encryption.
 
 use std::net::IpAddr;
 
@@ -9,33 +11,37 @@ use std::net::IpAddr;
 // format_invite
 // ---------------------------------------------------------------------------
 
-/// Format a paste-able invite link.
+/// Format a paste-able invite link including the TLS certificate fingerprint.
 ///
 /// # Example
 /// ```
 /// let seed = [0xabu8; 32];
-/// let link = kontur_tui::link::format_invite("203.0.113.5", 7777, &seed);
+/// let fp = [0x00u8; 32];
+/// let link = kontur_tui::link::format_invite("203.0.113.5", 7777, &seed, &fp);
 /// assert!(link.starts_with("kontur://203.0.113.5:7777/"));
-/// assert_eq!(link.len(), "kontur://203.0.113.5:7777/".len() + 64);
+/// assert!(link.contains('#'));
 /// ```
-pub fn format_invite(ip: &str, port: u16, seed: &[u8; 32]) -> String {
-    let hex: String = seed.iter().map(|b| format!("{b:02x}")).collect();
-    format!("kontur://{ip}:{port}/{hex}")
+pub fn format_invite(ip: &str, port: u16, seed: &[u8; 32], fp: &[u8; 32]) -> String {
+    let hex_seed: String = seed.iter().map(|b| format!("{b:02x}")).collect();
+    let hex_fp: String = fp.iter().map(|b| format!("{b:02x}")).collect();
+    format!("kontur://{ip}:{port}/{hex_seed}#{hex_fp}")
 }
 
 // ---------------------------------------------------------------------------
 // parse_invite
 // ---------------------------------------------------------------------------
 
-/// Parse a kontur invite link back into (addr, seed).
+/// Parse a kontur invite link back into (addr, seed, fingerprint).
 ///
 /// `addr` is `host:port` suitable for TCP connection.
 ///
 /// Strict rules:
 /// - scheme must be `kontur://`
-/// - exactly one `/` separating host:port from token
-/// - token must be exactly 64 lowercase hex chars (32 bytes)
-pub fn parse_invite(link: &str) -> Result<(String, [u8; 32]), String> {
+/// - exactly one `/` separating host:port from seed token
+/// - seed token must be exactly 64 lowercase hex chars (32 bytes)
+/// - `#fp` fragment must be present and exactly 64 hex chars
+/// - links without `#fp` are rejected (they predate encryption)
+pub fn parse_invite(link: &str) -> Result<(String, [u8; 32], [u8; 32]), String> {
     let rest = link
         .strip_prefix("kontur://")
         .ok_or_else(|| format!("invalid scheme: expected 'kontur://' in '{link}'"))?;
@@ -46,7 +52,7 @@ pub fn parse_invite(link: &str) -> Result<(String, [u8; 32]), String> {
         .ok_or_else(|| "missing '/' between address and token".to_string())?;
 
     let addr_part = &rest[..slash];
-    let token_part = &rest[slash + 1..];
+    let after_slash = &rest[slash + 1..];
 
     if addr_part.is_empty() {
         return Err("missing address in invite link".to_string());
@@ -57,7 +63,17 @@ pub fn parse_invite(link: &str) -> Result<(String, [u8; 32]), String> {
         return Err(format!("address '{addr_part}' is missing a port"));
     }
 
-    // Validate token: exactly 64 hex chars.
+    // Split seed from fingerprint at '#'.
+    let (token_part, fp_part) = match after_slash.find('#') {
+        Some(hash_pos) => (&after_slash[..hash_pos], &after_slash[hash_pos + 1..]),
+        None => {
+            return Err(
+                "this invite predates encryption — ask the host for a fresh link".to_string(),
+            );
+        }
+    };
+
+    // Validate seed token: exactly 64 hex chars.
     if token_part.len() != 64 {
         return Err(format!(
             "token must be 64 hex characters (32 bytes); got {} characters",
@@ -68,7 +84,18 @@ pub fn parse_invite(link: &str) -> Result<(String, [u8; 32]), String> {
     let seed = hex_to_seed(token_part)
         .ok_or_else(|| format!("token contains non-hex characters: '{token_part}'"))?;
 
-    Ok((addr_part.to_string(), seed))
+    // Validate fingerprint: exactly 64 hex chars.
+    if fp_part.len() != 64 {
+        return Err(format!(
+            "fingerprint must be 64 hex characters (32 bytes); got {} characters",
+            fp_part.len()
+        ));
+    }
+
+    let fp = hex_to_seed(fp_part)
+        .ok_or_else(|| format!("fingerprint contains non-hex characters: '{fp_part}'"))?;
+
+    Ok((addr_part.to_string(), seed, fp))
 }
 
 fn hex_to_seed(s: &str) -> Option<[u8; 32]> {
@@ -146,13 +173,19 @@ mod tests {
         [b; 32]
     }
 
+    fn fp_from_byte(b: u8) -> [u8; 32] {
+        [b; 32]
+    }
+
     #[test]
     fn roundtrip_format_then_parse() {
         let seed = seed_from_byte(0xab);
-        let link = format_invite("203.0.113.5", 7777, &seed);
-        let (addr, parsed_seed) = parse_invite(&link).expect("parse should succeed");
+        let fp = fp_from_byte(0x12);
+        let link = format_invite("203.0.113.5", 7777, &seed, &fp);
+        let (addr, parsed_seed, parsed_fp) = parse_invite(&link).expect("parse should succeed");
         assert_eq!(addr, "203.0.113.5:7777");
         assert_eq!(parsed_seed, seed);
+        assert_eq!(parsed_fp, fp);
     }
 
     #[test]
@@ -161,10 +194,12 @@ mod tests {
         for (i, b) in seed.iter_mut().enumerate() {
             *b = (i * 7 + 13) as u8;
         }
-        let link = format_invite("10.0.0.1", 9999, &seed);
-        let (addr, parsed_seed) = parse_invite(&link).expect("parse should succeed");
+        let fp = fp_from_byte(0xde);
+        let link = format_invite("10.0.0.1", 9999, &seed, &fp);
+        let (addr, parsed_seed, parsed_fp) = parse_invite(&link).expect("parse should succeed");
         assert_eq!(addr, "10.0.0.1:9999");
         assert_eq!(parsed_seed, seed);
+        assert_eq!(parsed_fp, fp);
     }
 
     #[test]
@@ -182,38 +217,72 @@ mod tests {
 
     #[test]
     fn rejects_short_token() {
+        // Short token without '#' → missing encryption error
         let err = parse_invite("kontur://1.2.3.4:7777/abcdef").unwrap_err();
-        assert!(err.contains("64"), "got: {err}");
+        assert!(
+            err.contains("64") || err.contains("predates encryption"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_missing_fp() {
+        // Valid 64-char seed but no '#fp' → predates encryption
+        let token = "ab".repeat(32);
+        let link = format!("kontur://1.2.3.4:7777/{token}");
+        let err = parse_invite(&link).unwrap_err();
+        assert!(err.contains("predates encryption"), "got: {err}");
     }
 
     #[test]
     fn rejects_non_hex_token() {
-        // 64 chars but contains 'z'
-        let bad = "kontur://1.2.3.4:7777/".to_string()
-            + "z"
-            + &"a".repeat(63);
+        // 64 chars but contains 'z' in seed, with a valid fp fragment
+        let fp = "cd".repeat(32);
+        let bad = format!("kontur://1.2.3.4:7777/{}#{}", "z".to_string() + &"a".repeat(63), fp);
         let err = parse_invite(&bad).unwrap_err();
         assert!(err.contains("non-hex"), "got: {err}");
     }
 
     #[test]
+    fn rejects_non_hex_fp() {
+        // Valid seed but non-hex fingerprint
+        let seed = "ab".repeat(32);
+        let bad_fp = "z".to_string() + &"a".repeat(63);
+        let link = format!("kontur://1.2.3.4:7777/{seed}#{bad_fp}");
+        let err = parse_invite(&link).unwrap_err();
+        assert!(err.contains("non-hex"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_short_fp() {
+        // Valid seed but short fingerprint
+        let seed = "ab".repeat(32);
+        let link = format!("kontur://1.2.3.4:7777/{seed}#abcd");
+        let err = parse_invite(&link).unwrap_err();
+        assert!(err.contains("64"), "got: {err}");
+    }
+
+    #[test]
     fn rejects_missing_port() {
         let token = "ab".repeat(32);
-        let link = format!("kontur://1.2.3.4/{token}");
+        let fp = "cd".repeat(32);
+        let link = format!("kontur://1.2.3.4/{token}#{fp}");
         let err = parse_invite(&link).unwrap_err();
         assert!(err.contains("port"), "got: {err}");
     }
 
     #[test]
     fn link_format_is_stable() {
-        // Verifies the exact format a user would paste, using a known seed.
+        // Verifies the exact format a user would paste, using a known seed and fp.
         let seed = [0x9fu8; 32];
-        let link = format_invite("203.0.113.5", 7777, &seed);
+        let fp = [0x5au8; 32];
+        let link = format_invite("203.0.113.5", 7777, &seed, &fp);
         assert_eq!(
             link,
             format!(
-                "kontur://203.0.113.5:7777/{}",
-                "9f".repeat(32)
+                "kontur://203.0.113.5:7777/{}#{}",
+                "9f".repeat(32),
+                "5a".repeat(32),
             )
         );
     }

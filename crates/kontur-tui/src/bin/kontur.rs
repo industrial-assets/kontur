@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use kontur_core::{Ed25519Signer, Signer};
 use kontur_mcp::{GateHost, GitWorkspace, InMemoryWorkspace, SessionContext};
-use kontur_net::{ScriptedAgent, SessionConfig, SessionServer, WirePhase, serve_agent_endpoint};
+use kontur_net::{ScriptedAgent, SessionConfig, SessionServer, WirePhase, serve_agent_endpoint, generate_tls, attach_tls};
 use kontur_tui::claude_agent::{build_claude_command, mcp_config_json, agent_prompt};
 use kontur_tui::demo::{run, Demo};
 use kontur_tui::link::{discover_ip, format_invite, parse_invite};
@@ -231,17 +231,23 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
     let op_listener = tokio::net::TcpListener::bind(("0.0.0.0", operator_port)).await?;
     let op_addr = op_listener.local_addr()?;
 
-    // Bind agent listener.
-    let agent_listener = tokio::net::TcpListener::bind(("0.0.0.0", agent_port)).await?;
+    // Bind agent listener (localhost only — agent endpoint stays plaintext;
+    // CC connects via nc on 127.0.0.1).
+    let agent_listener = tokio::net::TcpListener::bind(("127.0.0.1", agent_port)).await?;
     let agent_addr = agent_listener.local_addr()?;
 
-    // Spawn operator accept loop.
+    // Generate per-session TLS for the operator wire.
+    let session_tls = generate_tls();
+    let tls_fingerprint = session_tls.fingerprint;
+    let acceptor = session_tls.acceptor.clone();
+
+    // Spawn operator accept loop (TLS).
     {
         let server_clone = server.clone();
         tokio::spawn(async move {
             loop {
                 let Ok((stream, _)) = op_listener.accept().await else { break };
-                server_clone.attach(stream).await;
+                attach_tls(&server_clone, &acceptor, stream).await;
             }
         });
     }
@@ -396,16 +402,16 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         None
     };
 
-    // Discover IP and format invite link.
+    // Discover IP and format invite link (includes TLS fingerprint).
     let lan_ip = kontur_tui::link::discover_lan_ip();
     let public_ip = kontur_tui::link::discover_public_ip();
     let ip = lan_ip.clone().unwrap_or_else(discover_ip);
-    let invite_link = format_invite(&ip, op_addr.port(), &seed_b);
+    let invite_link = format_invite(&ip, op_addr.port(), &seed_b, &tls_fingerprint);
     // A remote (off-LAN) operator needs the public address + a router
     // port-forward; only offer it when it differs from the primary.
     let remote_link = match &public_ip {
         Some(pubip) if Some(pubip) != lan_ip.as_ref() => {
-            Some(format_invite(pubip, op_addr.port(), &seed_b))
+            Some(format_invite(pubip, op_addr.port(), &seed_b, &tls_fingerprint))
         }
         _ => None,
     };
@@ -451,14 +457,14 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         let links = kontur_tui::link::InviteLinks {
             lan: lan_ip
                 .as_ref()
-                .map(|ip| format!("kontur join {}", format_invite(ip, op_addr.port(), &seed_b)))
+                .map(|ip| format!("kontur join {}", format_invite(ip, op_addr.port(), &seed_b, &tls_fingerprint)))
                 .or_else(|| Some(format!("kontur join {invite_link}"))),
             wan: remote_link
                 .as_ref()
                 .map(|remote| format!("kontur join {remote}")),
             port: op_addr.port(),
         };
-        run_remote(&host_addr, "HOST".into(), seed_a, Some(links)).await?;
+        run_remote(&host_addr, "HOST".into(), seed_a, Some(links), Some(tls_fingerprint)).await?;
     }
     Ok(())
 }
@@ -471,13 +477,13 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
     // If the first arg looks like a kontur:// link, parse it directly.
     if let Some(first) = args.first() {
         if first.starts_with("kontur://") {
-            let (addr, seed) = parse_invite(first)
+            let (addr, seed, fp) = parse_invite(first)
                 .map_err(|e| err(format!("invalid invite link: {e}")))?;
-            return run_remote(&addr, "OPERATOR".into(), seed, None).await;
+            return run_remote(&addr, "OPERATOR".into(), seed, None, Some(fp)).await;
         }
     }
 
-    // Legacy form: kontur join --addr X --seed N
+    // Legacy form: kontur join --addr X --seed N (no TLS — deprecated path)
     let mut addr: Option<String> = None;
     let mut seed_str: Option<String> = None;
 
@@ -503,7 +509,8 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
     let seed_val_str = seed_str.ok_or_else(|| err("kontur join: --seed is required".into()))?;
     let seed = parse_seed_arg(&seed_val_str, "--seed")?;
 
-    run_remote(&addr, "OPERATOR".into(), seed, None).await
+    // Legacy --addr/--seed path: no fingerprint → plain TCP (deprecated)
+    run_remote(&addr, "OPERATOR".into(), seed, None, None).await
 }
 
 // ---------------------------------------------------------------------------

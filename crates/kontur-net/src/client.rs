@@ -118,6 +118,29 @@ impl SessionClient {
         Self::attach(stream, seat, seed).await
     }
 
+    /// Connect to a TCP endpoint without TLS. Only for in-process/loopback tests
+    /// (e.g., tests using `attach` directly with duplex streams).
+    /// Production operator connections use `connect_pinned_tls`.
+    pub async fn connect_tcp_plain(
+        addr: &str,
+        seat: String,
+        seed: [u8; 32],
+    ) -> io::Result<(SessionClient, mpsc::Receiver<ServerMsg>)> {
+        let stream = tokio::net::TcpStream::connect(addr).await?;
+        Self::attach(stream, seat, seed).await
+    }
+
+    /// Connect to a TLS endpoint with cert pinning and attach.
+    pub async fn connect_pinned_tls(
+        addr: &str,
+        seat: String,
+        seed: [u8; 32],
+        fingerprint: [u8; 32],
+    ) -> io::Result<(SessionClient, mpsc::Receiver<ServerMsg>)> {
+        let tls_stream = crate::tls::connect_pinned(addr, fingerprint).await?;
+        Self::attach(tls_stream, seat, seed).await
+    }
+
     // -----------------------------------------------------------------------
     // Identity
     // -----------------------------------------------------------------------
