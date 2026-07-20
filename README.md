@@ -75,8 +75,7 @@ kontur host --mem --prompt "initial text (editable in-console)"
 kontur join --addr host:7777 --seed 2
 ```
 
-**Console keys:** `y` ready · `p` edit prompt · `o` open diff (required before `g`) ·
-`g` go (also works inside the diff viewer) · `r` no-go + steer · `e` edit a file in $EDITOR (opens diff first if not open; `[tab]` cycles between files in the diff) · `j`/`k` scroll diff down/up · `PgDn`/`PgUp` page diff · `l` invite LAN/WAN · `k` abandon (confirm) · `q` quit.
+**Console keys:** `y` ready · `p` edit prompt · `j`/`k` scroll diff · `tab` select file · `g` go (2× if truncated) · `r` no-go+steer · `e` edit file · `l` invite LAN/WAN · `K` abandon (confirm) · `q` quit.
 
 Invite codes carry the secret the operator's key is derived from — send privately; operator-supplied keys with host-side approval are future work.
 
@@ -110,10 +109,12 @@ claude --mcp-config kontur-mcp.json \
 
 Agent writes, commands, and gate openings stream live into the operator console
 as they happen — no keypress needed. Every task completion parks at a four-eyes
-gate until both operators cast a verdict — and a `go` requires having actually
-opened the diff (`[o]`); the review depth is recorded truthfully in the signed
-verdict. Enforcement is permission-level — native mutation tools are denied via
-CC's `--allowedTools`/`--disallowedTools` flags, not an OS-level sandbox. The
+gate until both operators cast a verdict — the diff is permanently visible in
+the right pane while the gate is pending; `[tab]` cycles between files;
+truncated diffs require a second `[g]` to acknowledge before casting. The
+review depth is recorded truthfully in the signed verdict. Enforcement is
+permission-level — native mutation tools are denied via CC's
+`--allowedTools`/`--disallowedTools` flags, not an OS-level sandbox. The
 operator wire is TLS-encrypted, cert pinned via the invite code. Either seat can
 abandon a runaway session (`[k]`): nothing merges, the agent is stopped, and the
 audit chain keeps every resolved gate.

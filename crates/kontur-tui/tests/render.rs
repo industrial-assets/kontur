@@ -37,8 +37,8 @@ fn base(active: ActiveRegion) -> SessionView {
 }
 
 fn draw(view: &SessionView) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(90, 30)).unwrap();
-    terminal.draw(|f| render(f, view)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    terminal.draw(|f| render(f, view, 0, 0)).unwrap();
     buf_string(terminal.backend().buffer())
 }
 
@@ -63,12 +63,10 @@ fn gate_shows_summary_and_sealed_key_never_value() {
         ],
         escalation_required: false,
         diff_preview: None,
-        diff_opened: true, // diff already opened, so [g] go is visible
         diff_truncated: false,
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
     assert!(s.contains("auth/session.rs"));
-    assert!(s.contains("+47 loc"));
     assert!(s.contains("cast — sealed"));
     // The sealed key must not reveal a verdict value.
     assert!(!s.contains("■ GO"));
@@ -117,17 +115,6 @@ fn dropped_link_shows_b_station_dropped() {
 }
 
 #[test]
-fn render_diff_contains_diff_text_and_close_hint() {
-    use kontur_tui::render::render_diff;
-    let diff_text = "diff --git a/foo.rs b/foo.rs\n+fn added() {}";
-    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 30)).unwrap();
-    terminal.draw(|f| render_diff(f, "gate-001", diff_text, 0)).unwrap();
-    let s = buf_string(terminal.backend().buffer());
-    assert!(s.contains("diff --git"));
-    assert!(s.contains("[o] close"));
-}
-
-#[test]
 fn session_close_no_longer_says_unanimous() {
     let summary = AuditSummary { gates: 4, reviewers: vec!["A".into()], chain_verified: true, merged: true, abandoned: false };
     let s = draw(&base(ActiveRegion::SessionClosed(summary)));
@@ -152,64 +139,6 @@ fn invite_panel_absent_when_none() {
     assert!(!s.contains("INVITE"));
 }
 
-/// FR-24: when the diff has not been opened, the key hint must show the
-/// "required before go" copy and must NOT show [g] go.
-#[test]
-fn gate_unopened_diff_shows_required_hint() {
-    let card = GateCard {
-        gate_id: "gate-002".into(),
-        task: "t2".into(),
-        files: vec!["auth/guard.rs".into()],
-        loc: 12,
-        keys: vec![
-            KeyView { label: "A".into(), role: Role::Host, status: KeyStatus::Awaiting },
-            KeyView { label: "B".into(), role: Role::Operator, status: KeyStatus::Awaiting },
-        ],
-        escalation_required: false,
-        diff_preview: None,
-        diff_opened: false, // diff NOT yet opened
-        diff_truncated: false,
-    };
-    let s = draw(&base(ActiveRegion::Gate(card)));
-    assert!(
-        s.contains("open diff (required before go)"),
-        "unopened gate must show required-before-go hint; got:\n{s}"
-    );
-    // [g] go must not appear as an action key when diff is unopened
-    assert!(
-        !s.contains("[g] go"),
-        "unopened gate must NOT show [g] go action; got:\n{s}"
-    );
-}
-
-/// FR-24: after the diff is opened, [g] go must appear and the required hint must not.
-#[test]
-fn gate_opened_diff_shows_go_hint() {
-    let card = GateCard {
-        gate_id: "gate-003".into(),
-        task: "t3".into(),
-        files: vec!["auth/guard.rs".into()],
-        loc: 8,
-        keys: vec![
-            KeyView { label: "A".into(), role: Role::Host, status: KeyStatus::Awaiting },
-            KeyView { label: "B".into(), role: Role::Operator, status: KeyStatus::Awaiting },
-        ],
-        escalation_required: false,
-        diff_preview: None,
-        diff_opened: true, // diff opened
-        diff_truncated: false,
-    };
-    let s = draw(&base(ActiveRegion::Gate(card)));
-    assert!(
-        s.contains("[g] go"),
-        "opened gate must show [g] go hint; got:\n{s}"
-    );
-    assert!(
-        !s.contains("required before go"),
-        "opened gate must NOT show required-before-go hint; got:\n{s}"
-    );
-}
-
 #[test]
 fn invite_panel_renders_remote_variant_line() {
     let mut view = base(ActiveRegion::Idle);
@@ -223,13 +152,62 @@ fn invite_panel_renders_remote_variant_line() {
     assert!(s.contains("remote (forward port 7777 first)"));
 }
 
+/// Gate: diff always visible in right pane alongside LOG in left pane.
+#[test]
+fn gate_shows_diff_and_log_simultaneously() {
+    let card = GateCard {
+        gate_id: "gate-001".into(),
+        task: "t1".into(),
+        files: vec!["auth/session.rs".into()],
+        loc: 47,
+        keys: vec![
+            KeyView { label: "A · YOU".into(), role: Role::Host, status: KeyStatus::Awaiting },
+            KeyView { label: "B · J.REED".into(), role: Role::Operator, status: KeyStatus::Sealed },
+        ],
+        escalation_required: false,
+        diff_preview: Some("diff --git a/auth/session.rs b/auth/session.rs\n+fn foo() {}".into()),
+        diff_truncated: false,
+    };
+    let s = draw(&base(ActiveRegion::Gate(card)));
+    // Both left-pane LOG and right-pane DIFF must be visible at once.
+    assert!(s.contains("LOG"), "LOG title must appear in left pane");
+    assert!(s.contains("DIFF"), "DIFF title must appear in right pane");
+    // Verdict bar must also be visible.
+    assert!(s.contains("[g] go"), "verdict bar must show [g] go");
+}
+
+/// Gate: truncated diff shows (TRUNCATED) in title.
 #[test]
 fn gate_truncated_flag_shows_truncated_in_diff_title() {
-    use kontur_tui::render::render_diff;
-    let diff_text = "diff --git a/big.rs b/big.rs\n+fn added() {}";
-    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 30)).unwrap();
-    // When the caller passes a title with (TRUNCATED), the diff header shows it.
-    terminal.draw(|f| render_diff(f, "gate-001 (TRUNCATED)", diff_text, 0)).unwrap();
-    let s = buf_string(terminal.backend().buffer());
+    let card = GateCard {
+        gate_id: "gate-trunc".into(),
+        task: "t1".into(),
+        files: vec!["big.rs".into()],
+        loc: 9999,
+        keys: vec![],
+        escalation_required: false,
+        diff_preview: Some("diff --git a/big.rs b/big.rs\n+fn big() {}".into()),
+        diff_truncated: true,
+    };
+    let s = draw(&base(ActiveRegion::Gate(card)));
     assert!(s.contains("TRUNCATED"), "truncated diff must show TRUNCATED in title; got:\n{s}");
+}
+
+/// Gate: files bar shows ▶ for the selected file.
+#[test]
+fn gate_files_bar_shows_selection_marker() {
+    let card = GateCard {
+        gate_id: "gate-002".into(),
+        task: "t2".into(),
+        files: vec!["a.rs".into(), "b.rs".into()],
+        loc: 10,
+        keys: vec![],
+        escalation_required: false,
+        diff_preview: None,
+        diff_truncated: false,
+    };
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    terminal.draw(|f| render(f, &base(ActiveRegion::Gate(card)), 0, 1)).unwrap();
+    let s = buf_string(terminal.backend().buffer());
+    assert!(s.contains("▶ b.rs"), "selected file must be marked with ▶; got:\n{s}");
 }

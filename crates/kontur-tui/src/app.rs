@@ -48,12 +48,11 @@ impl Drop for TerminalGuard {
 }
 
 /// Poll for the next operator action, or `None` on timeout (so the loop can
-/// refresh the view periodically). `composing_remedy` switches key semantics;
-/// `diff_open` enables scroll and in-viewer approve actions.
-pub fn poll_action(timeout: Duration, composing_remedy: bool, diff_open: bool) -> io::Result<Option<Action>> {
+/// refresh the view periodically). `composing_remedy` switches key semantics.
+pub fn poll_action(timeout: Duration, composing_remedy: bool) -> io::Result<Option<Action>> {
     if event::poll(timeout)? {
         if let Event::Key(key) = event::read()? {
-            return Ok(Some(map_key(key.code, composing_remedy, diff_open)));
+            return Ok(Some(map_key(key.code, composing_remedy)));
         }
     }
     Ok(None)

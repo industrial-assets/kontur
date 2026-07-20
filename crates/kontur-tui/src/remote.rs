@@ -1,7 +1,6 @@
 //! Remote two-seat mode: connects to a kontur-net SessionServer over TCP,
 //! maps WireState → SessionView, and runs the interactive terminal loop.
 
-use std::collections::HashSet;
 use std::io;
 use std::time::Duration;
 
@@ -13,7 +12,7 @@ use kontur_net::{ServerMsg, SessionClient, WireGate, WirePhase, WireRole, WireSt
 use crate::app::{poll_action, TerminalGuard};
 use crate::diffview::{clamp_scroll, diff_files, editor_command};
 use crate::input::Action;
-use crate::render::{render, render_diff};
+use crate::render::render;
 use crate::view::{
     ActiveRegion, AgentCard, AuditSummary, Banner, GateCard, KeyStatus, KeyView, LogLine, Role,
     SessionView, Station, StatusStrip,
@@ -190,8 +189,6 @@ fn wire_gate_to_card(wg: &WireGate, stations: &[Station; 2]) -> GateCard {
         keys,
         escalation_required: wg.escalation_required,
         diff_preview: wg.diff_preview.clone(),
-        // diff_opened is runtime UI state, set by the run loop after this call.
-        diff_opened: false,
         diff_truncated: wg.diff_truncated,
     }
 }
@@ -237,22 +234,6 @@ pub fn compose_invite_text(links: &crate::link::InviteLinks, mode: LinkMode) -> 
         });
     }
     Some(text)
-}
-
-// ---------------------------------------------------------------------------
-// FR-24 pure helpers (unit-tested below)
-// ---------------------------------------------------------------------------
-
-/// FR-24: a `go` requires having opened the diff; a `no-go` is always castable
-/// (refusal is never blocked) but its signed depth records what actually
-/// happened: FullDiff if the diff was opened, Summary if not.
-pub fn depth_for_cast(opened: bool) -> ReviewDepth {
-    if opened { ReviewDepth::FullDiff } else { ReviewDepth::Summary }
-}
-
-/// FR-24: `go` is only allowed once the operator has opened the diff.
-pub fn go_allowed(opened: bool) -> bool {
-    opened
 }
 
 // ---------------------------------------------------------------------------
@@ -313,14 +294,11 @@ pub async fn run_remote(
 
     let mut compose = ComposeTarget::None;
     let mut compose_buf = String::new();
-    let mut diff_open = false;
     let mut diff_scroll: u16 = 0;
     let mut selected_file: usize = 0;
     let mut last_gate_id: Option<String> = None;
     let mut rejected_msg: Option<String> = None;
     let mut rejected_ttl: u8 = 0;
-    // runtime-only UI state — the no-HashMap rule applies to canonical/hashed data, not here
-    let mut opened_diffs: HashSet<String> = HashSet::new();
     // Truncation acknowledgment: when the active gate's diff is truncated,
     // the first `g` press sets this to the gate id; the second `g` casts.
     let mut truncation_ack: Option<String> = None;
@@ -345,28 +323,14 @@ pub async fn run_remote(
             view.invite = invite.as_ref().and_then(|l| compose_invite_text(l, link_mode));
         }
 
-        // FR-24: set diff_opened on the active gate card AFTER wire_to_view,
-        // since wire_to_view cannot know about runtime UI state.
         let active_gate_id = state.gate.as_ref().map(|g| g.gate_id.0.clone());
 
         // Reset scroll and selected file when a new gate arrives.
         if active_gate_id != last_gate_id {
-            if let Some(ref gid) = active_gate_id {
-                // Auto-mark diff as opened if the viewer is already open.
-                if diff_open {
-                    opened_diffs.insert(gid.clone());
-                }
-            }
             diff_scroll = 0;
             selected_file = 0;
             truncation_ack = None;
             last_gate_id = active_gate_id.clone();
-        }
-
-        if let ActiveRegion::Gate(ref mut card) = view.active {
-            if let Some(ref gid) = active_gate_id {
-                card.diff_opened = opened_diffs.contains(gid);
-            }
         }
 
         // Transient notice: while ttl > 0 the rejection/confirm message is
@@ -397,8 +361,8 @@ pub async fn run_remote(
             ));
         }
 
-        // When diff is open with multiple files, show file-cycle hint in notice.
-        if diff_open && view.notice.is_none() {
+        // When a gate is pending with multiple files, show file-cycle hint in notice.
+        if view.notice.is_none() {
             if let ActiveRegion::Gate(ref card) = view.active {
                 if let Some(ref preview) = card.diff_preview {
                     let files = diff_files(preview);
@@ -411,24 +375,11 @@ pub async fn run_remote(
         }
 
         terminal.draw(|f| {
-            if diff_open {
-                if let ActiveRegion::Gate(ref card) = view.active {
-                    if let Some(preview) = &card.diff_preview {
-                        let diff_title = if card.diff_truncated {
-                            format!("{} (TRUNCATED)", card.gate_id)
-                        } else {
-                            card.gate_id.clone()
-                        };
-                        render_diff(f, &diff_title, preview, diff_scroll);
-                        return;
-                    }
-                }
-            }
-            render(f, &view);
+            render(f, &view, diff_scroll, selected_file);
         })?;
 
         let composing = !matches!(compose, ComposeTarget::None);
-        match poll_action(Duration::from_millis(200), composing, diff_open)? {
+        match poll_action(Duration::from_millis(200), composing)? {
             None => {}
             Some(Action::Quit) => break,
 
@@ -437,29 +388,22 @@ pub async fn run_remote(
                 let _ = client.ready().await;
             }
 
-            // Go verdict — FR-24: requires the diff to have been opened.
+            // Go verdict — truncation requires a second `g` to acknowledge.
             Some(Action::Go) => {
                 if let Some(wg) = &state.gate {
-                    let opened = opened_diffs.contains(&wg.gate_id.0);
-                    if !go_allowed(opened) {
-                        rejected_msg = Some("open the diff first — [o]".into());
-                        rejected_ttl = 30;
-                    } else if wg.diff_truncated {
-                        // Truncated diff: require a second consecutive `g` to acknowledge.
-                        if truncation_ack.as_deref() == Some(&wg.gate_id.0) {
-                            // Already acknowledged on this gate — cast.
+                    let acked = truncation_ack.as_deref() == Some(&wg.gate_id.0);
+                    match go_gate(wg.diff_truncated, acked) {
+                        GoDecision::Cast => {
                             let _ = client.cast_go(wg, ReviewDepth::FullDiff).await;
                             truncation_ack = None;
-                        } else {
-                            // First `g`: show warning, set ack.
+                        }
+                        GoDecision::NeedAck => {
                             truncation_ack = Some(wg.gate_id.0.clone());
                             rejected_msg = Some(
                                 "diff was truncated at 64 KB — press [g] again to sign anyway".into(),
                             );
                             rejected_ttl = 60;
                         }
-                    } else {
-                        let _ = client.cast_go(wg, ReviewDepth::FullDiff).await;
                     }
                 }
             }
@@ -492,91 +436,68 @@ pub async fn run_remote(
                 let _ = client.abandon().await;
             }
 
-            // Hand-edit: $EDITOR round-trip when diff is open; otherwise open diff first.
+            // Hand-edit: $EDITOR round-trip when a gate is present.
             Some(Action::HandEdit) => {
-                if diff_open {
-                    // Determine which file to edit.
-                    let diff_text = if let ActiveRegion::Gate(ref card) = view.active {
-                        card.diff_preview.clone()
-                    } else {
-                        None
-                    };
-                    let files = diff_text.as_deref().map(diff_files).unwrap_or_default();
-                    if files.is_empty() {
-                        rejected_msg = Some("no files in diff — cannot hand-edit".into());
-                        rejected_ttl = 30;
-                    } else {
-                        let path = files[selected_file % files.len()].clone();
-                        // Request file contents from server.
-                        let _ = client.fetch_file(&path).await;
-                        // Wait for the FileContent response (10s timeout).
-                        let result = tokio::time::timeout(
-                            Duration::from_secs(10),
-                            wait_for_file(&mut file_rx, &path),
-                        )
-                        .await;
+                let diff_text = if let ActiveRegion::Gate(ref card) = view.active {
+                    card.diff_preview.clone()
+                } else {
+                    None
+                };
+                let files = diff_text.as_deref().map(diff_files).unwrap_or_default();
+                if files.is_empty() {
+                    rejected_msg = Some("no files in diff — cannot hand-edit".into());
+                    rejected_ttl = 30;
+                } else {
+                    let path = files[selected_file % files.len()].clone();
+                    // Request file contents from server.
+                    let _ = client.fetch_file(&path).await;
+                    // Wait for the FileContent response (10s timeout).
+                    let result = tokio::time::timeout(
+                        Duration::from_secs(10),
+                        wait_for_file(&mut file_rx, &path),
+                    )
+                    .await;
 
-                        match result {
-                            Err(_elapsed) => {
-                                rejected_msg = Some(format!("timed out fetching {path}"));
-                                rejected_ttl = 30;
-                            }
-                            Ok(contents) => {
-                                // Suspend TUI, launch editor, re-enter TUI.
-                                TerminalGuard::restore();
-                                let edit_result =
-                                    run_editor_roundtrip(&path, contents.as_deref());
-                                // Re-enter raw mode / alternate screen.
-                                let _ = ratatui::crossterm::execute!(
-                                    io::stdout(),
-                                    ratatui::crossterm::terminal::EnterAlternateScreen
-                                );
-                                let _ = ratatui::crossterm::terminal::enable_raw_mode();
+                    match result {
+                        Err(_elapsed) => {
+                            rejected_msg = Some(format!("timed out fetching {path}"));
+                            rejected_ttl = 30;
+                        }
+                        Ok(contents) => {
+                            // Suspend TUI, launch editor, re-enter TUI.
+                            TerminalGuard::restore();
+                            let edit_result =
+                                run_editor_roundtrip(&path, contents.as_deref());
+                            // Re-enter raw mode / alternate screen.
+                            let _ = ratatui::crossterm::execute!(
+                                io::stdout(),
+                                ratatui::crossterm::terminal::EnterAlternateScreen
+                            );
+                            let _ = ratatui::crossterm::terminal::enable_raw_mode();
 
-                                match edit_result {
-                                    Err(e) => {
-                                        rejected_msg = Some(format!("editor error: {e}"));
-                                        rejected_ttl = 30;
-                                    }
-                                    Ok(None) => {
-                                        rejected_msg = Some("no changes".into());
-                                        rejected_ttl = 20;
-                                    }
-                                    Ok(Some(new_contents)) => {
-                                        let _ = client.hand_edit(&path, &new_contents).await;
-                                        rejected_msg = Some(
-                                            "hand-edit sent — fresh gate opened".into(),
-                                        );
-                                        rejected_ttl = 40;
-                                    }
+                            match edit_result {
+                                Err(e) => {
+                                    rejected_msg = Some(format!("editor error: {e}"));
+                                    rejected_ttl = 30;
+                                }
+                                Ok(None) => {
+                                    rejected_msg = Some("no changes".into());
+                                    rejected_ttl = 20;
+                                }
+                                Ok(Some(new_contents)) => {
+                                    let _ = client.hand_edit(&path, &new_contents).await;
+                                    rejected_msg = Some(
+                                        "hand-edit sent — fresh gate opened".into(),
+                                    );
+                                    rejected_ttl = 40;
                                 }
                             }
                         }
                     }
-                } else {
-                    // Diff not open yet: instruct operator to open it first.
-                    rejected_msg = Some(
-                        "open diff first — [o] to view, [e] again to edit a file".into(),
-                    );
-                    rejected_ttl = 30;
                 }
             }
 
-            // Diff toggle — FR-24: opening the diff marks this gate as opened.
-            Some(Action::OpenDiff) => {
-                diff_open = !diff_open;
-                // Mark opened when we're toggling the diff on (diff_open was
-                // false before this action; we just set it to true).
-                if diff_open {
-                    if let Some(wg) = &state.gate {
-                        opened_diffs.insert(wg.gate_id.0.clone());
-                    }
-                    diff_scroll = 0;
-                    selected_file = 0;
-                }
-            }
-
-            // Scroll actions (only valid when diff_open; gated by map_key).
+            // Scroll actions (always active in the split layout).
             Some(Action::ScrollDown) => {
                 let total = diff_line_count(&view.active);
                 diff_scroll = clamp_scroll(diff_scroll as i32 + 1, total, PAGE_LINES);
@@ -600,17 +521,15 @@ pub async fn run_remote(
                 );
             }
 
-            // Cycle selected file while diff is open.
+            // Cycle selected file.
             Some(Action::CycleFile) => {
-                if diff_open {
-                    let files_len = if let ActiveRegion::Gate(ref card) = view.active {
-                        card.diff_preview.as_deref().map(diff_files).unwrap_or_default().len()
-                    } else {
-                        0
-                    };
-                    if files_len > 1 {
-                        selected_file = (selected_file + 1) % files_len;
-                    }
+                let files_len = if let ActiveRegion::Gate(ref card) = view.active {
+                    card.diff_preview.as_deref().map(diff_files).unwrap_or_default().len()
+                } else {
+                    0
+                };
+                if files_len > 1 {
+                    selected_file = (selected_file + 1) % files_len;
                 }
             }
 
@@ -643,8 +562,7 @@ pub async fn run_remote(
                             // no bare veto: keep composing until a real steer exists
                         } else {
                             if let Some(wg) = &state.gate {
-                                let opened = opened_diffs.contains(&wg.gate_id.0);
-                                let _ = client.cast_nogo(wg, &compose_buf, depth_for_cast(opened)).await;
+                                let _ = client.cast_nogo(wg, &compose_buf, ReviewDepth::FullDiff).await;
                             }
                             compose = ComposeTarget::None;
                             compose_buf.clear();
@@ -762,21 +680,15 @@ fn run_editor_roundtrip(path: &str, contents: Option<&str>) -> io::Result<Option
 pub enum GoDecision {
     /// Cast the verdict.
     Cast,
-    /// Diff not opened yet — operator must open it first.
-    NeedOpen,
     /// Diff was truncated and the first `g` was pressed — need a second `g`.
     NeedAck,
 }
 
-/// Pure helper for the truncation-ack two-press flow. Encodes FR-24 + truncation logic.
+/// Pure helper for the truncation-ack two-press flow.
 ///
-/// - `opened`: operator has opened the diff for this gate.
 /// - `truncated`: the diff preview was capped at 64 KiB.
 /// - `acked`: this gate id is already in `truncation_ack` (first `g` already pressed).
-pub fn go_gate(opened: bool, truncated: bool, acked: bool) -> GoDecision {
-    if !opened {
-        return GoDecision::NeedOpen;
-    }
+pub fn go_gate(truncated: bool, acked: bool) -> GoDecision {
     if truncated && !acked {
         return GoDecision::NeedAck;
     }
@@ -790,7 +702,7 @@ pub fn go_gate(opened: bool, truncated: bool, acked: bool) -> GoDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kontur_core::{ReviewDepth, VerdictStatus, OperatorId};
+    use kontur_core::{VerdictStatus, OperatorId};
     use kontur_net::{WireGate, WirePhase, WireRole, WireSeat, WireState};
     use kontur_core::GateId;
     use kontur_core::Hash;
@@ -958,45 +870,6 @@ mod tests {
         assert!(view2.invite.is_none());
     }
 
-    // -----------------------------------------------------------------------
-    // FR-24: go_allowed / depth_for_cast matrix
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn go_allowed_requires_opened_diff() {
-        assert!(!go_allowed(false), "go must be blocked when diff not opened");
-        assert!(go_allowed(true), "go must be allowed after diff opened");
-    }
-
-    #[test]
-    fn depth_for_cast_full_diff_when_opened() {
-        assert_eq!(depth_for_cast(true), ReviewDepth::FullDiff);
-    }
-
-    #[test]
-    fn depth_for_cast_summary_when_not_opened() {
-        assert_eq!(depth_for_cast(false), ReviewDepth::Summary);
-    }
-
-    // FR-24: a verdict built with Summary depth carries that depth.
-    #[test]
-    fn cast_verdict_carries_summary_depth() {
-        use kontur_core::{CastVerdict, Ed25519Signer, FixedClock, GateId, Hash, ReviewDepth, Verdict, Remedy};
-        let signer = Ed25519Signer::from_seed([5u8; 32]);
-        let gate_id = GateId("gate-fr24".into());
-        let diff_hash = Hash([0u8; 32]);
-        let cv = CastVerdict::create(
-            &signer,
-            &FixedClock(42),
-            &gate_id,
-            diff_hash,
-            Verdict::NoGo(Remedy::Steer("needs tests".into())),
-            ReviewDepth::Summary,
-            None,
-        );
-        assert_eq!(cv.depth, ReviewDepth::Summary, "CastVerdict must carry Summary depth");
-    }
-
     #[test]
     fn compose_invite_toggles_and_falls_back() {
         let both = crate::link::InviteLinks {
@@ -1032,24 +905,35 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn go_gate_need_open_when_diff_not_opened() {
-        use super::GoDecision;
-        assert_eq!(super::go_gate(false, false, false), GoDecision::NeedOpen);
-        assert_eq!(super::go_gate(false, true, false), GoDecision::NeedOpen);
-        assert_eq!(super::go_gate(false, true, true), GoDecision::NeedOpen);
-    }
-
-    #[test]
     fn go_gate_need_ack_on_first_g_with_truncated_diff() {
         use super::GoDecision;
-        assert_eq!(super::go_gate(true, true, false), GoDecision::NeedAck);
+        assert_eq!(super::go_gate(true, false), GoDecision::NeedAck);
     }
 
     #[test]
     fn go_gate_cast_when_acked_or_not_truncated() {
         use super::GoDecision;
-        assert_eq!(super::go_gate(true, false, false), GoDecision::Cast);
-        assert_eq!(super::go_gate(true, true, true), GoDecision::Cast);
-        assert_eq!(super::go_gate(true, false, true), GoDecision::Cast);
+        assert_eq!(super::go_gate(false, false), GoDecision::Cast);
+        assert_eq!(super::go_gate(true, true), GoDecision::Cast);
+        assert_eq!(super::go_gate(false, true), GoDecision::Cast);
+    }
+
+    // FR-24: a verdict built with FullDiff depth carries that depth.
+    #[test]
+    fn cast_verdict_carries_full_diff_depth() {
+        use kontur_core::{CastVerdict, Ed25519Signer, FixedClock, GateId, Hash, ReviewDepth, Verdict, Remedy};
+        let signer = Ed25519Signer::from_seed([5u8; 32]);
+        let gate_id = GateId("gate-fr24".into());
+        let diff_hash = Hash([0u8; 32]);
+        let cv = CastVerdict::create(
+            &signer,
+            &FixedClock(42),
+            &gate_id,
+            diff_hash,
+            Verdict::NoGo(Remedy::Steer("needs tests".into())),
+            ReviewDepth::FullDiff,
+            None,
+        );
+        assert_eq!(cv.depth, ReviewDepth::FullDiff, "CastVerdict must carry FullDiff depth");
     }
 }

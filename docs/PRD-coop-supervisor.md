@@ -123,7 +123,7 @@ Co-op Supervisor reintroduces the pair, one layer up. Instead of two people at o
 - **FR-23** Role rotation (driver ↔ navigator) supported per task or session; by default the operator who navigated the prompt leads the merge review.
 
   > **Superseded (20 Jul 2026):** driver/navigator rotation is replaced by structural **Host/Operator** seats (the Host provides the agent backend; both seats are co-equal checkers; no rotation). Independence now rests on the two-distinct-keys requirement alone.
-- **FR-24** Approvals require genuine engagement — an operator cannot approve from a summary alone; the actual diff must be opened. (proposed) *(implemented: go requires the opened diff; review depth recorded truthfully in the signed verdict — 20 Jul 2026)*
+- **FR-24** Approvals require genuine engagement — an operator cannot approve from a summary alone; the actual diff must be opened. (proposed) *(implemented: go requires the opened diff; review depth recorded truthfully in the signed verdict — 20 Jul 2026)* — superseded by the split layout (20 Jul 2026): the active gate's diff is permanently on-screen; acceptance happens on the diff surface by construction; truncated diffs still require explicit acknowledgment.
 
 ### Risk-tiering (proposed / optional)
 - **FR-25** Optional per-path risk tiers: low-risk tasks may allow lighter review; flagged paths (auth, payments, migrations) always require both operators, full-diff review, and green tests. *Note: current decision is uniform dual approval everywhere; tiering is offered as a throughput valve to consider, not a committed requirement.*

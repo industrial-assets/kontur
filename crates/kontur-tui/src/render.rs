@@ -8,11 +8,12 @@ use crate::diffview::styled_diff_lines;
 use crate::view::{ActiveRegion, KeyStatus, SessionView};
 
 /// Draw the whole console. Pure: no I/O, no engine calls.
-pub fn render(frame: &mut Frame, view: &SessionView) {
-    // While the second station is unlinked, the invite is the one thing that
-    // needs the human — it gets its own loud row and vanishes once linked.
+///
+/// `diff_scroll` and `selected_file` are used when a Gate is the active region
+/// (the diff is permanently on-screen in the right pane).
+pub fn render(frame: &mut Frame, view: &SessionView, diff_scroll: u16, selected_file: usize) {
     let invite_rows = match &view.invite {
-        Some(text) => (text.lines().count() as u16) + 3, // lines + caveat + border
+        Some(text) => (text.lines().count() as u16) + 3,
         None => 0,
     };
     let rows = Layout::vertical([
@@ -20,9 +21,7 @@ pub fn render(frame: &mut Frame, view: &SessionView) {
         Constraint::Length(1),           // status strip
         Constraint::Length(invite_rows), // invite (host, while unlinked)
         Constraint::Length(3),           // stations
-        Constraint::Length(5),           // fleet
-        Constraint::Min(3),              // log
-        Constraint::Length(8),           // active region
+        Constraint::Min(3),              // panes (left + right)
         Constraint::Length(1),           // command line
     ])
     .split(frame.area());
@@ -33,10 +32,8 @@ pub fn render(frame: &mut Frame, view: &SessionView) {
         invite(frame, rows[2], link);
     }
     stations(frame, rows[3], view);
-    fleet(frame, rows[4], view);
-    log(frame, rows[5], view);
-    active(frame, rows[6], view);
-    command(frame, rows[7], view);
+    panes(frame, rows[4], view, diff_scroll, selected_file);
+    command(frame, rows[5], view);
 }
 
 fn invite(frame: &mut Frame, area: Rect, link: &str) {
@@ -123,8 +120,129 @@ fn log(frame: &mut Frame, area: Rect, view: &SessionView) {
     frame.render_widget(Paragraph::new(lines).block(Block::bordered().title("LOG")), area);
 }
 
-fn active(frame: &mut Frame, area: Rect, view: &SessionView) {
+/// Render the two-pane area (below stations, above command line).
+/// Left 35%: fleet + log. Right 65%: phase surface or gate diff.
+fn panes(
+    frame: &mut Frame,
+    area: Rect,
+    view: &SessionView,
+    diff_scroll: u16,
+    selected_file: usize,
+) {
+    let cols =
+        Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).split(area);
+
+    // Left pane: fleet (5 rows compact) + log (rest).
+    let left = Layout::vertical([Constraint::Length(5), Constraint::Min(3)]).split(cols[0]);
+    fleet(frame, left[0], view);
+    log(frame, left[1], view);
+
+    // Right pane: gate surface or phase card.
     match &view.active {
+        ActiveRegion::Gate(card) => {
+            // Files bar: Length(4), diff: Min(5), verdict bar: Length(6).
+            // Guard: if right pane height < 15, skip files bar to preserve diff.
+            let (files_height, diff_min) = if cols[1].height < 15 {
+                (0, Constraint::Min(5))
+            } else {
+                (4, Constraint::Min(5))
+            };
+
+            let constraints = if files_height > 0 {
+                vec![Constraint::Length(files_height), diff_min, Constraint::Length(6)]
+            } else {
+                vec![diff_min, Constraint::Length(6)]
+            };
+
+            let right = Layout::vertical(constraints).split(cols[1]);
+
+            if files_height > 0 {
+                render_files_bar(frame, right[0], card, selected_file);
+                render_diff_pane(frame, right[1], card, diff_scroll);
+                render_verdict_bar(frame, right[2], card);
+            } else {
+                // Files bar dropped: diff is right[0], verdict is right[1]
+                render_diff_pane(frame, right[0], card, diff_scroll);
+                render_verdict_bar(frame, right[1], card);
+            }
+        }
+        other => {
+            render_phase_card(frame, cols[1], other);
+        }
+    }
+}
+
+fn render_files_bar(
+    frame: &mut Frame,
+    area: Rect,
+    card: &crate::view::GateCard,
+    selected_file: usize,
+) {
+    let files_str = card
+        .files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| if i == selected_file { format!("▶ {f}") } else { f.clone() })
+        .collect::<Vec<_>>()
+        .join("  ");
+    let lines = vec![
+        Line::from(format!(" {} · +{} loc", files_str, card.loc)),
+        Line::from(" [tab] select · [e] edit"),
+    ];
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title(format!("FILES — {}", card.gate_id))),
+        area,
+    );
+}
+
+fn render_diff_pane(frame: &mut Frame, area: Rect, card: &crate::view::GateCard, scroll: u16) {
+    let title = if card.diff_truncated {
+        format!("DIFF — {} (TRUNCATED)", card.gate_id)
+    } else {
+        format!("DIFF — {}", card.gate_id)
+    };
+    let body: Vec<Line<'static>> = match &card.diff_preview {
+        Some(text) => styled_diff_lines(text),
+        None => vec![Line::from(" no diff available")],
+    };
+    frame.render_widget(
+        Paragraph::new(body)
+            .block(Block::bordered().title(title))
+            .scroll((scroll, 0)),
+        area,
+    );
+}
+
+fn render_verdict_bar(frame: &mut Frame, area: Rect, card: &crate::view::GateCard) {
+    let mut lines: Vec<Line> = Vec::new();
+    for key in &card.keys {
+        let status = match key.status {
+            KeyStatus::Awaiting => "□ awaiting verdict",
+            KeyStatus::Sealed => "■ cast — sealed",
+            KeyStatus::Go => "■ GO",
+            KeyStatus::NoGo => "■ NO-GO",
+        };
+        lines.push(Line::from(format!("   KEY {:<12} {}", key.label, status)));
+    }
+    if card.escalation_required {
+        lines.push(Line::from(Span::styled(
+            "   escalation required — co-signer must be a non-editor",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+    }
+    lines.push(Line::from(
+        " [g] go · [r] no-go+steer · [e] edit · [K] abandon",
+    ));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(Block::bordered().title("VERDICT"))
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+fn render_phase_card(frame: &mut Frame, area: Rect, active: &ActiveRegion) {
+    match active {
         ActiveRegion::Idle => {
             frame.render_widget(
                 Paragraph::new(" no task dispatched — draft an instruction to begin")
@@ -162,45 +280,6 @@ fn active(frame: &mut Frame, area: Rect, view: &SessionView) {
             lines.push(Line::from(" [y] approve plan — needs both"));
             frame.render_widget(
                 Paragraph::new(lines).block(Block::bordered().title("PLAN")),
-                area,
-            );
-        }
-        ActiveRegion::Gate(card) => {
-            let mut lines = vec![Line::from(format!(
-                " GATE {} · {} · {} · +{} loc",
-                card.gate_id,
-                card.task,
-                card.files.join(", "),
-                card.loc
-            ))];
-            for key in &card.keys {
-                let status = match key.status {
-                    KeyStatus::Awaiting => "□ awaiting verdict",
-                    KeyStatus::Sealed => "■ cast — sealed",
-                    KeyStatus::Go => "■ GO",
-                    KeyStatus::NoGo => "■ NO-GO",
-                };
-                lines.push(Line::from(format!("   KEY {:<12} {}", key.label, status)));
-            }
-            if card.escalation_required {
-                lines.push(Line::from(Span::styled(
-                    "   escalation required — co-signer must be a non-editor",
-                    Style::default().add_modifier(Modifier::BOLD),
-                )));
-            }
-            if card.diff_opened {
-                lines.push(Line::from(
-                    " [g] go   [r] no-go +remedy   [e] hand-edit   [o] close diff   [d] discuss",
-                ));
-            } else {
-                lines.push(Line::from(
-                    " [o] open diff (required before go)   [r] no-go +remedy   [e] hand-edit   [d] discuss",
-                ));
-            }
-            frame.render_widget(
-                Paragraph::new(lines)
-                    .block(Block::bordered().title("MERGE GATE"))
-                    .wrap(Wrap { trim: true }),
                 area,
             );
         }
@@ -257,6 +336,9 @@ fn active(frame: &mut Frame, area: Rect, view: &SessionView) {
                 );
             }
         }
+        ActiveRegion::Gate(_) => {
+            // Gate is handled in panes() directly; this arm is unreachable.
+        }
     }
 }
 
@@ -275,34 +357,12 @@ fn command(frame: &mut Frame, area: Rect, view: &SessionView) {
     frame.render_widget(text, area);
 }
 
-/// Render a full-screen diff view with colored lines and scroll support.
-///
-/// Title format: `DIFF — <title> · [e] edit <n> files · [o] close · j/k ↓/↑ scroll`
-/// Body uses `styled_diff_lines` for coloured + / - / @@ rendering.
-pub fn render_diff(frame: &mut Frame, title: &str, text: &str, scroll: u16) {
-    use crate::diffview::diff_files;
-    let n_files = diff_files(text).len();
-    let block_title = format!(
-        "DIFF — {} · [e] edit {} file{} · [g] go · [o] close · j/k ↓/↑ scroll",
-        title,
-        n_files,
-        if n_files == 1 { "" } else { "s" },
-    );
-    let block = Block::bordered().title(block_title);
-    frame.render_widget(
-        Paragraph::new(styled_diff_lines(text))
-            .block(block)
-            .scroll((scroll, 0)),
-        frame.area(),
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::view::{
-        ActiveRegion, AuditSummary, Banner, Role, SessionView, Station,
-        StatusStrip,
+        ActiveRegion, AuditSummary, Banner, GateCard, KeyStatus, KeyView, Role, SessionView,
+        Station, StatusStrip,
     };
     use kontur_core::OperatorId;
     use ratatui::backend::TestBackend;
@@ -324,11 +384,16 @@ mod tests {
         }
     }
 
+    fn draw(view: &SessionView) -> String {
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, view, 0, 0)).unwrap();
+        terminal.backend().to_string()
+    }
+
     /// When merged=false the render must contain the loud failure notice.
     #[test]
     fn session_closed_merge_failed_renders_loud_notice() {
-        let backend = TestBackend::new(120, 25);
-        let mut terminal = Terminal::new(backend).unwrap();
         let view = minimal_view(ActiveRegion::SessionClosed(AuditSummary {
             gates: 1,
             reviewers: vec!["A".into(), "B".into()],
@@ -336,8 +401,7 @@ mod tests {
             merged: false,
             abandoned: false,
         }));
-        terminal.draw(|f| render(f, &view)).unwrap();
-        let rendered = terminal.backend().to_string();
+        let rendered = draw(&view);
         assert!(
             rendered.contains("MERGE FAILED"),
             "expected 'MERGE FAILED' in rendered output; got:\n{rendered}"
@@ -352,8 +416,6 @@ mod tests {
     /// must NOT show merged/Reviewed-by copy.
     #[test]
     fn session_abandoned_renders_loud() {
-        let backend = TestBackend::new(120, 25);
-        let mut terminal = Terminal::new(backend).unwrap();
         let view = minimal_view(ActiveRegion::SessionClosed(AuditSummary {
             gates: 2,
             reviewers: vec!["A".into(), "B".into()],
@@ -361,8 +423,7 @@ mod tests {
             merged: false,
             abandoned: true,
         }));
-        terminal.draw(|f| render(f, &view)).unwrap();
-        let rendered = terminal.backend().to_string();
+        let rendered = draw(&view);
         assert!(
             rendered.contains("SESSION ABANDONED"),
             "expected 'SESSION ABANDONED' in rendered output; got:\n{rendered}"
@@ -385,25 +446,19 @@ mod tests {
     /// notice=None renders the bare " > " prompt.
     #[test]
     fn command_row_renders_notice_when_some() {
-        let backend = TestBackend::new(120, 25);
-        let mut terminal = Terminal::new(backend).unwrap();
         let mut view = minimal_view(ActiveRegion::Idle);
-        view.notice = Some("open the diff first — [o]".into());
-        terminal.draw(|f| render(f, &view)).unwrap();
-        let rendered = terminal.backend().to_string();
+        view.notice = Some("check the diff first".into());
+        let rendered = draw(&view);
         assert!(
-            rendered.contains("open the diff first"),
+            rendered.contains("check the diff first"),
             "expected notice text in rendered output; got:\n{rendered}"
         );
     }
 
     #[test]
     fn command_row_renders_bare_prompt_when_notice_none() {
-        let backend = TestBackend::new(120, 25);
-        let mut terminal = Terminal::new(backend).unwrap();
         let view = minimal_view(ActiveRegion::Idle);
-        terminal.draw(|f| render(f, &view)).unwrap();
-        let rendered = terminal.backend().to_string();
+        let rendered = draw(&view);
         assert!(
             rendered.contains(" > "),
             "expected bare prompt ' > ' in rendered output; got:\n{rendered}"
@@ -413,14 +468,11 @@ mod tests {
     /// Prompt region must show "[p] edit prompt" hint.
     #[test]
     fn prompt_region_shows_edit_hint() {
-        let backend = TestBackend::new(120, 25);
-        let mut terminal = Terminal::new(backend).unwrap();
         let view = minimal_view(ActiveRegion::Prompt {
             prompt: "do the thing".into(),
             ready: [false, false],
         });
-        terminal.draw(|f| render(f, &view)).unwrap();
-        let rendered = terminal.backend().to_string();
+        let rendered = draw(&view);
         assert!(
             rendered.contains("[p] edit prompt"),
             "expected '[p] edit prompt' in rendered Prompt region; got:\n{rendered}"
@@ -438,8 +490,6 @@ mod tests {
     /// When merged=true the render must show the success line.
     #[test]
     fn session_closed_merge_ok_renders_success_line() {
-        let backend = TestBackend::new(120, 25);
-        let mut terminal = Terminal::new(backend).unwrap();
         let view = minimal_view(ActiveRegion::SessionClosed(AuditSummary {
             gates: 2,
             reviewers: vec!["A".into(), "B".into()],
@@ -447,8 +497,7 @@ mod tests {
             merged: true,
             abandoned: false,
         }));
-        terminal.draw(|f| render(f, &view)).unwrap();
-        let rendered = terminal.backend().to_string();
+        let rendered = draw(&view);
         assert!(
             rendered.contains("merged to repo"),
             "expected 'merged to repo' in rendered output; got:\n{rendered}"
@@ -459,62 +508,70 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
-    // render_diff golden tests
-    // -----------------------------------------------------------------------
-
-    fn sample_diff_text() -> &'static str {
-        "diff --git a/src/lib.rs b/src/lib.rs\n\
-         --- a/src/lib.rs\n\
-         +++ b/src/lib.rs\n\
-         @@ -1,2 +1,3 @@\n\
-          context\n\
-         -removed\n\
-         +added line one\n\
-         +added line two"
+    /// Gate: diff title visible, verdict bar keys visible.
+    #[test]
+    fn gate_shows_diff_title_and_verdict_bar() {
+        let card = GateCard {
+            gate_id: "gate-001".into(),
+            task: "t1".into(),
+            files: vec!["auth/session.rs".into()],
+            loc: 47,
+            keys: vec![
+                KeyView { label: "A".into(), role: Role::Host, status: KeyStatus::Awaiting },
+                KeyView { label: "B".into(), role: Role::Operator, status: KeyStatus::Sealed },
+            ],
+            escalation_required: false,
+            diff_preview: Some("diff --git a/auth/session.rs b/auth/session.rs\n+fn foo() {}".into()),
+            diff_truncated: false,
+        };
+        let rendered = draw(&minimal_view(ActiveRegion::Gate(card)));
+        // Left LOG title visible simultaneously with right DIFF title.
+        assert!(rendered.contains("LOG"), "LOG title must appear in left pane; got:\n{rendered}");
+        assert!(rendered.contains("DIFF"), "DIFF title must appear in right pane; got:\n{rendered}");
+        // Verdict bar keys.
+        assert!(rendered.contains("[g] go"), "verdict bar must show [g] go; got:\n{rendered}");
+        // Sealed key renders correctly.
+        assert!(rendered.contains("cast — sealed"), "sealed key must show 'cast — sealed'; got:\n{rendered}");
+        // Sealed key must NOT reveal a value.
+        assert!(!rendered.contains("■ GO"), "sealed key must not show GO; got:\n{rendered}");
+        assert!(!rendered.contains("■ NO-GO"), "sealed key must not show NO-GO; got:\n{rendered}");
     }
 
-    /// render_diff at scroll=0 should show the diff title and opening lines.
+    /// Gate: files bar shows ▶ selection marker and LOC count.
     #[test]
-    fn render_diff_shows_title_and_diff_content() {
-        let backend = TestBackend::new(140, 30);
+    fn gate_files_bar_shows_selection_marker_and_loc() {
+        let card = GateCard {
+            gate_id: "gate-002".into(),
+            task: "t2".into(),
+            files: vec!["a.rs".into(), "b.rs".into()],
+            loc: 10,
+            keys: vec![],
+            escalation_required: false,
+            diff_preview: None,
+            diff_truncated: false,
+        };
+        let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|f| render_diff(f, "gate-001", sample_diff_text(), 0))
-            .unwrap();
+        terminal.draw(|f| render(f, &minimal_view(ActiveRegion::Gate(card)), 0, 1)).unwrap();
         let rendered = terminal.backend().to_string();
-        assert!(
-            rendered.contains("DIFF"),
-            "title should contain DIFF; got:\n{rendered}"
-        );
-        assert!(
-            rendered.contains("gate-001"),
-            "title should contain gate id; got:\n{rendered}"
-        );
-        // The diff body starts visible at scroll=0.
-        assert!(
-            rendered.contains("diff --git") || rendered.contains("context"),
-            "diff content should appear at scroll=0; got:\n{rendered}"
-        );
+        assert!(rendered.contains("▶ b.rs"), "selected file must be marked with ▶; got:\n{rendered}");
+        assert!(rendered.contains("+10 loc"), "files bar must show LOC count; got:\n{rendered}");
     }
 
-    /// render_diff at a positive scroll offset shows content further down.
-    /// We verify that scrolling by enough lines causes the first diff-header
-    /// line to disappear from the viewport (it is scrolled past).
+    /// Gate: truncated diff shows (TRUNCATED) in title.
     #[test]
-    fn render_diff_scrolled_shows_later_content() {
-        // 10-row viewport; scroll by 5 so the first 5 diff lines are off-screen.
-        let backend = TestBackend::new(140, 10);
-        let mut terminal = Terminal::new(backend).unwrap();
-        // Scroll=5: the "+added line one" line (index 6) should be visible.
-        terminal
-            .draw(|f| render_diff(f, "gate-x", sample_diff_text(), 5))
-            .unwrap();
-        let rendered = terminal.backend().to_string();
-        // The "+added line two" line (index 7) should be in the visible area.
-        assert!(
-            rendered.contains("added line two") || rendered.contains("added line one"),
-            "scrolled viewport should show later addition lines; got:\n{rendered}"
-        );
+    fn gate_truncated_diff_shows_truncated_in_title() {
+        let card = GateCard {
+            gate_id: "gate-003".into(),
+            task: "t3".into(),
+            files: vec!["big.rs".into()],
+            loc: 9999,
+            keys: vec![],
+            escalation_required: false,
+            diff_preview: Some("diff --git a/big.rs b/big.rs\n+fn big() {}".into()),
+            diff_truncated: true,
+        };
+        let rendered = draw(&minimal_view(ActiveRegion::Gate(card)));
+        assert!(rendered.contains("TRUNCATED"), "truncated diff must show TRUNCATED in title; got:\n{rendered}");
     }
 }

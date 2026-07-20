@@ -99,15 +99,15 @@ pub async fn run(demo: Demo) -> std::io::Result<()> {
     let (_guard, mut terminal) = TerminalGuard::enter()?;
     loop {
         let view = build_session_view(demo.host(), &fleet, demo.stations(), demo.banner(), log.clone(), closed).await;
-        terminal.draw(|f| render(f, &view))?;
+        terminal.draw(|f| render(f, &view, 0, 0))?;
         if closed {
             // Draw the final frame, then wait for a quit key.
-            if let Some(Action::Quit) = poll_action(Duration::from_millis(200), false, false)? {
+            if let Some(Action::Quit) = poll_action(Duration::from_millis(200), false)? {
                 break;
             }
             continue;
         }
-        match poll_action(Duration::from_millis(200), false, false)? {
+        match poll_action(Duration::from_millis(200), false)? {
             Some(Action::Quit) => break,
             Some(Action::Go) => {
                 let _ = demo.host().submit_verdict(&gid, demo.go_a(&gid, dh)).await;

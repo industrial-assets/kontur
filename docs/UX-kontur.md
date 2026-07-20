@@ -43,6 +43,8 @@ Rotation happens per task or per session; the console always labels who currentl
 
 Persistent chrome, top to bottom. Regions are fixed; only their contents change by phase.
 
+> **Superseded (20 Jul 2026):** single-screen two-pane layout (left: fleet + log activity; right: work surface). When a gate is pending, the diff is always visible in the right pane and verdicts are cast on the diff surface. The `[o]` diff-open toggle is removed.
+
 ```
 ========================================================================
 [ КОНТУР-1  //  co-op session 4417  //  v0.4.2 ]      ← BANNER  (identity)
@@ -69,7 +71,7 @@ Persistent chrome, top to bottom. Regions are fixed; only their contents change 
 ## 5. Interaction model
 
 ### 5.1 Keyboard
-Global keys are always live (dispatch, help, session). Panel actions apply to the focused panel. Gate actions (`[g]` go, `[r]` no-go+remedy, `[e]` hand-edit, `[d]` discuss) appear only when a gate is active. Additional keys: `[o]` diff (required before go) · `[l]` invite link toggle · `[k]` abandon (confirm). Every on-screen action shows its key inline — no hidden verbs.
+Global keys are always live (dispatch, help, session). Panel actions apply to the focused panel. Gate actions (`[g]` go, `[r]` no-go+remedy, `[e]` hand-edit, `[d]` discuss) appear only when a gate is active. Additional keys: `[j]/[k]` scroll diff · `[tab]` select file · `[l]` invite link toggle · `[K]` abandon (confirm). Every on-screen action shows its key inline — no hidden verbs.
 
 ### 5.2 Claiming
 The shared review queue and any active gate can be **claimed** by one operator, which shows on the other's console ("j.reed reviewing gate-03"). Claiming prevents both operators babysitting the same thing while other agents run unwatched (PRD FR-3). It's a soft signal, not a lock on the *other's* right to weigh in — but only one operator drives a given gate's interaction at a time.
@@ -165,6 +167,9 @@ The default working view. Agents run through tasks sequentially; the fleet is ca
 ```
 
 ### 6.5 Merge gate — the dual-key sign-off
+
+> **Superseded (20 Jul 2026):** the diff is permanently visible in the right pane while a gate pends; verdicts are cast on the diff surface. `[o]` is removed.
+
 An agent parks its diff and enters the review queue (lifecycle `AWAITING_REVIEW`, PRD §8). The gate needs two keys. **Your view**, as the second, not-yet-cast key:
 
 ```
