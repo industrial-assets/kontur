@@ -89,8 +89,8 @@ mod tests {
 
     fn stations(a: kontur_core::OperatorId, b: kontur_core::OperatorId) -> [Station; 2] {
         [
-            Station { label: "A · YOU".into(), role: Role::Driver, activity: "watching".into(), operator: a },
-            Station { label: "B · J.REED".into(), role: Role::Navigator, activity: "reviewing".into(), operator: b },
+            Station { label: "A · YOU".into(), role: Role::Host, activity: "watching".into(), operator: a },
+            Station { label: "B · J.REED".into(), role: Role::Operator, activity: "reviewing".into(), operator: b },
         ]
     }
 

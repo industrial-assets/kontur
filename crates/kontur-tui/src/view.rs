@@ -1,17 +1,17 @@
 use kontur_core::OperatorId;
 
-/// Operator role. Rotates in later slices; label-only here.
+/// Operator role. Structural: the Host's terminal runs the session; the Operator joins remotely.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
-    Driver,
-    Navigator,
+    Host,
+    Operator,
 }
 
 impl Role {
     pub fn label(&self) -> &'static str {
         match self {
-            Role::Driver => "DRIVER",
-            Role::Navigator => "NAVIGATOR",
+            Role::Host => "HOST",
+            Role::Operator => "OPERATOR",
         }
     }
 }
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn role_labels() {
-        assert_eq!(Role::Driver.label(), "DRIVER");
-        assert_eq!(Role::Navigator.label(), "NAVIGATOR");
+        assert_eq!(Role::Host.label(), "HOST");
+        assert_eq!(Role::Operator.label(), "OPERATOR");
     }
 }

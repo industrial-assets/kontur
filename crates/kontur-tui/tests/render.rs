@@ -25,8 +25,8 @@ fn base(active: ActiveRegion) -> SessionView {
         banner: Banner { session: "4417".into(), version: "0.1.0".into() },
         status: StatusStrip { linked: true, four_eyes: true, fleet_count: 3, needs_you: 1, tokens: 6400 },
         stations: [
-            Station { label: "A · YOU".into(), role: Role::Driver, activity: "watching".into(), operator: OperatorId([1; 32]) },
-            Station { label: "B · J.REED".into(), role: Role::Navigator, activity: "reviewing".into(), operator: OperatorId([2; 32]) },
+            Station { label: "A · YOU".into(), role: Role::Host, activity: "watching".into(), operator: OperatorId([1; 32]) },
+            Station { label: "B · J.REED".into(), role: Role::Operator, activity: "reviewing".into(), operator: OperatorId([2; 32]) },
         ],
         fleet: vec![],
         log: vec![],
@@ -56,8 +56,8 @@ fn gate_shows_summary_and_sealed_key_never_value() {
         files: vec!["auth/session.rs".into()],
         loc: 47,
         keys: vec![
-            KeyView { label: "A · YOU".into(), role: Role::Driver, status: KeyStatus::Awaiting },
-            KeyView { label: "B · J.REED".into(), role: Role::Navigator, status: KeyStatus::Sealed },
+            KeyView { label: "A · YOU".into(), role: Role::Host, status: KeyStatus::Awaiting },
+            KeyView { label: "B · J.REED".into(), role: Role::Operator, status: KeyStatus::Sealed },
         ],
         escalation_required: false,
         diff_preview: None,

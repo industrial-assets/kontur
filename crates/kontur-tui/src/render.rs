@@ -234,8 +234,8 @@ mod tests {
             banner: Banner { session: "test".into(), version: "0.0.0".into() },
             status: StatusStrip { linked: true, four_eyes: true, fleet_count: 0, needs_you: 0, tokens: 0 },
             stations: [
-                Station { label: "A".into(), role: Role::Driver, activity: "linked".into(), operator: OperatorId([1; 32]) },
-                Station { label: "B".into(), role: Role::Navigator, activity: "linked".into(), operator: OperatorId([2; 32]) },
+                Station { label: "A".into(), role: Role::Host, activity: "linked".into(), operator: OperatorId([1; 32]) },
+                Station { label: "B".into(), role: Role::Operator, activity: "linked".into(), operator: OperatorId([2; 32]) },
             ],
             fleet: vec![],
             log: vec![],

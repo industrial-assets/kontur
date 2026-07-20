@@ -114,14 +114,14 @@ impl SessionServer {
             SeatState {
                 label: cfg.seats[0].0.clone(),
                 operator: cfg.seats[0].1,
-                role: WireRole::Driver,
+                role: WireRole::Host,
                 linked: false,
                 ready: false,
             },
             SeatState {
                 label: cfg.seats[1].0.clone(),
                 operator: cfg.seats[1].1,
-                role: WireRole::Navigator,
+                role: WireRole::Operator,
                 linked: false,
                 ready: false,
             },
@@ -133,14 +133,14 @@ impl SessionServer {
                 WireSeat {
                     label: cfg.seats[0].0.clone(),
                     operator: cfg.seats[0].1,
-                    role: WireRole::Driver,
+                    role: WireRole::Host,
                     linked: false,
                     ready: false,
                 },
                 WireSeat {
                     label: cfg.seats[1].0.clone(),
                     operator: cfg.seats[1].1,
-                    role: WireRole::Navigator,
+                    role: WireRole::Operator,
                     linked: false,
                     ready: false,
                 },
@@ -580,24 +580,6 @@ async fn handle_client_msg(
                     server.refresh_locked().await;
                 }
             }
-        }
-        ClientMsg::Rotate => {
-            let mut net = server.inner.net.lock().await;
-            let (role0, role1) = {
-                let r0 = net.seats[0].role;
-                let r1 = net.seats[1].role;
-                (r1, r0)
-            };
-            net.seats[0].role = role0;
-            net.seats[1].role = role1;
-            let l0 = net.seats[0].label.clone();
-            let l1 = net.seats[1].label.clone();
-            push_log(
-                &mut net,
-                &format!("roles rotated · {l0}↔{l1}"),
-            );
-            drop(net);
-            server.refresh_locked().await;
         }
         ClientMsg::Bye => {
             // Reader task will handle disconnect naturally when the stream closes

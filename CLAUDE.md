@@ -46,7 +46,7 @@ The product's value *is* these properties. Never weaken, shortcut, or "simplify"
 
 - **Enforcement plane: MCP.** Consequential actions (file writes, shell, merge) route through **hosted MCP servers** and are gated via MCP's invocation-level approval (`require_approval` / queue-then-execute). The two-signatory logic lives **between MCP's pause and resume** — MCP provides the primitive; the four-eyes hold is ours.
 - **Agent backend: Claude Code** (sole backend for MVP). Keep backend-specific glue behind a thin adapter so multi-backend stays possible later — but do not build multi-backend now.
-- **Topology:** one shared host holds the repo and runs the fleet; two operators attach as thin clients over the network. Each agent gets a **git worktree**; approved work accumulates on a session branch and **merges once at the end** as a single reviewed commit with `Reviewed-by:` trailers.
+- **Topology:** one shared host holds the repo and runs the fleet; the Host's terminal is itself a seat; the Operator attaches over the network. Each agent gets a **git worktree**; approved work accumulates on a session branch and **merges once at the end** as a single reviewed commit with `Reviewed-by:` trailers.
 - **Client:** a **text-based TUI**. Two seats, one shared authoritative state, with presence and claiming.
 
 ---
@@ -67,7 +67,7 @@ The product's value *is* these properties. Never weaken, shortcut, or "simplify"
 ## Glossary — use these terms consistently
 
 - **Operator / station** — a human seat (A and B).
-- **Driver** — constructs the prompt / holds the active steer. **Navigator** — reviews live and leads the merge review. Roles **rotate**.
+- **Host / Operator** — the two seats. The Host's terminal runs the session and provides the agent backend (the Claude Code connection); the Operator joins remotely. Both are co-equal checkers: either can review, sign, steer, or hand-edit. Roles are structural (who hosts), not rotating.
 - **Gate** — a point requiring sign-off. **Dispatch gate** (is the prompt ready?) and **merge gate** (is the change good?).
 - **Dual-hold** — the state object that holds a parked action until two keys resolve it. It is the internals of the `AWAITING_REVIEW` lifecycle state.
 - **Key** — an operator's signed verdict (`go` / `no-go`). **Sealed** — a cast-but-hidden verdict (blind review).
@@ -110,8 +110,8 @@ cargo run -p kontur-tui --bin kontur -- demo
 # host a session (in-memory workspace; demo scripted agent)
 cargo run -p kontur-tui --bin kontur -- host --mem --demo-agent
 
-# join as operator A (after `host` prints the join line)
-cargo run -p kontur-tui --bin kontur -- join --addr 127.0.0.1:7777 --seat A --seed 1
+# join as operator (after `host` prints the join line)
+cargo run -p kontur-tui --bin kontur -- join --addr 127.0.0.1:7777 --seed 2
 ```
 
 ---

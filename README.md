@@ -8,7 +8,7 @@ Two engineers, one console, a fleet of agents — and nothing ships without both
 
 ## What it is
 
-Kontur is a terminal-native workstation where two engineers jointly supervise a fleet of coding agents on the same codebase. One drives, one navigates; both sign off. Every change an agent makes is gated behind two independent human approvals before it can merge, and the whole session leaves a signed, tamper-evident audit trail.
+Kontur is a terminal-native workstation where two engineers jointly supervise a fleet of coding agents on the same codebase. One hosts the agents, one joins to co-sign; both review. Every change an agent makes is gated behind two independent human approvals before it can merge, and the whole session leaves a signed, tamper-evident audit trail.
 
 It exists for the place solo agentic tooling can't go: production environments where *the agent wrote it and one person glanced at it* isn't good enough, and segregation of duties is the rule, not a nicety.
 
@@ -54,9 +54,8 @@ cargo run -p kontur-tui --bin kontur -- host --repo /path/to/repo --demo-agent
 # Host with a custom prompt and operator seeds:
 cargo run -p kontur-tui --bin kontur -- host --mem --prompt "add auth gate" --seeds 1,2
 
-# Join as operator A (run this on each operator's machine):
-cargo run -p kontur-tui --bin kontur -- join --addr host:7777 --seat A --seed 1
-cargo run -p kontur-tui --bin kontur -- join --addr host:7777 --seat B --seed 2
+# Join as operator (run this on the remote machine):
+cargo run -p kontur-tui --bin kontur -- join --addr host:7777 --seed 2
 ```
 
 The `host` command also binds an MCP endpoint (default port 7778). A real Claude

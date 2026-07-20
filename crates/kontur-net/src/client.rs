@@ -134,10 +134,6 @@ impl SessionClient {
         self.send(ClientMsg::Ready).await
     }
 
-    pub async fn rotate(&self) -> io::Result<()> {
-        self.send(ClientMsg::Rotate).await
-    }
-
     pub async fn hand_edit(&self, path: &str, contents: &str) -> io::Result<()> {
         self.send(ClientMsg::HandEdit {
             path: path.to_owned(),

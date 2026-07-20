@@ -35,6 +35,8 @@ Two engineers, co-supervising. Roles are explicit and rotate (PRD FR-23):
 
 Rotation happens per task or per session; the console always labels who currently holds which role. Neither role is "senior" — the point is two independent vantage points, not a lead and an assistant.
 
+> **Superseded (20 Jul 2026):** driver/navigator rotation is replaced by structural **Host/Operator** seats (the Host provides the agent backend; both seats are co-equal checkers; no rotation). Independence now rests on the two-distinct-keys requirement alone.
+
 ---
 
 ## 4. Console anatomy
@@ -76,6 +78,8 @@ The shared review queue and any active gate can be **claimed** by one operator, 
 Both stations always show. `[tab]` hands the driver role across; rotation is one keystroke and is logged. On rotation, the console re-labels roles everywhere so there's never ambiguity about who's driving.
 
 Rotation can also be **scheduled**: at session start the operators agree an interval, and Kontur runs an **invisible timer** — no visible countdown, in keeping with the calm default — that quietly surfaces a rotation nudge when the interval elapses, at the next natural break (a gate boundary, never mid-review). The nudge is a dismissable suggestion, never a forced swap, and any rotation — manual or prompted — resets the timer. The point is to fight navigator fatigue without putting a clock on screen.
+
+> **Superseded (20 Jul 2026):** driver/navigator rotation is replaced by structural **Host/Operator** seats (the Host provides the agent backend; both seats are co-equal checkers; no rotation). Independence now rests on the two-distinct-keys requirement alone.
 
 ### 5.4 The blind sign-off (where the two consoles diverge)
 At a high-risk gate, the two operators **do not see the same thing** — by design. The first key is cast and *sealed*; the second operator reviews the change without seeing the first's verdict, so they can't anchor to it (PRD §10.1, FR-12). The consoles reconverge the instant both keys are in. This is the one deliberate break from "two operators, one truth," and it's the mechanism that makes the second signature worth more than the first.

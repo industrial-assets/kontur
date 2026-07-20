@@ -39,7 +39,8 @@ fn print_usage() {
   kontur demo
   kontur host --repo <path> [--mem] [--operator-port 7777] [--agent-port 7778]
               [--prompt \"...\"] [--demo-agent] [--seeds 1,2] [--session <name>]
-  kontur join --addr host:port --seat A|B --seed <n>
+              [--headless]
+  kontur join --addr host:port --seed <n>
   kontur help"
     );
 }
@@ -58,6 +59,7 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
     let mut demo_agent = false;
     let mut seeds: [u8; 2] = [1, 2];
     let mut session = String::from("s1");
+    let mut headless = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -110,6 +112,9 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
                 i += 1;
                 session = require_arg(args, i, "--session")?;
             }
+            "--headless" => {
+                headless = true;
+            }
             other => {
                 return Err(err(format!("kontur host: unknown flag '{other}'")));
             }
@@ -145,7 +150,7 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
     let cfg = SessionConfig {
         prompt: prompt.clone(),
         plan: vec!["external agent tasks".into()],
-        seats: [("A".into(), op_a), ("B".into(), op_b)],
+        seats: [("HOST".into(), op_a), ("OPERATOR".into(), op_b)],
     };
     let server = SessionServer::new(host.clone(), cfg);
 
@@ -187,8 +192,7 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
     println!("  operator port : {op_addr}");
     println!("  agent port    : {agent_addr}");
     println!();
-    println!("  kontur join --addr 127.0.0.1:{} --seat A --seed {}", op_addr.port(), seeds[0]);
-    println!("  kontur join --addr 127.0.0.1:{} --seat B --seed {}", op_addr.port(), seeds[1]);
+    println!("  operator joins with: kontur join --addr 127.0.0.1:{} --seed {}", op_addr.port(), seeds[1]);
     println!();
     println!("  attach a real Claude Code as the agent:");
     println!("    1. save as kontur-mcp.json:");
@@ -199,11 +203,18 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
     println!("    yet wired; instruct the agent to use kontur tools, and review the diff — the");
     println!("    gate itself is enforced server-side.");
     println!();
-    println!("Press Ctrl-C to stop.");
 
-    // Park until Ctrl-C.
-    tokio::signal::ctrl_c().await?;
-    println!("\nkontur host shutting down.");
+    if headless {
+        println!("Press Ctrl-C to stop.");
+        // Park until Ctrl-C.
+        tokio::signal::ctrl_c().await?;
+        println!("\nkontur host shutting down.");
+    } else {
+        // The Host's terminal is itself a console seat: attach it directly.
+        let seed_a_bytes = [seeds[0]; 32];
+        let host_addr = format!("127.0.0.1:{}", op_addr.port());
+        run_remote(&host_addr, "HOST".into(), seed_a_bytes).await?;
+    }
     Ok(())
 }
 
@@ -213,7 +224,6 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
 
 async fn join_cmd(args: &[String]) -> std::io::Result<()> {
     let mut addr: Option<String> = None;
-    let mut seat: Option<String> = None;
     let mut seed_val: u8 = 1;
 
     let mut i = 0;
@@ -222,10 +232,6 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
             "--addr" => {
                 i += 1;
                 addr = Some(require_arg(args, i, "--addr")?);
-            }
-            "--seat" => {
-                i += 1;
-                seat = Some(require_arg(args, i, "--seat")?);
             }
             "--seed" => {
                 i += 1;
@@ -242,10 +248,10 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
     }
 
     let addr = addr.ok_or_else(|| err("kontur join: --addr is required".into()))?;
-    let seat = seat.ok_or_else(|| err("kontur join: --seat is required".into()))?;
 
+    // Seat claim is keyed on OperatorId (derived from seed); label comes from server config.
     let seed_bytes = [seed_val; 32];
-    run_remote(&addr, seat, seed_bytes).await
+    run_remote(&addr, "OPERATOR".into(), seed_bytes).await
 }
 
 // ---------------------------------------------------------------------------

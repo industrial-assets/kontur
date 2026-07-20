@@ -40,7 +40,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId) -> SessionView {
         let mut iter = state.seats.iter();
         let make = |ws: &kontur_net::WireSeat| Station {
             label: ws.label.clone(),
-            role: match ws.role { WireRole::Driver => Role::Driver, WireRole::Navigator => Role::Navigator },
+            role: match ws.role { WireRole::Host => Role::Host, WireRole::Operator => Role::Operator },
             activity: if ws.linked { "linked".into() } else { "dropped".into() },
             operator: ws.operator,
         };
@@ -53,7 +53,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId) -> SessionView {
                 make(a),
                 Station {
                     label: "B".into(),
-                    role: Role::Navigator,
+                    role: Role::Operator,
                     activity: "absent".into(),
                     operator: OperatorId([0; 32]),
                 },
@@ -61,13 +61,13 @@ pub fn wire_to_view(state: &WireState, own: OperatorId) -> SessionView {
             _ => [
                 Station {
                     label: "A".into(),
-                    role: Role::Driver,
+                    role: Role::Host,
                     activity: "absent".into(),
                     operator: OperatorId([0; 32]),
                 },
                 Station {
                     label: "B".into(),
-                    role: Role::Navigator,
+                    role: Role::Operator,
                     activity: "absent".into(),
                     operator: OperatorId([0; 32]),
                 },
@@ -294,11 +294,6 @@ pub async fn run_remote(addr: &str, seat: String, seed: [u8; 32]) -> io::Result<
                 diff_open = !diff_open;
             }
 
-            // Role rotation.
-            Some(Action::RotateRole) => {
-                let _ = client.rotate().await;
-            }
-
             // Composing text.
             Some(Action::RemedyChar(c)) => {
                 compose_buf.push(c);
@@ -372,8 +367,8 @@ mod tests {
         WireState {
             phase,
             seats: vec![
-                WireSeat { label: "A".into(), operator: op(1), role: WireRole::Driver, linked: true, ready: false },
-                WireSeat { label: "B".into(), operator: op(2), role: WireRole::Navigator, linked: true, ready: false },
+                WireSeat { label: "A".into(), operator: op(1), role: WireRole::Host, linked: true, ready: false },
+                WireSeat { label: "B".into(), operator: op(2), role: WireRole::Operator, linked: true, ready: false },
             ],
             fleet: vec![],
             log: vec![],
@@ -485,13 +480,13 @@ mod tests {
         }
     }
 
-    // WireRole::Driver maps to Role::Driver (regression for casing-mismatch bug).
+    // WireRole::Host maps to Role::Host (regression for casing-mismatch bug).
     #[test]
-    fn wire_role_driver_maps_to_driver() {
+    fn wire_role_host_maps_to_host() {
         let state = base_state(WirePhase::AwaitOperators);
         let view = wire_to_view(&state, op(1));
-        assert_eq!(view.stations[0].role, crate::view::Role::Driver, "seat A should be Driver");
-        assert_eq!(view.stations[1].role, crate::view::Role::Navigator, "seat B should be Navigator");
+        assert_eq!(view.stations[0].role, crate::view::Role::Host, "seat A should be Host");
+        assert_eq!(view.stations[1].role, crate::view::Role::Operator, "seat B should be Operator");
     }
 
     // linked=false on a seat → StatusStrip.linked == false.

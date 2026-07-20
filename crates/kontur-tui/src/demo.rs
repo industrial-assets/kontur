@@ -47,8 +47,8 @@ impl Demo {
 
     pub fn stations(&self) -> [Station; 2] {
         [
-            Station { label: "A · YOU".into(), role: Role::Driver, activity: "reviewing".into(), operator: self.signer_a.operator_id() },
-            Station { label: "B · J.REED".into(), role: Role::Navigator, activity: "reviewing".into(), operator: self.signer_b.operator_id() },
+            Station { label: "HOST".into(), role: Role::Host, activity: "reviewing".into(), operator: self.signer_a.operator_id() },
+            Station { label: "OPERATOR".into(), role: Role::Operator, activity: "reviewing".into(), operator: self.signer_b.operator_id() },
         ]
     }
 

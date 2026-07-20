@@ -102,14 +102,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn roundtrip_client_rotate() {
-        let original = ClientMsg::Rotate;
-
-        let recovered: ClientMsg = roundtrip(&original).await;
-        assert_eq!(original, recovered);
-    }
-
-    #[tokio::test]
     async fn roundtrip_client_bye() {
         let original = ClientMsg::Bye;
 
@@ -134,7 +126,7 @@ mod tests {
             seats: vec![WireSeat {
                 label: "Seat A".to_string(),
                 operator: OperatorId([1; 32]),
-                role: WireRole::Driver,
+                role: WireRole::Host,
                 linked: true,
                 ready: false,
             }],

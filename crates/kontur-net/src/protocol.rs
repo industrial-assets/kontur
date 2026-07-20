@@ -2,11 +2,11 @@ use serde::{Deserialize, Serialize};
 use kontur_core::{CastVerdict, GateId, Hash, OperatorId, VerdictView};
 
 /// Operator role transmitted on the wire. An enum prevents the casing-mismatch
-/// bug where the server emits `"Driver"` but the client compared `== "DRIVER"`.
+/// bug where the server emits `"Host"` but the client compared `== "HOST"`.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WireRole {
-    Driver,
-    Navigator,
+    Host,
+    Operator,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -15,7 +15,6 @@ pub enum ClientMsg {
     Ready,
     Cast { gate_id: GateId, verdict: CastVerdict },
     HandEdit { path: String, contents: String },
-    Rotate,
     Bye,
 }
 

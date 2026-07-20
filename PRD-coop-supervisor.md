@@ -52,6 +52,8 @@ Co-op Supervisor reintroduces the pair, one layer up. Instead of two people at o
 
 - **Maker-checker / four-eyes.** The agent is the maker. Two humans are independent checkers. The prompt author is recorded as the *instructing party*; a policy toggle controls whether the author may also be a checker (strict mode: no; pragmatic mode: yes, but a second checker who did not instruct is always required). (policy — TBD default)
 - **Driver / navigator, rotating.** The driver constructs the prompt; the navigator reviews it live as it's written. Both review worker output. Roles rotate per task or session so the second set of eyes stays genuinely open and so the person reviewing output didn't co-author the spec. Rotation is the primary lever for keeping the two reviews *independent* — two correlated reviews (both rubber-stamping) are one review counted twice.
+
+  > **Superseded (20 Jul 2026):** driver/navigator rotation is replaced by structural **Host/Operator** seats (the Host provides the agent backend; both seats are co-equal checkers; no rotation). Independence now rests on the two-distinct-keys requirement alone.
 - **Two gates, not one.**
   - **Dispatch gate** — before an agent runs: is the prompt/task well-specified? (maker-checker on the *instruction*).
   - **Merge gate** — before a change lands: is the output correct and complete? (maker-checker on the *result*).
@@ -119,6 +121,8 @@ Co-op Supervisor reintroduces the pair, one layer up. Instead of two people at o
 
 ### Independence & rotation
 - **FR-23** Role rotation (driver ↔ navigator) supported per task or session; by default the operator who navigated the prompt leads the merge review.
+
+  > **Superseded (20 Jul 2026):** driver/navigator rotation is replaced by structural **Host/Operator** seats (the Host provides the agent backend; both seats are co-equal checkers; no rotation). Independence now rests on the two-distinct-keys requirement alone.
 - **FR-24** Approvals require genuine engagement — an operator cannot approve from a summary alone; the actual diff must be opened. (proposed)
 
 ### Risk-tiering (proposed / optional)
