@@ -9,13 +9,17 @@ pub enum Independence {
     Pragmatic,
 }
 
-/// What happens when two eligible keys cannot be gathered.
+/// What happens when two eligible keys cannot be gathered. There is exactly
+/// one policy: park. Kontur deliberately has **no third signatory** — if two
+/// operators cannot agree, resolving that is theirs to do, not the system's to
+/// route around. (`escalation_required` on a hold is a different, unrelated
+/// signal: it flags that the co-signer must be a *distinct* non-maker for
+/// invariant #7, not that a third human is needed.)
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Availability {
-    /// Hold parks indefinitely (safe default) — never degrade to one key.
+    /// Hold parks indefinitely (safe default) — never degrade to one key,
+    /// never escalate past the two seats.
     Park,
-    /// After this many milliseconds, signal escalation to a third signatory.
-    EscalateAfter(u64),
 }
 
 /// Provenance of the change under review.

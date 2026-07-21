@@ -245,7 +245,7 @@ A hand-edit applies to the worktree *immediately* — the catastrophe-aversion p
  >
 ```
 
-*Strict-mode variant:* the editor is a maker and cannot sign. With only two operators, the gate then can't reach two eligible keys and **escalates to a third signatory** per the availability policy (§9, PRD §10.1). The console makes that state explicit rather than silently letting the editor self-approve.
+*Strict-mode variant:* the editor is a maker and cannot cast a counting verdict, so **the other seat is the eligible co-signer** — the gate flags that the editor can't self-approve and waits for the non-editing operator's key. There is no third signatory: if no eligible second key exists (both seats are makers), the gate simply **parks** — it never self-approves and never escalates past the two seats.
 
 ### 6.8 Discuss — gate-anchored notes (21 Jul 2026)
 `[d]` composes a short note attached to the active gate; both seats see the
@@ -310,7 +310,7 @@ Because two distinct keys are structurally required, losing an operator *stalls 
 - **Clean task.** Dispatch → plan approved → agent works t1 → both go → repeat → merge. Calm throughout; the console never raised its voice.
 - **Caught in review.** Agent-03's diff parks; the Operator claims it, spots an uncached lookup, casts no-go with a steer; agent reworks; t4 re-flagged; second pass goes unanimous. The audit shows a `resolved-after-disagreement` — evidence the second pair of eyes did work.
 - **Emergency.** Agent about to write a destructive migration; either seat hand-edits to guard it, applied instantly; combined diff re-signed by both (pragmatic mode) before merge; audit flags the task `hand-edited`.
-- **Partner steps away.** The Operator drops mid-session; open gates park; the Host either waits or escalates to a third signatory — never self-approves.
+- **Partner steps away.** The Operator drops mid-session; open gates park and wait for the second key to return — the Host never self-approves and there is no third signatory to route around the missing seat.
 
 ---
 
@@ -323,7 +323,7 @@ Terse, operational, lower-case for machine chatter, plain English for anything f
 ## 9. Open UX questions
 
 1. **Diff review surface.** Where and how the full diff renders for review — inline expand under the gate, a dedicated pane, or handoff to the operator's pager/editor. (The gate shows the summary; the deep read is TBD.)
-2. **Availability policy default & escalation UX.** Park-indefinitely vs escalate-to-third; how a third signatory is nominated and joins mid-session.
+2. ~~Availability policy default & escalation UX.~~ **Resolved (21 Jul 2026): park always, no third signatory.** A stalled gate waits indefinitely for its second key; disagreement is for the two operators to resolve (discuss, then no-go+remedy), never escalated to a third human.
 3. **Blind vs live sign-off by tier.** Which risk tiers seal the first verdict and which reveal live — and how the operator knows which mode a gate is in.
 4. **Dispatch-gate depth.** The prompt-review interaction is sketched (§6.2) but the "ready" bar and how the reviewing seat's suggestions are tracked need their own pass (mirrors PRD open question #3).
 5. **Fleet scale.** Layout behaviour when the fleet is larger than the panels comfortably fit — scroll, collapse-calm-agents, or a density mode.
