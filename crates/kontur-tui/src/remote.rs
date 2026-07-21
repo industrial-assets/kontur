@@ -2,6 +2,8 @@
 //! maps WireState → SessionView, and runs the interactive terminal loop.
 
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
@@ -210,6 +212,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
         instruction,
         show_help: false,
         agent_log: None,
+        link_lost: false,
     }
 }
 
@@ -464,6 +467,11 @@ pub async fn run_remote(
     // Dedicated channel for FileContent responses.
     let (file_tx, mut file_rx) = mpsc::channel::<(String, Option<String>)>(4);
 
+    // Flipped to false when the server channel closes (host gone / keepalive
+    // timeout), so the UI can raise the loud HOST LOST banner.
+    let connected = Arc::new(AtomicBool::new(true));
+    let connected_rx = connected.clone();
+
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             match msg {
@@ -482,6 +490,8 @@ pub async fn run_remote(
                 ServerMsg::Pong => {}
             }
         }
+        // The reader task closed its side: the host is gone.
+        connected.store(false, Ordering::Relaxed);
     });
 
     let (_guard, mut terminal) = TerminalGuard::enter()?;
@@ -530,6 +540,7 @@ pub async fn run_remote(
         view.attention = attention_for(&state, own);
         view.show_help = show_help;
         view.agent_log = agent_log.clone();
+        view.link_lost = !connected_rx.load(Ordering::Relaxed);
         // The invite is decision-relevant only while the stations are not both
         // linked; the moment they are, it disappears (calm default).
         if !view.status.linked {

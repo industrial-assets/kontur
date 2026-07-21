@@ -36,7 +36,19 @@ pub fn render(
     ])
     .split(frame.area());
 
-    banner(frame, rows[0], view);
+    if view.link_lost {
+        // A lost host outranks the identity flourish — the top line becomes a
+        // loud alert until the link recovers or the operator quits.
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " HOST LOST — session frozen · casts will not land · [q] quit",
+                Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED),
+            ))),
+            rows[0],
+        );
+    } else {
+        banner(frame, rows[0], view);
+    }
     status(frame, rows[1], view);
     if let Some(att) = &view.attention {
         attention_line(frame, rows[2], att);
@@ -662,6 +674,7 @@ mod tests {
             instruction: None,
             show_help: false,
             agent_log: None,
+            link_lost: false,
         }
     }
 

@@ -55,6 +55,7 @@ fn base(active: ActiveRegion) -> SessionView {
         instruction: None,
         show_help: false,
         agent_log: None,
+        link_lost: false,
     }
 }
 
@@ -524,5 +525,26 @@ fn agent_log_footer_host_only() {
     assert!(
         s.contains("agent log: /tmp/kontur-s1/claude-agent.log"),
         "footer must show the log path; got:\n{s}"
+    );
+}
+
+/// When the host link is lost the identity banner is replaced by a loud
+/// HOST LOST alert; normally the banner shows.
+#[test]
+fn host_lost_replaces_banner_with_loud_alert() {
+    let mut view = base(ActiveRegion::Idle);
+    assert!(
+        draw(&view).contains("КОНТУР"),
+        "identity banner shows when linked"
+    );
+    view.link_lost = true;
+    let s = draw(&view);
+    assert!(
+        s.contains("HOST LOST"),
+        "loud alert must replace the banner; got:\n{s}"
+    );
+    assert!(
+        !s.contains("КОНТУР-1  //"),
+        "identity flourish yields to the alert"
     );
 }

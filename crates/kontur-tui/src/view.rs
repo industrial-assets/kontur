@@ -169,6 +169,10 @@ pub struct SessionView {
     /// footer so the host can tail the agent's narration. None on the operator
     /// console (the log is host-local and unreachable from there).
     pub agent_log: Option<String>,
+    /// True when the connection to the host has gone silent past the keepalive
+    /// timeout — the session is frozen. Renders a loud banner in place of the
+    /// identity header so the operator knows their casts won't land.
+    pub link_lost: bool,
 }
 
 #[cfg(test)]
