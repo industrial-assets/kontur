@@ -9,7 +9,17 @@ kontur-core = { path = "../kontur-core" }
 kontur-mcp = { path = "../kontur-mcp" }
 kontur-net = { path = "../kontur-net" }
 ratatui = "0.30"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal", "process"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "net",
+    "signal",
+    "process",
+    "io-std",
+    "io-util",
+] }
 getrandom = "0.2"
 
 [dev-dependencies]

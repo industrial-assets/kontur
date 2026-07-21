@@ -25,6 +25,7 @@ async fn main() -> std::io::Result<()> {
 
         Some("demo") => run(Demo::new()).await,
         Some("audit") => audit_cmd(&args[2..]),
+        Some("mcp-bridge") => mcp_bridge_cmd(&args[2..]).await,
         Some("host") => host_cmd(&args[2..]).await,
         Some("join") => join_cmd(&args[2..]).await,
         Some("help") | Some("--help") | Some("-h") => {
@@ -40,6 +41,32 @@ async fn main() -> std::io::Result<()> {
             std::process::exit(1);
         }
     }
+}
+
+/// stdio<->TCP bridge for Claude Code's MCP transport. Claude spawns
+/// `kontur mcp-bridge <port>` and speaks the MCP protocol over this process's
+/// stdin/stdout; we forward those bytes to/from the local agent endpoint on
+/// 127.0.0.1:<port>. Replaces the external `nc` dependency.
+async fn mcp_bridge_cmd(args: &[String]) -> std::io::Result<()> {
+    let Some(port_str) = args.first() else {
+        eprintln!("usage: kontur mcp-bridge <port>");
+        std::process::exit(2);
+    };
+    let port: u16 = port_str
+        .parse()
+        .map_err(|_| err(format!("invalid port: {port_str}")))?;
+
+    let stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;
+    let (mut tcp_read, mut tcp_write) = stream.into_split();
+    let mut stdin = tokio::io::stdin();
+    let mut stdout = tokio::io::stdout();
+
+    // Pump both directions; return as soon as either side closes.
+    tokio::select! {
+        r = tokio::io::copy(&mut stdin, &mut tcp_write) => { r?; }
+        r = tokio::io::copy(&mut tcp_read, &mut stdout) => { r?; }
+    }
+    Ok(())
 }
 
 /// Verify a persisted audit chain: every record hash, every link, every
@@ -88,6 +115,7 @@ fn print_usage() {
         "Usage:
   kontur                              # zero-config: host in current git repo
   kontur audit <file.json>            # verify a persisted audit chain
+  kontur mcp-bridge <port>            # stdio<->TCP bridge for Claude Code (internal)
   kontur host [--repo <path>] [--mem] [--operator-port 7777] [--agent-port 7778]
               [--prompt \"...\"] [--claude | --demo-agent] [--seeds <hex32a,hex32b>]
               [--session <name>] [--headless]
@@ -332,8 +360,13 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         let mcp_config_path = tmp_dir.join("kontur-mcp.json");
         let log_path = tmp_dir.join("claude-agent.log");
 
-        // Write the MCP bridge config.
-        let config_json = mcp_config_json(agent_port);
+        // Write the MCP bridge config, pointing at this kontur executable
+        // (invoked as `kontur mcp-bridge <port>`) so there is no `nc` dependency.
+        let bridge_program = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.to_str().map(str::to_owned))
+            .unwrap_or_else(|| "kontur".to_owned());
+        let config_json = mcp_config_json(&bridge_program, agent_port);
         std::fs::write(&mcp_config_path, &config_json)?;
 
         let mcp_config_str = mcp_config_path
@@ -552,7 +585,7 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         println!();
         println!("  alternative (manual bridge):");
         println!("    1. save as kontur-mcp.json:");
-        println!("       {{\"mcpServers\":{{\"kontur\":{{\"command\":\"nc\",\"args\":[\"127.0.0.1\",\"{}\"]}}}}}}",  agent_addr.port());
+        println!("       {{\"mcpServers\":{{\"kontur\":{{\"command\":\"kontur\",\"args\":[\"mcp-bridge\",\"{}\"]}}}}}}",  agent_addr.port());
         println!("    2. run: claude --mcp-config kontur-mcp.json \\");
         println!("         --allowedTools \"mcp__kontur__*\" \\");
         println!("         --disallowedTools Write Edit MultiEdit NotebookEdit Bash \\");
