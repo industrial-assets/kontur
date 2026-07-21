@@ -125,7 +125,26 @@ operator wire is TLS-encrypted, cert pinned via the invite code. Either seat can
 abandon a runaway session (`[k]`): nothing merges, the agent is stopped, and the
 audit chain keeps every resolved gate.
 
-The design lives in:
+## Connectivity
+
+Kontur does not run a relay or do NAT hole-punching — the operator connects
+directly to the host, so the two machines must be able to reach each other on
+the network. The `[l]` toggle swaps the invite between a LAN address and a
+public one, but a public IP still needs a port-forward or DMZ on the host's
+router. **For pairing across networks, put both machines on a mesh VPN
+(Tailscale or WireGuard) and use the LAN-style address** — it's the supported
+WAN path and avoids exposing the host to the open internet. (A hosted relay is
+deliberately out of scope: code stays on machines the team already trusts.)
+
+## Platform support
+
+Developed and tested on **macOS and Linux**. Windows is **not currently
+tested** — path handling and the in-viewer `$EDITOR` hand-edit (`[e]`, which
+launches `$EDITOR` or `vi`) haven't been validated there; treat a Windows host
+as unsupported for now. The MCP bridge is built in (`kontur mcp-bridge`), so
+there is no `nc` or other external-tool dependency on any platform.
+
+## The design lives in
 
 - **`docs/PRD-coop-supervisor.md`** — problem, requirements, architecture, and the two-signatory four-eyes mechanism.
 - **`docs/UX-kontur.md`** — console anatomy, screen states, and the interaction model.
