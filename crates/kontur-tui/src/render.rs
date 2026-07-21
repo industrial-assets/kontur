@@ -23,6 +23,7 @@ pub fn render(
         None => 0,
     };
     let attention_rows: u16 = if view.attention.is_some() { 1 } else { 0 };
+    let agent_log_rows: u16 = if view.agent_log.is_some() { 1 } else { 0 };
     let rows = Layout::vertical([
         Constraint::Length(1),              // banner
         Constraint::Length(1),              // status strip
@@ -30,6 +31,7 @@ pub fn render(
         Constraint::Length(invite_rows),    // invite (host, while unlinked)
         Constraint::Length(3),              // stations
         Constraint::Min(3),                 // panes (left + right)
+        Constraint::Length(agent_log_rows), // host-only agent-log footer
         Constraint::Length(1),              // command line
     ])
     .split(frame.area());
@@ -44,7 +46,10 @@ pub fn render(
     }
     stations(frame, rows[4], view);
     panes(frame, rows[5], view, diff_scroll, selected_file, log_scroll);
-    command(frame, rows[6], view);
+    if let Some(path) = &view.agent_log {
+        agent_log_footer(frame, rows[6], path);
+    }
+    command(frame, rows[7], view);
 
     // Help overlay sits above everything else.
     if view.show_help {
@@ -583,6 +588,19 @@ fn render_phase_card(frame: &mut Frame, area: Rect, active: &ActiveRegion) {
     }
 }
 
+/// Host-only dim footer naming the agent's session log, so the host can tail
+/// the agent's narration without hunting for the path.
+fn agent_log_footer(frame: &mut Frame, area: Rect, path: &str) {
+    use ratatui::style::Color;
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!(" agent log: {path}"),
+            Style::default().fg(Color::DarkGray),
+        ))),
+        area,
+    );
+}
+
 fn command(frame: &mut Frame, area: Rect, view: &SessionView) {
     let text = match &view.notice {
         Some(msg) => {
@@ -643,6 +661,7 @@ mod tests {
             attention: None,
             instruction: None,
             show_help: false,
+            agent_log: None,
         }
     }
 

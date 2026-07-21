@@ -165,6 +165,10 @@ pub struct SessionView {
     pub instruction: Option<String>,
     /// When true, a centred keymap overlay is drawn above the console.
     pub show_help: bool,
+    /// Host-only: path to the agent's session log, shown as a persistent
+    /// footer so the host can tail the agent's narration. None on the operator
+    /// console (the log is host-local and unreachable from there).
+    pub agent_log: Option<String>,
 }
 
 #[cfg(test)]

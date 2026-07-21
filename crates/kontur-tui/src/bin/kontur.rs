@@ -619,7 +619,18 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
                 })
             }
         };
-        run_remote(&host_addr, "HOST".into(), seed_a, links, Some(fp16)).await?;
+        let agent_log_str = claude_log_path
+            .as_ref()
+            .and_then(|p| p.to_str().map(str::to_owned));
+        run_remote(
+            &host_addr,
+            "HOST".into(),
+            seed_a,
+            links,
+            Some(fp16),
+            agent_log_str,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -635,7 +646,7 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
             let (addr, secret16, fp16) =
                 parse_invite(first).map_err(|e| err(format!("invalid invite link: {e}")))?;
             let seed = derive_seed(&secret16);
-            return run_remote(&addr, "OPERATOR".into(), seed, None, Some(fp16)).await;
+            return run_remote(&addr, "OPERATOR".into(), seed, None, Some(fp16), None).await;
         }
     }
 
@@ -666,7 +677,7 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
     let seed = parse_seed_arg(&seed_val_str, "--seed")?;
 
     // Legacy --addr/--seed path: no fingerprint → plain TCP (deprecated)
-    run_remote(&addr, "OPERATOR".into(), seed, None, None).await
+    run_remote(&addr, "OPERATOR".into(), seed, None, None, None).await
 }
 
 // ---------------------------------------------------------------------------

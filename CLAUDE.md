@@ -120,7 +120,7 @@ cargo run -p kontur-tui --bin kontur -- host --mem --demo-agent
 cd your-project && kontur --claude
 # kontur spawns claude with --allowedTools mcp__kontur__* and --disallowedTools
 # Write Edit MultiEdit NotebookEdit Bash once both seats approve the dispatch gate.
-# Agent output goes to a session log (path printed on startup).
+# Agent output goes to a session log (path shown persistently as a host-only footer in the console, and printed on startup).
 
 # join as operator (legacy --addr/--seed form; still works)
 cargo run -p kontur-tui --bin kontur -- join --addr 127.0.0.1:7777 --seed 2

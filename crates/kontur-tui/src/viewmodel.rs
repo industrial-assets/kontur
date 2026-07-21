@@ -74,6 +74,7 @@ pub async fn build_session_view(
         attention: None,
         instruction: None,
         show_help: false,
+        agent_log: None,
     }
 }
 

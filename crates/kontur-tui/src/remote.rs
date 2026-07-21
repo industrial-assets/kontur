@@ -209,6 +209,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
         attention: None,
         instruction,
         show_help: false,
+        agent_log: None,
     }
 }
 
@@ -436,6 +437,7 @@ pub async fn run_remote(
     seed: [u8; 32],
     invite: Option<crate::link::InviteLinks>,
     fingerprint: Option<[u8; 16]>,
+    agent_log: Option<String>,
 ) -> io::Result<()> {
     let (client, mut rx) = match fingerprint {
         Some(fp) => SessionClient::connect_pinned_tls(addr, seat, seed, fp).await?,
@@ -527,6 +529,7 @@ pub async fn run_remote(
         let mut view = wire_to_view(&state, own, plan_sel);
         view.attention = attention_for(&state, own);
         view.show_help = show_help;
+        view.agent_log = agent_log.clone();
         // The invite is decision-relevant only while the stations are not both
         // linked; the moment they are, it disappears (calm default).
         if !view.status.linked {

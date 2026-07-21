@@ -54,6 +54,7 @@ fn base(active: ActiveRegion) -> SessionView {
         attention: None,
         instruction: None,
         show_help: false,
+        agent_log: None,
     }
 }
 
@@ -506,5 +507,22 @@ fn help_overlay_renders_when_toggled() {
     assert!(
         s.contains("edit the instruction"),
         "prompt-phase key must render; got:\n{s}"
+    );
+}
+
+/// The host-only agent-log footer renders the path when set, and nothing when
+/// absent (the operator console passes None — the log is host-local).
+#[test]
+fn agent_log_footer_host_only() {
+    let mut view = base(ActiveRegion::Idle);
+    assert!(
+        !draw(&view).contains("agent log:"),
+        "no footer without a path"
+    );
+    view.agent_log = Some("/tmp/kontur-s1/claude-agent.log".into());
+    let s = draw(&view);
+    assert!(
+        s.contains("agent log: /tmp/kontur-s1/claude-agent.log"),
+        "footer must show the log path; got:\n{s}"
     );
 }
