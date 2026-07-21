@@ -306,7 +306,10 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
     let cfg = SessionConfig {
         prompt: effective_prompt.clone(),
         plan: vec!["external agent tasks".into()],
-        seats: [("HOST".into(), op_a), ("OPERATOR".into(), op_b)],
+        seats: [
+            ("Operator A [Host]".into(), op_a),
+            ("Operator B".into(), op_b),
+        ],
     };
     let server = SessionServer::new(host.clone(), cfg);
 
@@ -624,7 +627,7 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
             .and_then(|p| p.to_str().map(str::to_owned));
         run_remote(
             &host_addr,
-            "HOST".into(),
+            "Operator A [Host]".into(),
             seed_a,
             links,
             Some(fp16),
@@ -646,7 +649,7 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
             let (addr, secret16, fp16) =
                 parse_invite(first).map_err(|e| err(format!("invalid invite link: {e}")))?;
             let seed = derive_seed(&secret16);
-            return run_remote(&addr, "OPERATOR".into(), seed, None, Some(fp16), None).await;
+            return run_remote(&addr, "Operator B".into(), seed, None, Some(fp16), None).await;
         }
     }
 
@@ -677,7 +680,7 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
     let seed = parse_seed_arg(&seed_val_str, "--seed")?;
 
     // Legacy --addr/--seed path: no fingerprint → plain TCP (deprecated)
-    run_remote(&addr, "OPERATOR".into(), seed, None, None, None).await
+    run_remote(&addr, "Operator B".into(), seed, None, None, None).await
 }
 
 // ---------------------------------------------------------------------------

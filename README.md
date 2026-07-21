@@ -40,8 +40,8 @@ Pair programming assumed a driver at the keyboard and a navigator watching the c
  │ analysing parser.py          │ │ editing auth │ │ ▶ NEEDS SIGN-OFF│
  └───────────────────────────────┘ └──────────────┘ └─────────────────┘
  ┌─ GATE-03 · agent-03 · auth/session.ts · +47 -12 · tests ok ────────┐
- │  KEY A  HOST · you      □ awaiting your verdict                    │
- │  KEY B  OPERATOR j.reed ■ cast — sealed                           │
+ │  KEY Operator A [Host]  □ awaiting your verdict                    │
+ │  KEY Operator B         ■ cast — sealed                            │
  │  [g] go   [r] no-go +remedy   [e] hand-edit   [d] discuss          │
  └────────────────────────────────────────────────────────────────────┘
 ```

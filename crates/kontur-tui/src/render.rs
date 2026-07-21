@@ -272,10 +272,12 @@ fn stations(frame: &mut Frame, area: Rect, view: &SessionView) {
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
     for (i, st) in view.stations.iter().enumerate() {
         let block = Block::bordered().title(st.label.clone());
+        // The station title already names the seat (e.g. "Operator A [Host]"),
+        // so the body carries only the activity — no redundant role prefix.
         let body = if st.afk {
-            format!("{} · AFK", st.role.label())
+            "AFK".to_string()
         } else {
-            format!("{} · {}", st.role.label(), st.activity)
+            st.activity.clone()
         };
         let p = if st.afk {
             Paragraph::new(Span::styled(

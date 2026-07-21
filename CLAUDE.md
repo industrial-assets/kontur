@@ -67,7 +67,7 @@ The product's value *is* these properties. Never weaken, shortcut, or "simplify"
 ## Glossary — use these terms consistently
 
 - **Seat / station** — one of the two human consoles.
-- **Host / Operator** — the two seats. The Host's terminal runs the session and provides the agent backend (the Claude Code connection); the Operator joins remotely. Both are co-equal checkers: either can review, sign, steer, or hand-edit. Roles are structural (who hosts), not rotating.
+- **Host / Operator** — the two seats, both co-equal operators. Displayed as **"Operator A [Host]"** (the seat that hosts and provides the agent backend) and **"Operator B"** (the seat that joins remotely). Both are co-equal checkers: either can review, sign, steer, or hand-edit. Roles are structural (who hosts), not rotating.
 - **Gate** — a point requiring sign-off. **Dispatch gate** (is the prompt ready?) and **merge gate** (is the change good?).
 - **Dual-hold** — the state object that holds a parked action until two keys resolve it. It is the internals of the `AWAITING_REVIEW` lifecycle state.
 - **Key** — an operator's signed verdict (`go` / `no-go`). **Sealed** — a cast-but-hidden verdict (blind review).
