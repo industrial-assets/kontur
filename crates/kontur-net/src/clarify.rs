@@ -140,6 +140,39 @@ impl Clarify {
         matches!(self.states.get(q), Some(QState::Collecting { .. }))
     }
 
+    /// A seat's current pick for a question, as display text — the option or
+    /// custom text they chose this round. `None` if they haven't answered yet.
+    /// Resolved questions report the resolved answer(s) joined, so both seats
+    /// see the settled result.
+    pub fn pick(&self, seat: usize, q: usize) -> Option<String> {
+        match self.states.get(q)? {
+            QState::Collecting { options, a, b } => {
+                let c = if seat == 0 { a } else { b };
+                c.as_ref().map(|ch| ch.text(options))
+            }
+            QState::Reconciling {
+                a_text,
+                b_text,
+                a,
+                b,
+                ..
+            } => {
+                let recon = [a_text.clone(), b_text.clone(), ACCEPT_BOTH.to_owned()];
+                let idx = if seat == 0 { a } else { b };
+                idx.map(|i| recon.get(i).cloned().unwrap_or_default())
+            }
+            QState::Resolved(v) => Some(v.join(" + ")),
+        }
+    }
+
+    /// The resolved answer(s) for a question, or `None` while it's still open.
+    pub fn resolved_answer(&self, q: usize) -> Option<Vec<String>> {
+        match self.states.get(q) {
+            Some(QState::Resolved(v)) => Some(v.clone()),
+            _ => None,
+        }
+    }
+
     /// Record a seat's answer to a question, advancing the state when both
     /// seats have answered. `seat` is 0 or 1. During reconciliation a `Custom`
     /// choice is coerced to an option index by matching text (the UI only
@@ -334,6 +367,27 @@ mod tests {
         assert_eq!(
             c.resolved(),
             Some(vec![vec!["pg".to_string()], vec!["basic".to_string()],])
+        );
+    }
+
+    #[test]
+    fn pick_reflects_current_answers() {
+        let mut c = Clarify::new(vec![q("db?", &["pg", "sqlite"])]);
+        assert_eq!(c.pick(0, 0), None);
+        c.answer(0, 0, Choice::Option(0));
+        assert_eq!(c.pick(0, 0), Some("pg".to_string()));
+        assert_eq!(c.pick(1, 0), None);
+        c.answer(1, 0, Choice::Option(1));
+        // Now diverged → reconciling; picks reset for the new round.
+        assert_eq!(c.pick(0, 0), None);
+        assert_eq!(c.options(0), vec!["pg", "sqlite", "accept both"]);
+        c.answer(0, 0, Choice::Option(2));
+        assert_eq!(c.pick(0, 0), Some("accept both".to_string()));
+        c.answer(1, 0, Choice::Option(2));
+        assert_eq!(c.pick(0, 0), Some("pg + sqlite".to_string()));
+        assert_eq!(
+            c.resolved_answer(0),
+            Some(vec!["pg".to_string(), "sqlite".to_string()])
         );
     }
 

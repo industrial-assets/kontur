@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Wire protocol version. Bump on any incompatible change to the message
 /// types below. A client that omits the field (pre-versioning build) is read
 /// as version 0, which mismatches any real version and is rejected cleanly.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Serde default for `Hello.protocol` — pre-versioning clients deserialize to 0.
 fn protocol_v0() -> u32 {
@@ -51,6 +51,12 @@ pub enum ClientMsg {
     Discuss {
         gate_id: GateId,
         text: String,
+    },
+    /// Answer a clarification question. Both seats answer every question; the
+    /// exchange resolves (and the agent is unblocked) when all are settled.
+    Answer {
+        question: usize,
+        choice: WireChoice,
     },
     /// Application-level keepalive. Sent periodically by the client; the server
     /// treats its arrival as liveness and replies `Pong`. Never gated.
@@ -122,6 +128,10 @@ pub enum WirePhase {
     PlanReview {
         tasks: Vec<String>,
     },
+    /// The agent asked the operators to clarify ambiguity before planning.
+    Clarify {
+        questions: Vec<WireQuestion>,
+    },
     Executing,
     Closed {
         gates: usize,
@@ -130,6 +140,27 @@ pub enum WirePhase {
         merged: bool,
         abandoned: bool,
     },
+}
+
+/// One clarification question projected for the console: the current prompt and
+/// options (which change during reconciliation), whether a free-text answer is
+/// offered, and each seat's current pick as display text (live to both).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct WireQuestion {
+    pub prompt: String,
+    pub options: Vec<String>,
+    pub allows_custom: bool,
+    /// [seat A pick, seat B pick] as display text; None until that seat answers.
+    pub picks: [Option<String>; 2],
+    /// The resolved answer(s), once this question is settled.
+    pub resolved: Option<Vec<String>>,
+}
+
+/// A seat's answer to a clarification question.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum WireChoice {
+    Option(usize),
+    Custom(String),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

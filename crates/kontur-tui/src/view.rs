@@ -131,7 +131,25 @@ pub enum ActiveRegion {
     },
     Gate(GateCard),
     Intervention(InterventionCard),
+    /// The agent asked clarifying questions; both operators answer. `selected`
+    /// is the highlighted question row; `own` is this seat (0/1).
+    Clarify {
+        questions: Vec<ClarifyQ>,
+        selected: usize,
+        own: usize,
+    },
     SessionClosed(AuditSummary),
+}
+
+/// One clarification question as shown to an operator.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ClarifyQ {
+    pub prompt: String,
+    pub options: Vec<String>,
+    pub allows_custom: bool,
+    /// [seat A pick, seat B pick] display text; None until answered.
+    pub picks: [Option<String>; 2],
+    pub resolved: Option<Vec<String>>,
 }
 
 /// Operator-attention indicator: tells THIS seat what (if anything) it must do.

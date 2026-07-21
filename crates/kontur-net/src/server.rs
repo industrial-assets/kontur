@@ -12,7 +12,7 @@ use kontur_mcp::{GateHost, HostEvent};
 use crate::codec::{read_json, write_json};
 use crate::protocol::{
     ClientMsg, ServerMsg, WireCmd, WireComment, WireFileDiff, WireFleetCard, WireGate, WirePhase,
-    WireRole, WireSeat, WireState,
+    WireQuestion, WireRole, WireSeat, WireState,
 };
 
 /// How long the server waits for any client traffic before treating the peer
@@ -72,6 +72,7 @@ enum Phase {
     AwaitOperators,
     DispatchReady,
     PlanReview,
+    Clarify,
     Executing,
     Closed {
         gates: usize,
@@ -110,6 +111,8 @@ struct Net {
     claim: Option<(String, usize)>,
     /// Gate discussion notes, keyed by gate id: (seat_idx, text) in order.
     discuss: std::collections::HashMap<String, Vec<(usize, String)>>,
+    /// Active clarification exchange, while the agent is awaiting answers.
+    clarify: Option<crate::clarify::Clarify>,
 }
 
 struct Inner {
@@ -188,6 +191,7 @@ impl SessionServer {
             last_cmd: std::collections::HashMap::new(),
             claim: None,
             discuss: std::collections::HashMap::new(),
+            clarify: None,
         };
 
         let server = SessionServer {
@@ -361,14 +365,26 @@ impl SessionServer {
                 self.refresh_locked().await;
             }
             HostEvent::QuestionsAsked { questions } => {
-                // Placeholder handling: log that the agent asked. The full
-                // Clarify phase (operators answer, divergence reconciliation,
-                // resolve_clarification) is wired in the next part of the
-                // clarification feature. No live agent path calls this yet.
+                let n = questions.len();
+                let reducer = crate::clarify::Clarify::new(
+                    questions
+                        .into_iter()
+                        .map(|q| crate::clarify::Question {
+                            prompt: q.prompt,
+                            options: q.options,
+                        })
+                        .collect(),
+                );
                 let mut net = self.inner.net.lock().await;
+                net.clarify = Some(reducer);
+                net.phase = Phase::Clarify;
+                if let Some(existing) = net.fleet.iter_mut().find(|c| c.id == agent_id) {
+                    existing.status = format!("awaiting {n} clarification answer(s)");
+                    existing.needs_signoff = true;
+                }
                 push_log(
                     &mut net,
-                    &format!("agent asked {} clarification question(s)", questions.len()),
+                    &format!("agent asked {n} clarification question(s)"),
                 );
                 drop(net);
                 self.refresh_locked().await;
@@ -918,6 +934,36 @@ async fn handle_client_msg(
             drop(net);
             server.refresh_locked().await;
         }
+        ClientMsg::Answer { question, choice } => {
+            // Apply the answer to the clarify reducer; when every question is
+            // resolved, hand the accepted answers back to the agent and move on.
+            let resolved: Option<Vec<Vec<String>>> = {
+                let mut net = server.inner.net.lock().await;
+                if net.phase != Phase::Clarify {
+                    return;
+                }
+                let Some(clarify) = net.clarify.as_mut() else {
+                    return;
+                };
+                let choice = match choice {
+                    crate::protocol::WireChoice::Option(i) => crate::clarify::Choice::Option(i),
+                    crate::protocol::WireChoice::Custom(s) => crate::clarify::Choice::Custom(s),
+                };
+                clarify.answer(seat_idx, question, choice);
+                clarify.resolved()
+            };
+            if let Some(answers) = resolved {
+                // Resolved: unblock the agent, clear the exchange, return to
+                // plan review (the agent now proposes its plan).
+                server.inner.host.resolve_clarification(answers).await;
+                let mut net = server.inner.net.lock().await;
+                net.clarify = None;
+                net.phase = Phase::PlanReview;
+                push_log(&mut net, "clarification resolved · awaiting agent plan");
+                drop(net);
+            }
+            server.refresh_locked().await;
+        }
         ClientMsg::Discuss { gate_id, text } => {
             let text = text.trim().to_owned();
             if !text.is_empty() {
@@ -1201,6 +1247,23 @@ impl SessionServer {
                     .agent_plan
                     .clone()
                     .unwrap_or_else(|| inner.cfg.plan.clone()),
+            },
+            Phase::Clarify => WirePhase::Clarify {
+                questions: net
+                    .clarify
+                    .as_ref()
+                    .map(|c| {
+                        (0..c.len())
+                            .map(|q| WireQuestion {
+                                prompt: c.prompt(q),
+                                options: c.options(q),
+                                allows_custom: c.allows_custom(q),
+                                picks: [c.pick(0, q), c.pick(1, q)],
+                                resolved: c.resolved_answer(q),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             },
             Phase::Executing => WirePhase::Executing,
             Phase::Closed {
@@ -3102,6 +3165,116 @@ mod tests {
             got_empty_rejected,
             "empty SetPrompt must produce Rejected with 'empty' in reason"
         );
+    }
+
+    /// End-to-end: the agent asks a clarification question; both operators
+    /// answer (agreeing); the exchange resolves, the parked ask_clarification
+    /// future returns the answers, and the phase returns to PlanReview.
+    #[tokio::test]
+    async fn clarification_resolves_when_both_answer() {
+        use kontur_mcp::ClarifyQuestion;
+
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let (server, _ws) = make_server(op1, op2, vec!["t1".into()]);
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        drain_client(BufReader::new(cb_read)).await;
+
+        for (w, seat, op) in [(&mut ca_write, "A", op1), (&mut cb_write, "B", op2)] {
+            write_json(
+                w,
+                &ClientMsg::Hello {
+                    seat: seat.into(),
+                    operator: op,
+                    protocol: crate::protocol::PROTOCOL_VERSION,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
+
+        // The agent asks a clarification question; capture the resolved answers.
+        let host = server.host().clone();
+        let ask = tokio::spawn(async move {
+            let mut rx = host
+                .ask_clarification(vec![ClarifyQuestion {
+                    prompt: "target db?".into(),
+                    options: vec!["postgres".into(), "sqlite".into()],
+                }])
+                .await
+                .unwrap();
+            loop {
+                if let kontur_mcp::ClarifyDecision::Answered(a) = rx.borrow_and_update().clone() {
+                    return a;
+                }
+                if rx.changed().await.is_err() {
+                    return vec![];
+                }
+            }
+        });
+
+        // Wire enters the Clarify phase with the question.
+        let clar = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::Clarify { .. })
+            }),
+        )
+        .await
+        .expect("Clarify phase");
+        if let WirePhase::Clarify { questions } = &clar.phase {
+            assert_eq!(questions.len(), 1);
+            assert_eq!(questions[0].options, vec!["postgres", "sqlite"]);
+            assert!(questions[0].allows_custom);
+        } else {
+            panic!("expected Clarify phase");
+        }
+
+        // Both operators pick option 1 (postgres) → agreement.
+        for w in [&mut ca_write, &mut cb_write] {
+            write_json(
+                w,
+                &ClientMsg::Answer {
+                    question: 0,
+                    choice: crate::protocol::WireChoice::Option(0),
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        // The agent's ask future resolves with the agreed answer...
+        let answers = tokio::time::timeout(Duration::from_secs(5), ask)
+            .await
+            .expect("ask resolves")
+            .expect("join");
+        assert_eq!(answers, vec![vec!["postgres".to_string()]]);
+
+        // ...and the phase returns to PlanReview.
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("back to PlanReview after clarification");
     }
 
     /// A discuss note appends to the gate's thread and is projected onto the

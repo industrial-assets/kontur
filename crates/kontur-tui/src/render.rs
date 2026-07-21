@@ -78,6 +78,12 @@ pub fn help_lines(active: &ActiveRegion, host_unlinked: bool) -> Vec<String> {
             out.push("  p    edit the instruction".into());
             out.push("  y    mark ready to dispatch (needs both)".into());
         }
+        ActiveRegion::Clarify { .. } => {
+            out.push("CLARIFY".into());
+            out.push("  j/k  select question".into());
+            out.push("  1-9  pick an option  a   provide your own".into());
+            out.push("  both operators must answer; disagreements reconcile".into());
+        }
         ActiveRegion::Plan { .. } => {
             out.push("PLAN REVIEW".into());
             out.push("  j/k  select task".into());
@@ -557,6 +563,52 @@ fn render_phase_card(frame: &mut Frame, area: Rect, active: &ActiveRegion) {
             ));
             frame.render_widget(
                 Paragraph::new(lines).block(Block::bordered().title("PLAN")),
+                area,
+            );
+        }
+        ActiveRegion::Clarify {
+            questions,
+            selected,
+            own,
+        } => {
+            let mut lines: Vec<Line> = Vec::new();
+            for (i, q) in questions.iter().enumerate() {
+                let marker = if i == *selected { "▶" } else { " " };
+                let status = match &q.resolved {
+                    Some(ans) => format!("✓ {}", ans.join(" + ")),
+                    None => {
+                        let mine = q.picks[*own].as_deref();
+                        let other = q.picks[1 - *own].as_deref();
+                        match (mine, other) {
+                            (Some(m), Some(o)) => format!("you: {m} · other: {o}"),
+                            (Some(m), None) => format!("you: {m} · other: —"),
+                            (None, Some(o)) => format!("you: — · other: {o}"),
+                            (None, None) => "unanswered".into(),
+                        }
+                    }
+                };
+                lines.push(Line::from(format!(" {marker} Q{}: {}", i + 1, q.prompt)));
+                for (oi, opt) in q.options.iter().enumerate() {
+                    lines.push(Line::from(format!("      {}) {opt}", oi + 1)));
+                }
+                if q.allows_custom {
+                    lines.push(Line::from(format!(
+                        "      {}) provide your own — [a]",
+                        q.options.len() + 1
+                    )));
+                }
+                lines.push(Line::from(Span::styled(
+                    format!("      · {status}"),
+                    Style::default().add_modifier(Modifier::DIM),
+                )));
+            }
+            lines.push(Line::from(
+                " [j]/[k] question · [1-9] pick · [a] custom — both must answer",
+            ));
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .block(Block::bordered().title("CLARIFY — agent needs answers"))
+                    .wrap(Wrap { trim: true }),
                 area,
             );
         }

@@ -63,7 +63,13 @@ pub fn agent_prompt(session_prompt: &str) -> String {
     format!(
         "You are the kontur coding agent. \
 Use ONLY the kontur MCP tools — never use native file or shell tools. \
-FIRST call `propose_plan` with a task list of bounded, single-concern tasks and \
+BEFORE planning, judge whether the instruction is genuinely ambiguous — a real \
+fork where you would otherwise have to guess. If so, call `ask_clarification` \
+with multiple-choice questions and WAIT for the operators' answers; use exactly \
+those answers. Ask ONLY about real ambiguity, never gratuitously, and never \
+assume when you could ask. If the instruction is clear, skip straight to \
+planning. \
+Then call `propose_plan` with a task list of bounded, single-concern tasks and \
 wait for approval before writing any code. \
 If propose_plan returns an error containing a steer, revise your task list per \
 the steer and call propose_plan again with the revised list. \
@@ -88,6 +94,18 @@ Do not take any action outside this protocol. \
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_prompt_instructs_clarification_before_planning() {
+        let p = agent_prompt("do the thing");
+        assert!(p.contains("ask_clarification"), "must mention the tool");
+        assert!(p.contains("ambiguous") || p.contains("ambiguity"));
+        assert!(
+            p.contains("never gratuitously"),
+            "must forbid gratuitous questions"
+        );
+        assert!(p.contains("do the thing"), "embeds the instruction");
+    }
 
     #[test]
     fn build_claude_command_contains_deny_allow_flags() {

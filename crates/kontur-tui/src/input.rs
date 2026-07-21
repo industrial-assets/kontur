@@ -54,6 +54,13 @@ pub enum Action {
     PlanSteerBegin,
     /// Toggle a soft presence claim on the active gate.
     ClaimGate,
+    /// Move the highlighted clarification question.
+    ClarifyNext,
+    ClarifyPrev,
+    /// Pick option `n` (1-based) for the selected clarification question.
+    ClarifyDigit(u8),
+    /// Begin composing a custom answer for the selected clarification question.
+    ClarifyCustomBegin,
     /// Scroll the activity log back one line (↑).
     LogUp,
     /// Scroll the activity log toward the tail one line (↓).
@@ -71,6 +78,7 @@ pub fn map_key(
     modifiers: KeyModifiers,
     composing_remedy: bool,
     plan_mode: bool,
+    clarify_mode: bool,
 ) -> Action {
     if composing_remedy {
         return match code {
@@ -83,6 +91,19 @@ pub fn map_key(
             KeyCode::Right => Action::CursorRight,
             KeyCode::Home => Action::CursorHome,
             KeyCode::End => Action::CursorEnd,
+            _ => Action::None,
+        };
+    }
+
+    if clarify_mode {
+        return match code {
+            KeyCode::Char('j') | KeyCode::Down => Action::ClarifyNext,
+            KeyCode::Char('k') | KeyCode::Up => Action::ClarifyPrev,
+            KeyCode::Char('a') => Action::ClarifyCustomBegin,
+            KeyCode::Char(c @ '1'..='9') => Action::ClarifyDigit(c as u8 - b'0'),
+            KeyCode::Char('K') => Action::AbandonBegin,
+            KeyCode::Char('q') => Action::Quit,
+            KeyCode::Char('?') => Action::Help,
             _ => Action::None,
         };
     }
@@ -133,31 +154,31 @@ mod tests {
     #[test]
     fn gate_keys_map() {
         assert_eq!(
-            map_key(KeyCode::Char('g'), KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Char('g'), KeyModifiers::NONE, false, false, false),
             Action::Go
         );
         assert_eq!(
-            map_key(KeyCode::Char('r'), KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Char('r'), KeyModifiers::NONE, false, false, false),
             Action::NoGoBegin
         );
         assert_eq!(
-            map_key(KeyCode::Char('e'), KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Char('e'), KeyModifiers::NONE, false, false, false),
             Action::HandEdit
         );
         assert_eq!(
-            map_key(KeyCode::Char('q'), KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Char('q'), KeyModifiers::NONE, false, false, false),
             Action::Quit
         );
         assert_eq!(
-            map_key(KeyCode::Char('l'), KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Char('l'), KeyModifiers::NONE, false, false, false),
             Action::ToggleLink
         );
         assert_eq!(
-            map_key(KeyCode::Char('p'), KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Char('p'), KeyModifiers::NONE, false, false, false),
             Action::PromptBegin
         );
         assert_eq!(
-            map_key(KeyCode::Char('z'), KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Char('z'), KeyModifiers::NONE, false, false, false),
             Action::None
         );
     }
@@ -165,21 +186,45 @@ mod tests {
     #[test]
     fn remedy_composition_captures_text() {
         assert_eq!(
-            map_key(KeyCode::Char('x'), KeyModifiers::NONE, true, false),
+            map_key(KeyCode::Char('x'), KeyModifiers::NONE, true, false, false),
             Action::RemedyChar('x')
         );
         assert_eq!(
-            map_key(KeyCode::Enter, KeyModifiers::NONE, true, false),
+            map_key(KeyCode::Enter, KeyModifiers::NONE, true, false, false),
             Action::RemedySubmit
         );
         assert_eq!(
-            map_key(KeyCode::Esc, KeyModifiers::NONE, true, false),
+            map_key(KeyCode::Esc, KeyModifiers::NONE, true, false, false),
             Action::RemedyCancel
         );
         // 'g' while composing is text, not a Go verdict.
         assert_eq!(
-            map_key(KeyCode::Char('g'), KeyModifiers::NONE, true, false),
+            map_key(KeyCode::Char('g'), KeyModifiers::NONE, true, false, false),
             Action::RemedyChar('g')
+        );
+    }
+
+    #[test]
+    fn clarify_mode_maps_digits_and_nav() {
+        assert_eq!(
+            map_key(KeyCode::Char('1'), KeyModifiers::NONE, false, false, true),
+            Action::ClarifyDigit(1)
+        );
+        assert_eq!(
+            map_key(KeyCode::Char('9'), KeyModifiers::NONE, false, false, true),
+            Action::ClarifyDigit(9)
+        );
+        assert_eq!(
+            map_key(KeyCode::Char('a'), KeyModifiers::NONE, false, false, true),
+            Action::ClarifyCustomBegin
+        );
+        assert_eq!(
+            map_key(KeyCode::Char('j'), KeyModifiers::NONE, false, false, true),
+            Action::ClarifyNext
+        );
+        assert_eq!(
+            map_key(KeyCode::Char('k'), KeyModifiers::NONE, false, false, true),
+            Action::ClarifyPrev
         );
     }
 
@@ -188,27 +233,27 @@ mod tests {
         // Vim j/k drive the diff; arrows drive the log scrollback — the two
         // scroll surfaces are split across the two key families.
         assert_eq!(
-            map_key(KeyCode::Char('j'), KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Char('j'), KeyModifiers::NONE, false, false, false),
             Action::ScrollDown
         );
         assert_eq!(
-            map_key(KeyCode::Down, KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Down, KeyModifiers::NONE, false, false, false),
             Action::LogDown
         );
         assert_eq!(
-            map_key(KeyCode::Char('k'), KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Char('k'), KeyModifiers::NONE, false, false, false),
             Action::ScrollUp
         );
         assert_eq!(
-            map_key(KeyCode::Up, KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Up, KeyModifiers::NONE, false, false, false),
             Action::LogUp
         );
         assert_eq!(
-            map_key(KeyCode::PageDown, KeyModifiers::NONE, false, false),
+            map_key(KeyCode::PageDown, KeyModifiers::NONE, false, false, false),
             Action::PageDown
         );
         assert_eq!(
-            map_key(KeyCode::PageUp, KeyModifiers::NONE, false, false),
+            map_key(KeyCode::PageUp, KeyModifiers::NONE, false, false, false),
             Action::PageUp
         );
     }
@@ -216,12 +261,12 @@ mod tests {
     #[test]
     fn abandon_begin_requires_uppercase_k() {
         assert_eq!(
-            map_key(KeyCode::Char('K'), KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Char('K'), KeyModifiers::NONE, false, false, false),
             Action::AbandonBegin
         );
         // lowercase k is scroll up, not abandon
         assert_eq!(
-            map_key(KeyCode::Char('k'), KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Char('k'), KeyModifiers::NONE, false, false, false),
             Action::ScrollUp
         );
     }
@@ -229,7 +274,7 @@ mod tests {
     #[test]
     fn tab_always_cycles_file() {
         assert_eq!(
-            map_key(KeyCode::Tab, KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Tab, KeyModifiers::NONE, false, false, false),
             Action::CycleFile
         );
     }
@@ -238,11 +283,11 @@ mod tests {
     fn remedy_mode_overrides_scroll_keys() {
         // When composing a remedy, scroll keys do not fire.
         assert_eq!(
-            map_key(KeyCode::Char('j'), KeyModifiers::NONE, true, false),
+            map_key(KeyCode::Char('j'), KeyModifiers::NONE, true, false, false),
             Action::RemedyChar('j')
         );
         assert_eq!(
-            map_key(KeyCode::Char('g'), KeyModifiers::NONE, true, false),
+            map_key(KeyCode::Char('g'), KeyModifiers::NONE, true, false, false),
             Action::RemedyChar('g')
         );
     }
@@ -250,52 +295,52 @@ mod tests {
     #[test]
     fn plan_mode_maps_selection_and_edit_keys() {
         assert_eq!(
-            map_key(KeyCode::Char('j'), KeyModifiers::NONE, false, true),
+            map_key(KeyCode::Char('j'), KeyModifiers::NONE, false, true, false),
             Action::PlanSelectDown
         );
         assert_eq!(
-            map_key(KeyCode::Down, KeyModifiers::NONE, false, true),
+            map_key(KeyCode::Down, KeyModifiers::NONE, false, true, false),
             Action::PlanSelectDown
         );
         assert_eq!(
-            map_key(KeyCode::Char('k'), KeyModifiers::NONE, false, true),
+            map_key(KeyCode::Char('k'), KeyModifiers::NONE, false, true, false),
             Action::PlanSelectUp
         );
         assert_eq!(
-            map_key(KeyCode::Up, KeyModifiers::NONE, false, true),
+            map_key(KeyCode::Up, KeyModifiers::NONE, false, true, false),
             Action::PlanSelectUp
         );
         assert_eq!(
-            map_key(KeyCode::Char('e'), KeyModifiers::NONE, false, true),
+            map_key(KeyCode::Char('e'), KeyModifiers::NONE, false, true, false),
             Action::PlanEditBegin
         );
         assert_eq!(
-            map_key(KeyCode::Char('d'), KeyModifiers::NONE, false, true),
+            map_key(KeyCode::Char('d'), KeyModifiers::NONE, false, true, false),
             Action::PlanDeleteTask
         );
         assert_eq!(
-            map_key(KeyCode::Char('<'), KeyModifiers::NONE, false, true),
+            map_key(KeyCode::Char('<'), KeyModifiers::NONE, false, true, false),
             Action::PlanMoveUp
         );
         assert_eq!(
-            map_key(KeyCode::Char('>'), KeyModifiers::NONE, false, true),
+            map_key(KeyCode::Char('>'), KeyModifiers::NONE, false, true, false),
             Action::PlanMoveDown
         );
         assert_eq!(
-            map_key(KeyCode::Char('y'), KeyModifiers::NONE, false, true),
+            map_key(KeyCode::Char('y'), KeyModifiers::NONE, false, true, false),
             Action::Ready
         );
         assert_eq!(
-            map_key(KeyCode::Char('K'), KeyModifiers::NONE, false, true),
+            map_key(KeyCode::Char('K'), KeyModifiers::NONE, false, true, false),
             Action::AbandonBegin
         );
         assert_eq!(
-            map_key(KeyCode::Char('q'), KeyModifiers::NONE, false, true),
+            map_key(KeyCode::Char('q'), KeyModifiers::NONE, false, true, false),
             Action::Quit
         );
         // Unbound keys → None
         assert_eq!(
-            map_key(KeyCode::Char('g'), KeyModifiers::NONE, false, true),
+            map_key(KeyCode::Char('g'), KeyModifiers::NONE, false, true, false),
             Action::None
         );
     }
@@ -303,12 +348,12 @@ mod tests {
     #[test]
     fn plan_steer_begin_maps_r_in_plan_mode() {
         assert_eq!(
-            map_key(KeyCode::Char('r'), KeyModifiers::NONE, false, true),
+            map_key(KeyCode::Char('r'), KeyModifiers::NONE, false, true, false),
             Action::PlanSteerBegin
         );
         // r outside plan mode is NoGoBegin (unchanged)
         assert_eq!(
-            map_key(KeyCode::Char('r'), KeyModifiers::NONE, false, false),
+            map_key(KeyCode::Char('r'), KeyModifiers::NONE, false, false, false),
             Action::NoGoBegin
         );
     }
@@ -317,11 +362,11 @@ mod tests {
     fn composing_takes_priority_over_plan_mode() {
         // When both composing_remedy=true and plan_mode=true, text input wins.
         assert_eq!(
-            map_key(KeyCode::Char('j'), KeyModifiers::NONE, true, true),
+            map_key(KeyCode::Char('j'), KeyModifiers::NONE, true, true, false),
             Action::RemedyChar('j')
         );
         assert_eq!(
-            map_key(KeyCode::Char('e'), KeyModifiers::NONE, true, true),
+            map_key(KeyCode::Char('e'), KeyModifiers::NONE, true, true, false),
             Action::RemedyChar('e')
         );
     }

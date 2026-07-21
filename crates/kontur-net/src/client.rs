@@ -194,6 +194,14 @@ impl SessionClient {
         .await
     }
 
+    pub async fn answer(
+        &self,
+        question: usize,
+        choice: crate::protocol::WireChoice,
+    ) -> io::Result<()> {
+        self.send(ClientMsg::Answer { question, choice }).await
+    }
+
     pub async fn discuss(&self, gate_id: &kontur_core::GateId, text: &str) -> io::Result<()> {
         self.send(ClientMsg::Discuss {
             gate_id: gate_id.clone(),

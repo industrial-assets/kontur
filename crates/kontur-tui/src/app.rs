@@ -58,6 +58,7 @@ pub fn poll_action(
     timeout: Duration,
     composing_remedy: bool,
     plan_mode: bool,
+    clarify_mode: bool,
 ) -> io::Result<Option<Action>> {
     if event::poll(timeout)? {
         match event::read()? {
@@ -67,6 +68,7 @@ pub fn poll_action(
                     key.modifiers,
                     composing_remedy,
                     plan_mode,
+                    clarify_mode,
                 )));
             }
             // Bracketed paste: only meaningful while composing; inserted

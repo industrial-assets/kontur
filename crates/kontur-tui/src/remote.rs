@@ -41,6 +41,10 @@ enum ComposeTarget {
     Discuss {
         gate_id: String,
     },
+    /// Composing a custom answer to a clarification question.
+    ClarifyCustom {
+        question: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +170,27 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
                 tasks: tasks.clone(),
                 ready,
                 selected: plan_sel,
+            }
+        }
+        WirePhase::Clarify { questions } => {
+            let own_idx = state
+                .seats
+                .iter()
+                .position(|s| s.operator == own)
+                .unwrap_or(0);
+            ActiveRegion::Clarify {
+                questions: questions
+                    .iter()
+                    .map(|q| crate::view::ClarifyQ {
+                        prompt: q.prompt.clone(),
+                        options: q.options.clone(),
+                        allows_custom: q.allows_custom,
+                        picks: q.picks.clone(),
+                        resolved: q.resolved.clone(),
+                    })
+                    .collect(),
+                selected: plan_sel,
+                own: own_idx,
             }
         }
         WirePhase::Executing => {
@@ -335,6 +360,28 @@ pub fn attention_for(state: &WireState, own: OperatorId) -> Option<Attention> {
                     // Both keys present — resolution is imminent; no line needed.
                     None
                 }
+            }
+        }
+
+        WirePhase::Clarify { questions } => {
+            let own_idx = own_seat_idx?;
+            let owed = questions
+                .iter()
+                .any(|q| q.resolved.is_none() && q.picks[own_idx].is_none());
+            if owed {
+                Some(Attention {
+                    text:
+                        "▶ ACTION: the agent needs clarification — answer with [1-9] · [a] custom"
+                            .into(),
+                    loud: true,
+                })
+            } else if questions.iter().any(|q| q.resolved.is_none()) {
+                Some(Attention {
+                    text: format!("waiting on {} to answer", other_label(own_idx)),
+                    loud: false,
+                })
+            } else {
+                None
             }
         }
 
@@ -610,7 +657,13 @@ pub async fn run_remote(
 
         let composing = !matches!(compose, ComposeTarget::None);
         let in_plan_review = matches!(view.active, ActiveRegion::Plan { .. }) && !composing;
-        match poll_action(Duration::from_millis(200), composing, in_plan_review)? {
+        let in_clarify = matches!(view.active, ActiveRegion::Clarify { .. }) && !composing;
+        match poll_action(
+            Duration::from_millis(200),
+            composing,
+            in_plan_review,
+            in_clarify,
+        )? {
             None => {}
             Some(Action::Quit) => break,
 
@@ -734,6 +787,45 @@ pub async fn run_remote(
                     };
                     compose_buf.clear();
                     compose_cursor = 0;
+                }
+            }
+
+            // Clarify navigation + answering.
+            Some(Action::ClarifyNext) => {
+                if let ActiveRegion::Clarify { questions, .. } = &view.active {
+                    plan_sel = planedit::clamp_sel(plan_sel.saturating_add(1), questions.len());
+                }
+            }
+            Some(Action::ClarifyPrev) => {
+                plan_sel = plan_sel.saturating_sub(1);
+            }
+            Some(Action::ClarifyDigit(n)) => {
+                if let ActiveRegion::Clarify { questions, .. } = &view.active {
+                    if let Some(q) = questions.get(plan_sel) {
+                        let n = n as usize; // 1-based
+                        if n >= 1 && n <= q.options.len() {
+                            let _ = client
+                                .answer(plan_sel, kontur_net::WireChoice::Option(n - 1))
+                                .await;
+                        } else if q.allows_custom && n == q.options.len() + 1 {
+                            compose = ComposeTarget::ClarifyCustom { question: plan_sel };
+                            compose_buf.clear();
+                            compose_cursor = 0;
+                        }
+                    }
+                }
+            }
+            Some(Action::ClarifyCustomBegin) => {
+                if let ActiveRegion::Clarify { questions, .. } = &view.active {
+                    if questions
+                        .get(plan_sel)
+                        .map(|q| q.allows_custom)
+                        .unwrap_or(false)
+                    {
+                        compose = ComposeTarget::ClarifyCustom { question: plan_sel };
+                        compose_buf.clear();
+                        compose_cursor = 0;
+                    }
                 }
             }
 
@@ -978,6 +1070,21 @@ pub async fn run_remote(
                             compose_buf.clear();
                         }
                     }
+                    ComposeTarget::ClarifyCustom { question } => {
+                        if !compose_buf.trim().is_empty() {
+                            let _ = client
+                                .answer(
+                                    question,
+                                    kontur_net::WireChoice::Custom(compose_buf.clone()),
+                                )
+                                .await;
+                            compose = ComposeTarget::None;
+                            compose_buf.clear();
+                        } else {
+                            rejected_msg = Some("answer cannot be empty".into());
+                            rejected_ttl = 20;
+                        }
+                    }
                     ComposeTarget::Discuss { gate_id } => {
                         if !compose_buf.trim().is_empty() {
                             let gid = GateId(gate_id.clone());
@@ -1036,6 +1143,10 @@ fn compose_notice(compose: &ComposeTarget, buf: &str, warn: &str) -> Option<Stri
         )),
         ComposeTarget::Discuss { .. } => Some(format!(
             "note > {}  [↵] post · [esc] cancel{warn}",
+            compose::inline(buf)
+        )),
+        ComposeTarget::ClarifyCustom { .. } => Some(format!(
+            "your answer > {}  [↵] submit · [esc] cancel{warn}",
             compose::inline(buf)
         )),
         ComposeTarget::ConfirmAbandon => Some("abandon session? [y] confirm · [esc] cancel".into()),

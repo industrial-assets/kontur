@@ -156,6 +156,19 @@ Either seat drafts; the other reviews live and can suggest inline. This *is* the
 
 A reviewer's suggestion is a proposal the drafter accepts, which leaves a trace that the second seat actually engaged rather than passively watched.
 
+### 6.2b Clarify — the agent asks before it plans (21 Jul 2026)
+Before proposing a plan, the agent judges whether the dispatched instruction is
+genuinely ambiguous. If it is, it raises **clarification questions** rather than
+assuming: a `CLARIFY` surface shows each multiple-choice question with a final
+"provide your own answer" free-text option. **Both operators answer every
+question** (`[1-9]` to pick, `[a]` to type their own; `j`/`k` moves between
+questions), and each sees the other's pick live. If the two answers to a
+question differ, that question re-asks with exactly three options — *A's
+answer*, *B's answer*, or *accept both* — and both must converge (there is no
+third party; agreeing is theirs to do). The accepted answers return to the agent
+via the `ask_clarification` MCP response, and it then proposes its plan with the
+ambiguity removed. Clear instructions skip this phase entirely.
+
 ### 6.3 Plan review
 The agent analyses and returns a task list — a DAG of bounded, single-concern tasks (PRD FR-6). Both operators approve or edit before any code is written.
 

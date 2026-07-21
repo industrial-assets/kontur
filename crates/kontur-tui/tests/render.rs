@@ -617,3 +617,27 @@ fn gate_discuss_strip_renders_notes() {
     );
     assert!(s.contains("A: needs a test"), "note must render; got:\n{s}");
 }
+
+/// The Clarify surface renders each question, its options, the implicit custom
+/// option, and each seat's current pick.
+#[test]
+fn clarify_surface_renders_questions_and_picks() {
+    let view = base(ActiveRegion::Clarify {
+        questions: vec![kontur_tui::view::ClarifyQ {
+            prompt: "target database?".into(),
+            options: vec!["postgres".into(), "sqlite".into()],
+            allows_custom: true,
+            picks: [Some("postgres".into()), None],
+            resolved: None,
+        }],
+        selected: 0,
+        own: 0,
+    });
+    let s = draw(&view);
+    assert!(s.contains("CLARIFY"), "clarify title; got:\n{s}");
+    assert!(s.contains("Q1: target database?"), "prompt; got:\n{s}");
+    assert!(s.contains("1) postgres"));
+    assert!(s.contains("2) sqlite"));
+    assert!(s.contains("3) provide your own"));
+    assert!(s.contains("you: postgres · other: —"), "picks; got:\n{s}");
+}
