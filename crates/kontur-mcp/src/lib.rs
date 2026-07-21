@@ -12,7 +12,10 @@ pub mod workspace;
 
 pub use error::{GateHostError, WorkspaceError};
 pub use fs_workspace::FsWorkspace;
-pub use gatehost::{GateFinal, GateHost, GateProgress, GateView, HostEvent, PlanDecision};
+pub use gatehost::{
+    ClarifyDecision, ClarifyQuestion, GateFinal, GateHost, GateProgress, GateView, HostEvent,
+    PlanDecision,
+};
 pub use git_workspace::GitWorkspace;
 pub use provenance::build_provenance;
 pub use server::KonturServer;

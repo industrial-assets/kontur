@@ -276,3 +276,80 @@ async fn propose_plan_steered_returns_error_then_approve_succeeds() {
     let v: serde_json::Value = serde_json::from_str(&text2).expect("valid json");
     assert_eq!(v["approved"], serde_json::Value::Bool(true));
 }
+
+#[tokio::test]
+async fn ask_clarification_blocks_until_resolved() {
+    let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+    let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+    let ws = Arc::new(InMemoryWorkspace::new());
+    let ctx = SessionContext::new(
+        "clarify test",
+        op1,
+        "agent-02",
+        "claude",
+        "1.0",
+        vec![op1, op2],
+    );
+    let host = Arc::new(GateHost::new(ctx, ws));
+
+    let (server_io, client_io) = tokio::io::duplex(8192);
+    let server = KonturServer::new(host.clone());
+    tokio::spawn(async move {
+        if let Ok(running) = serve_server(server, server_io).await {
+            let _ = running.waiting().await;
+        }
+    });
+    let client = ().serve(client_io).await.expect("client handshake");
+
+    let args = serde_json::json!({
+        "questions": [
+            { "prompt": "target db?", "options": ["postgres", "sqlite"] }
+        ]
+    })
+    .as_object()
+    .cloned()
+    .unwrap();
+
+    let client2 = client.clone();
+    let ask = tokio::spawn(async move {
+        client2
+            .call_tool(CallToolRequestParams::new("ask_clarification").with_arguments(args))
+            .await
+    });
+
+    // Wait until the questions are stored (the tool called ask_clarification).
+    for _ in 0..2000 {
+        if host.asked_questions().await.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert!(
+        host.asked_questions().await.is_some(),
+        "questions must be stored"
+    );
+    assert!(
+        !ask.is_finished(),
+        "ask_clarification must still be blocking"
+    );
+
+    // Resolve — unblocks the tool with the answers.
+    host.resolve_clarification(vec![vec!["postgres".to_string()]])
+        .await;
+
+    let result = tokio::time::timeout(Duration::from_secs(5), ask)
+        .await
+        .expect("resolve must unblock within 5s")
+        .expect("task join")
+        .expect("ask_clarification tool call ok");
+    assert_eq!(result.is_error, Some(false));
+    let text = match &result.content[0] {
+        rmcp::model::ContentBlock::Text(t) => &t.text,
+        other => panic!("unexpected content: {other:?}"),
+    };
+    let v: serde_json::Value = serde_json::from_str(text).expect("valid json");
+    assert_eq!(
+        v["answers"][0][0],
+        serde_json::Value::String("postgres".into())
+    );
+}
