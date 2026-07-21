@@ -150,7 +150,7 @@ pub async fn run(demo: Demo) -> std::io::Result<()> {
             closed,
         )
         .await;
-        terminal.draw(|f| render(f, &view, 0, 0))?;
+        terminal.draw(|f| render(f, &view, 0, 0, 0))?;
         if closed {
             // Draw the final frame, then wait for a quit key.
             if let Some(Action::Quit) = poll_action(Duration::from_millis(200), false, false)? {

@@ -58,7 +58,7 @@ fn base(active: ActiveRegion) -> SessionView {
 
 fn draw(view: &SessionView) -> String {
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    terminal.draw(|f| render(f, view, 0, 0)).unwrap();
+    terminal.draw(|f| render(f, view, 0, 0, 0)).unwrap();
     buf_string(terminal.backend().buffer())
 }
 
@@ -314,7 +314,7 @@ fn gate_files_bar_shows_selection_marker() {
     };
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal
-        .draw(|f| render(f, &base(ActiveRegion::Gate(card)), 0, 1))
+        .draw(|f| render(f, &base(ActiveRegion::Gate(card)), 0, 1, 0))
         .unwrap();
     let s = buf_string(terminal.backend().buffer());
     assert!(
@@ -365,7 +365,7 @@ fn diff_pane_shows_only_selected_file_section() {
     };
     let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
     terminal
-        .draw(|f| render(f, &base(ActiveRegion::Gate(card)), 0, 1))
+        .draw(|f| render(f, &base(ActiveRegion::Gate(card)), 0, 1, 0))
         .unwrap();
     let s = buf_string(terminal.backend().buffer());
     assert!(
@@ -414,7 +414,7 @@ fn prompt_pane_renders_multiline_draft() {
         ready: [false, true],
     });
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    terminal.draw(|f| render(f, &view, 0, 0)).unwrap();
+    terminal.draw(|f| render(f, &view, 0, 0, 0)).unwrap();
     let s = buf_string(terminal.backend().buffer());
     assert!(s.contains(" fix the parser"), "got:\n{s}");
     assert!(
@@ -422,4 +422,41 @@ fn prompt_pane_renders_multiline_draft() {
         "second line must render on its own row; got:\n{s}"
     );
     assert!(s.contains("DISPATCH GATE"));
+}
+
+/// Scrolled-back log shows older entries and flags the offset in the title;
+/// at the tail it shows the newest and a plain LOG title.
+#[test]
+fn log_scrollback_shows_history_and_offset() {
+    let mut view = base(ActiveRegion::Idle);
+    view.log = (0..60)
+        .map(|i| kontur_tui::view::LogLine {
+            time: String::new(),
+            who: String::new(),
+            text: format!("entry-{i:02}"),
+        })
+        .collect();
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    terminal.draw(|f| render(f, &view, 0, 0, 0)).unwrap();
+    let tail = buf_string(terminal.backend().buffer());
+    assert!(
+        tail.contains("entry-59"),
+        "tail entry visible; got:\n{tail}"
+    );
+    assert!(!tail.contains("LOG ↑"), "no offset marker at the tail");
+
+    terminal.draw(|f| render(f, &view, 0, 0, 40)).unwrap();
+    let back = buf_string(terminal.backend().buffer());
+    assert!(
+        !back.contains("entry-59"),
+        "tail entry hidden when scrolled back"
+    );
+    assert!(
+        back.contains("entry-19"),
+        "older entry visible; got:\n{back}"
+    );
+    assert!(
+        back.contains("LOG ↑"),
+        "offset marker shown when scrolled back"
+    );
 }

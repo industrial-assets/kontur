@@ -52,6 +52,10 @@ pub enum Action {
     PlanMoveDown,
     /// Begin composing a plan steer (PlanReview phase only).
     PlanSteerBegin,
+    /// Scroll the activity log back one line (↑).
+    LogUp,
+    /// Scroll the activity log toward the tail one line (↓).
+    LogDown,
     None,
 }
 
@@ -109,8 +113,10 @@ pub fn map_key(
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('K') => Action::AbandonBegin,
-        KeyCode::Char('j') | KeyCode::Down => Action::ScrollDown,
-        KeyCode::Char('k') | KeyCode::Up => Action::ScrollUp,
+        KeyCode::Char('j') => Action::ScrollDown,
+        KeyCode::Char('k') => Action::ScrollUp,
+        KeyCode::Up => Action::LogUp,
+        KeyCode::Down => Action::LogDown,
         KeyCode::PageDown => Action::PageDown,
         KeyCode::PageUp => Action::PageUp,
         _ => Action::None,
@@ -176,13 +182,15 @@ mod tests {
 
     #[test]
     fn scroll_keys_always_active() {
+        // Vim j/k drive the diff; arrows drive the log scrollback — the two
+        // scroll surfaces are split across the two key families.
         assert_eq!(
             map_key(KeyCode::Char('j'), KeyModifiers::NONE, false, false),
             Action::ScrollDown
         );
         assert_eq!(
             map_key(KeyCode::Down, KeyModifiers::NONE, false, false),
-            Action::ScrollDown
+            Action::LogDown
         );
         assert_eq!(
             map_key(KeyCode::Char('k'), KeyModifiers::NONE, false, false),
@@ -190,7 +198,7 @@ mod tests {
         );
         assert_eq!(
             map_key(KeyCode::Up, KeyModifiers::NONE, false, false),
-            Action::ScrollUp
+            Action::LogUp
         );
         assert_eq!(
             map_key(KeyCode::PageDown, KeyModifiers::NONE, false, false),
