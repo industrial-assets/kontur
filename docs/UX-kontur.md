@@ -41,9 +41,6 @@ Rotation happens per task or per session; the console always labels who currentl
 
 ## 4. Console anatomy
 
-> Note (21 Jul 2026): the `… tok` token counts in the mockups below are
-> illustrative — live per-agent token telemetry is recorded future work and is
-> not currently displayed (a placeholder zero was removed rather than shipped).
 
 
 Persistent chrome, top to bottom. Regions are fixed; only their contents change by phase.
@@ -54,7 +51,7 @@ Persistent chrome, top to bottom. Regions are fixed; only their contents change 
 ========================================================================
 [ КОНТУР-1  //  co-op session 4417  //  v0.4.2 ]      ← BANNER  (identity)
 ========================================================================
- LINK BOTH-STATIONS SYNC || 4-EYES ON || FLEET 3 (1 NEEDS YOU) || 6.4k tok
+ LINK BOTH-STATIONS SYNC || 4-EYES ON || FLEET 3 (1 NEEDS YOU)
 ------------------------------------------------------------------------   ← STATUS STRIP
  [ STATIONS ]   who is here, their role, what they're doing            ← PRESENCE
  [ FLEET ]      one bordered panel per agent                           ← WATCH-FLOOR
@@ -128,8 +125,8 @@ Both linked, no fleet, empty prompt buffer. The console invites an instruction.
  LINK BOTH-STATIONS SYNC || 4-EYES ON || FLEET 0 || IDLE
 ------------------------------------------------------------------------
  [ STATIONS ]
- ┌─ A · YOU ─────────────────────┐ ┌─ B · J. REED ────────────────────┐
- │ HOST · idle                   │ │ OPERATOR · idle                  │
+ ┌─ Operator A [Host] · YOU ─────┐ ┌─ Operator B ─────────────────────┐
+ │ idle                          │ │ idle                             │
  └───────────────────────────────┘ └──────────────────────────────────┘
  [ PROMPT ]  no task dispatched — draft an instruction to begin
  ┌────────────────────────────────────────────────────────────────────┐
@@ -189,17 +186,17 @@ The agent analyses and returns a task list — a DAG of bounded, single-concern 
 The default working view. Agents run through tasks sequentially; the fleet is calm except where a human is needed.
 
 ```
- LINK BOTH-STATIONS SYNC || 4-EYES ON || FLEET 3 (1 NEEDS YOU) || 6.4k tok
+ LINK BOTH-STATIONS SYNC || 4-EYES ON || FLEET 3 (1 NEEDS YOU)
 ------------------------------------------------------------------------
  [ STATIONS ]
- ┌─ A · YOU ─────────────────────┐ ┌─ B · J. REED ────────────────────┐
- │ HOST · watching               │ │ OPERATOR · reviewing gate-03     │
+ ┌─ Operator A [Host] · YOU ─────┐ ┌─ Operator B ─────────────────────┐
+ │ watching                      │ │ reviewing gate-03                │
  └───────────────────────────────┘ └──────────────────────────────────┘
  [ FLEET ]
  ┌─ AGENT-01 ────────────────────┐ ┌─ AGENT-02 ───┐ ┌─ AGENT-03 ──────┐
- │ analysing parser.py · 3.1k tok│ │ editing auth │ │ ▶ NEEDS SIGN-OFF│
- └───────────────────────────────┘ │ 1.2k tok     │ │ +47 -12 tests ok│
-                                    └──────────────┘ └─────────────────┘
+ │ analysing parser.py           │ │ editing auth │ │ ▶ NEEDS SIGN-OFF│
+ └───────────────────────────────┘ └──────────────┘ │ +47 -12 tests ok│
+                                                     └─────────────────┘
  [ LOG ]
  12:10:15 agent-01  patch → parser.py L45-52
  12:10:22 j.reed    claimed gate-03 · key sealed

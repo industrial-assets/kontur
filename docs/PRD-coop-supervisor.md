@@ -207,7 +207,7 @@ The dual-hold *is* the internal machinery of the AWAITING_REVIEW lifecycle state
 
 **Concurrency & availability.** Verdict acceptance on a hold is atomic (single-writer / optimistic locking), so two operators acting at once can't double-count and one operator can't cast both verdicts; claiming (FR-3) reduces contention upstream. Because two *distinct* sign-offs are structurally required, a hold cannot clear with only one operator present. The **availability policy is park, always** — a stalled gate waits for its second key indefinitely and never degrades to one. There is deliberately **no third signatory**: if the two operators cannot agree, that is theirs to resolve (discuss, then one casts a no-go with a remedy), not something the system routes around. *(decided 21 Jul 2026; the earlier "escalate to a third after a timeout" option is dropped.)*
 
-**How it layers on MCP (summary).** MCP contributes the pause/resume primitive, the non-blocking `audit` record for hand-edits, and elicitation for rendering each operator's review form. Everything four-eyes-specific — the N=2 hold, distinct-key eligibility, blind sealing, no-bare-veto, signing and chaining — lives in the supervisor host. That is the part you build, and the part nobody else has.
+**How it layers on MCP (summary).** MCP contributes the pause/resume primitive, the non-blocking `audit` record for hand-edits, and elicitation for rendering each operator's review form. Everything four-eyes-specific — the N=2 hold, distinct-key eligibility, blind sealing, no-bare-veto, signing and chaining — lives in the supervisor host. That is the part you build.
 
 ### 10.2 UX / design language
 

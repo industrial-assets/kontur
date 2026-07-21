@@ -123,8 +123,11 @@ truncated, a second `[g]` is required to acknowledge before casting. The
 review depth is recorded truthfully in the signed verdict. Enforcement is
 permission-level — native mutation tools are denied via CC's
 `--allowedTools`/`--disallowedTools` flags, not an OS-level sandbox. The
-operator wire is TLS-encrypted, cert pinned via the invite code. Either seat can
-abandon a runaway session (`[k]`): nothing merges, the agent is stopped, and the
+operator wire is TLS-encrypted, cert pinned via the invite code. An application
+keepalive parks gates if a seat's link goes silent (and the other console shows a
+loud HOST LOST banner) rather than mistaking a dropped operator for a present one.
+Either seat can abandon a runaway session (`[k]`): nothing merges, the agent is
+stopped, and the
 audit chain keeps every resolved gate.
 
 ## Connectivity
@@ -153,4 +156,4 @@ there is no `nc` or other external-tool dependency on any platform.
 
 ## Built on
 
-MCP as the action/enforcement plane (consequential actions routed through hosted MCP servers and gated for approval), with Claude Code as the first agent backend. The two-signatory sign-off is layered over MCP's single-approver gate — the part nobody else has built.
+MCP as the action/enforcement plane (consequential actions routed through hosted MCP servers and gated for approval), with Claude Code as the first agent backend. The two-signatory sign-off is layered over MCP's single-approver gate.
