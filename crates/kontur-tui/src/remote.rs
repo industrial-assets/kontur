@@ -528,48 +528,20 @@ pub async fn run_remote(
         if rejected_ttl > 0 {
             view.notice = rejected_msg.clone();
         }
-        // ConfirmAbandon state: surface the confirm prompt via notice while
-        // composing (ttl may not be set yet if the state was just entered).
-        if matches!(compose, ComposeTarget::ConfirmAbandon) && view.notice.is_none() {
-            view.notice = Some("abandon session? [y] confirm · [esc] cancel".into());
-        }
-        // Prompt compose: show draft in the notice row (consistent with remedy
-        // compose). Keep any active rejection visible alongside the draft —
-        // otherwise "prompt cannot be empty" would be clobbered on the next
-        // frame and the operator would get silent refusals.
-        if matches!(compose, ComposeTarget::Prompt) {
-            let warn = if rejected_ttl > 0 {
-                rejected_msg
-                    .as_deref()
-                    .map(|m| format!(" · {m}"))
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
-            view.notice = Some(format!(
-                "prompt > {compose_buf}  [↵] submit · [esc] cancel{warn}"
-            ));
-        }
-        // Plan task edit compose: show the edit buffer in the notice row.
-        if let ComposeTarget::PlanEdit { idx } = &compose {
-            view.notice = Some(format!(
-                "edit t{} > {compose_buf}  [↵] submit · [esc] cancel",
-                idx + 1
-            ));
-        }
-        // Plan steer compose: show the steer buffer in the notice row.
-        if matches!(compose, ComposeTarget::PlanSteer) {
-            let warn = if rejected_ttl > 0 {
-                rejected_msg
-                    .as_deref()
-                    .map(|m| format!(" · {m}"))
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
-            view.notice = Some(format!(
-                "steer > {compose_buf}  [↵] send · [esc] cancel{warn}"
-            ));
+        // Compose display: every compose mode renders its buffer on the
+        // notice row (exhaustive match — a mode without a display is a
+        // compile error, not an invisible input box). Any active rejection
+        // stays visible alongside the draft so refusals are never silent.
+        let warn = if rejected_ttl > 0 {
+            rejected_msg
+                .as_deref()
+                .map(|m| format!(" · {m}"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        if let Some(text) = compose_notice(&compose, &compose_buf, &warn) {
+            view.notice = Some(text);
         }
 
         // When a gate is pending with multiple files, show file-cycle hint in notice.
@@ -911,6 +883,25 @@ pub async fn run_remote(
 // ---------------------------------------------------------------------------
 // Helper: count diff lines for scroll clamping
 // ---------------------------------------------------------------------------
+
+/// The notice-row text for an in-progress compose, if any. Exhaustive over
+/// `ComposeTarget` so every compose mode has a visible input line; `warn`
+/// carries any active rejection to keep refusals visible while typing.
+fn compose_notice(compose: &ComposeTarget, buf: &str, warn: &str) -> Option<String> {
+    match compose {
+        ComposeTarget::None => None,
+        ComposeTarget::Prompt => Some(format!("prompt > {buf}  [↵] submit · [esc] cancel{warn}")),
+        ComposeTarget::Remedy => Some(format!(
+            "no-go steer > {buf}  [↵] cast no-go · [esc] cancel{warn}"
+        )),
+        ComposeTarget::PlanEdit { idx } => Some(format!(
+            "edit t{} > {buf}  [↵] submit · [esc] cancel",
+            idx + 1
+        )),
+        ComposeTarget::PlanSteer => Some(format!("steer > {buf}  [↵] send · [esc] cancel{warn}")),
+        ComposeTarget::ConfirmAbandon => Some("abandon session? [y] confirm · [esc] cancel".into()),
+    }
+}
 
 fn diff_line_count(active: &ActiveRegion, selected_file: usize) -> u16 {
     if let ActiveRegion::Gate(card) = active {
@@ -1445,5 +1436,38 @@ mod tests {
             abandoned: false,
         });
         assert!(super::attention_for(&state, op(1)).is_none());
+    }
+
+    // ---- compose_notice: every compose mode has a visible input line ----
+
+    #[test]
+    fn every_compose_mode_renders_a_notice() {
+        let modes: Vec<ComposeTarget> = vec![
+            ComposeTarget::Prompt,
+            ComposeTarget::Remedy,
+            ComposeTarget::PlanEdit { idx: 0 },
+            ComposeTarget::PlanSteer,
+            ComposeTarget::ConfirmAbandon,
+        ];
+        for mode in &modes {
+            assert!(
+                compose_notice(mode, "draft", "").is_some(),
+                "compose mode without a visible input line"
+            );
+        }
+        assert!(compose_notice(&ComposeTarget::None, "", "").is_none());
+    }
+
+    #[test]
+    fn remedy_compose_shows_buffer_and_warning() {
+        let n = compose_notice(
+            &ComposeTarget::Remedy,
+            "add a test",
+            " · steer cannot be empty",
+        )
+        .unwrap();
+        assert!(n.contains("no-go steer > add a test"));
+        assert!(n.contains("steer cannot be empty"));
+        assert!(n.contains("[esc] cancel"));
     }
 }
