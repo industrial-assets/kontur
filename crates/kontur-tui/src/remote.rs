@@ -211,6 +211,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
         notice: None,
         attention: None,
         instruction,
+        show_help: false,
     }
 }
 
@@ -495,6 +496,7 @@ pub async fn run_remote(
     let mut prompt_before = String::new();
     let mut diff_scroll: u16 = 0;
     let mut log_scroll: usize = 0;
+    let mut show_help = false;
     let mut selected_file: usize = 0;
     let mut last_gate_id: Option<String> = None;
     let mut rejected_msg: Option<String> = None;
@@ -524,6 +526,7 @@ pub async fn run_remote(
         }
         let mut view = wire_to_view(&state, own, plan_sel);
         view.attention = attention_for(&state, own);
+        view.show_help = show_help;
         // The invite is decision-relevant only while the stations are not both
         // linked; the moment they are, it disappears (calm default).
         if !view.status.linked {
@@ -588,6 +591,10 @@ pub async fn run_remote(
             Some(Action::Quit) => break,
 
             // Ready signal (dispatch / plan approval).
+            Some(Action::Help) => {
+                show_help = !show_help;
+            }
+
             Some(Action::Ready) => {
                 let _ = client.ready().await;
             }

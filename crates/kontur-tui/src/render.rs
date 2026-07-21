@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::diffview::styled_diff_lines;
@@ -45,6 +45,91 @@ pub fn render(
     stations(frame, rows[4], view);
     panes(frame, rows[5], view, diff_scroll, selected_file, log_scroll);
     command(frame, rows[6], view);
+
+    // Help overlay sits above everything else.
+    if view.show_help {
+        help_overlay(frame, view);
+    }
+}
+
+/// The keymap lines for the current phase, plus the global keys. Pure; tested.
+pub fn help_lines(active: &ActiveRegion, host_unlinked: bool) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    match active {
+        ActiveRegion::Prompt { .. } => {
+            out.push("PROMPT".into());
+            out.push("  p    edit the instruction".into());
+            out.push("  y    mark ready to dispatch (needs both)".into());
+        }
+        ActiveRegion::Plan { .. } => {
+            out.push("PLAN REVIEW".into());
+            out.push("  j/k  select task".into());
+            out.push("  e    edit task     d   delete task".into());
+            out.push("  < >  reorder task".into());
+            out.push("  r    steer a replan (prompt the agent)".into());
+            out.push("  y    approve the plan (needs both)".into());
+        }
+        ActiveRegion::Gate(_) => {
+            out.push("MERGE GATE".into());
+            out.push("  g    go            r   no-go + steer".into());
+            out.push("  e    hand-edit a file".into());
+            out.push("  j/k  scroll diff   tab cycle file".into());
+        }
+        _ => {}
+    }
+    // When composing (any pane), the editor keys apply.
+    out.push("COMPOSE (while typing)".into());
+    out.push("  ↵    submit        esc cancel".into());
+    out.push("  alt+↵ newline      ←/→/home/end move cursor".into());
+    out.push("GLOBAL".into());
+    out.push("  ↑/↓  scroll log    K   abandon session".into());
+    if host_unlinked {
+        out.push("  l    invite: LAN / WAN".into());
+    }
+    out.push("  ?    close help    q   quit".into());
+    out
+}
+
+fn help_overlay(frame: &mut Frame, view: &SessionView) {
+    let host_unlinked = view.invite.is_some();
+    let lines = help_lines(&view.active, host_unlinked);
+    let width = lines
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(20)
+        .clamp(24, 60) as u16
+        + 4;
+    let height = lines.len() as u16 + 2;
+    let area = centre(frame.area(), width, height);
+    let body: Vec<Line> = lines
+        .into_iter()
+        .map(|l| {
+            // Section headers (no leading space) are bold; key rows are calm.
+            if l.starts_with(' ') {
+                Line::from(l)
+            } else {
+                Line::from(Span::styled(
+                    l,
+                    Style::default().add_modifier(Modifier::BOLD),
+                ))
+            }
+        })
+        .collect();
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(body).block(Block::bordered().title("KEYS  [?] close")),
+        area,
+    );
+}
+
+/// Centre a `w`×`h` rect in `area` (clamped to it).
+fn centre(area: Rect, w: u16, h: u16) -> Rect {
+    let w = w.min(area.width);
+    let h = h.min(area.height);
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    Rect::new(x, y, w, h)
 }
 
 fn attention_line(frame: &mut Frame, area: Rect, att: &Attention) {
@@ -559,6 +644,7 @@ mod tests {
             notice: None,
             attention: None,
             instruction: None,
+            show_help: false,
         }
     }
 
@@ -573,6 +659,43 @@ mod tests {
         assert_eq!(log_window(3, 10, 0), 0..3);
         assert_eq!(log_window(3, 10, 5), 0..3);
         assert_eq!(log_window(0, 5, 0), 0..0);
+    }
+
+    #[test]
+    fn help_lines_are_phase_aware() {
+        let plan = help_lines(
+            &ActiveRegion::Plan {
+                tasks: vec![],
+                ready: [false, false],
+                selected: 0,
+            },
+            false,
+        );
+        assert!(plan.iter().any(|l| l.contains("approve the plan")));
+        assert!(plan.iter().any(|l| l.contains("steer a replan")));
+        assert!(!plan.iter().any(|l| l.contains("hand-edit")));
+
+        let prompt = help_lines(
+            &ActiveRegion::Prompt {
+                prompt: String::new(),
+                ready: [false, false],
+            },
+            false,
+        );
+        assert!(prompt.iter().any(|l| l.contains("edit the instruction")));
+
+        // Global keys and the close hint are always present.
+        for lines in [&plan, &prompt] {
+            assert!(lines.iter().any(|l| l.contains("scroll log")));
+            assert!(lines.iter().any(|l| l.contains("close help")));
+        }
+        // The invite key only when the host is still unlinked.
+        assert!(help_lines(&ActiveRegion::Idle, true)
+            .iter()
+            .any(|l| l.contains("invite")));
+        assert!(!help_lines(&ActiveRegion::Idle, false)
+            .iter()
+            .any(|l| l.contains("invite")));
     }
 
     fn draw(view: &SessionView) -> String {

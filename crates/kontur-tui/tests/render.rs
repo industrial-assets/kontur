@@ -54,6 +54,7 @@ fn base(active: ActiveRegion) -> SessionView {
         notice: None,
         attention: None,
         instruction: None,
+        show_help: false,
     }
 }
 
@@ -484,5 +485,27 @@ fn task_bar_absent_without_instruction() {
     assert!(
         !s.contains("TASK"),
         "no TASK line without an instruction; got:\n{s}"
+    );
+}
+
+/// The help overlay renders above the console when show_help is set, with the
+/// KEYS title and the phase-relevant keys; it is absent otherwise.
+#[test]
+fn help_overlay_renders_when_toggled() {
+    let mut view = base(ActiveRegion::Prompt {
+        prompt: "x".into(),
+        ready: [false, false],
+    });
+    assert!(!draw(&view).contains("KEYS"), "no overlay by default");
+    view.show_help = true;
+    let s = draw(&view);
+    assert!(s.contains("KEYS"), "overlay title must render; got:\n{s}");
+    assert!(
+        s.contains("close help"),
+        "close hint must render; got:\n{s}"
+    );
+    assert!(
+        s.contains("edit the instruction"),
+        "prompt-phase key must render; got:\n{s}"
     );
 }

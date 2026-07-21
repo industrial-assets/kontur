@@ -165,6 +165,8 @@ pub struct SessionView {
     /// plan review and execution so the ask stays visible after dispatch.
     /// None while composing (the PROMPT pane shows the draft) and at close.
     pub instruction: Option<String>,
+    /// When true, a centred keymap overlay is drawn above the console.
+    pub show_help: bool,
 }
 
 #[cfg(test)]
