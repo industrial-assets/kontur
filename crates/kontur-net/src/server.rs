@@ -89,6 +89,7 @@ struct SeatState {
     role: WireRole,
     linked: bool,
     ready: bool,
+    afk: bool,
 }
 
 struct Net {
@@ -141,6 +142,7 @@ impl SessionServer {
                 role: WireRole::Host,
                 linked: false,
                 ready: false,
+                afk: false,
             },
             SeatState {
                 label: cfg.seats[1].0.clone(),
@@ -148,6 +150,7 @@ impl SessionServer {
                 role: WireRole::Operator,
                 linked: false,
                 ready: false,
+                afk: false,
             },
         ];
 
@@ -160,6 +163,7 @@ impl SessionServer {
                     role: WireRole::Host,
                     linked: false,
                     ready: false,
+                    afk: false,
                 },
                 WireSeat {
                     label: cfg.seats[1].0.clone(),
@@ -167,6 +171,7 @@ impl SessionServer {
                     role: WireRole::Operator,
                     linked: false,
                     ready: false,
+                    afk: false,
                 },
             ],
             fleet: vec![],
@@ -611,6 +616,9 @@ async fn reader_task<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(
     {
         let mut net = server.inner.net.lock().await;
         net.seats[seat_idx].linked = false;
+        // A dropped seat is not "AFK" — that's a distinct, present state; clear
+        // it so a reconnecting operator starts attending.
+        net.seats[seat_idx].afk = false;
         // Drop this seat's claim so a stale "reviewing" marker doesn't linger.
         if matches!(&net.claim, Some((_, idx)) if *idx == seat_idx) {
             net.claim = None;
@@ -981,6 +989,19 @@ async fn handle_client_msg(
                 server.refresh_locked().await;
             }
         }
+        ClientMsg::SetAfk { afk } => {
+            let mut net = server.inner.net.lock().await;
+            if net.seats[seat_idx].afk != afk {
+                net.seats[seat_idx].afk = afk;
+                let label = net.seats[seat_idx].label.clone();
+                push_log(
+                    &mut net,
+                    &format!("{label} is {}", if afk { "AFK" } else { "back" }),
+                );
+                drop(net);
+                server.refresh_locked().await;
+            }
+        }
         ClientMsg::Ping => {
             // Liveness only: arrival already reset the read timeout; reply so a
             // client can detect a dead host in turn. Never touches gate state.
@@ -1293,6 +1314,7 @@ impl SessionServer {
                 role: s.role,
                 linked: s.linked,
                 ready: s.ready,
+                afk: s.afk,
             })
             .collect();
 
@@ -3278,6 +3300,72 @@ mod tests {
         )
         .await
         .expect("back to PlanReview after clarification");
+    }
+
+    /// A seat's AFK flag toggles on the wire and never affects readiness or
+    /// any gate; a disconnect clears it (a returning operator starts present).
+    #[tokio::test]
+    async fn afk_toggles_on_wire_and_clears_on_disconnect() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let (server, _ws) = make_server(op1, op2, vec!["t1".into()]);
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        // Keep B's read half so we can drop BOTH halves to force a disconnect.
+        let cb_buf = BufReader::new(cb_read);
+
+        for (w, seat, op) in [(&mut ca_write, "A", op1), (&mut cb_write, "B", op2)] {
+            write_json(
+                w,
+                &ClientMsg::Hello {
+                    seat: seat.into(),
+                    operator: op,
+                    protocol: crate::protocol::PROTOCOL_VERSION,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.seats.iter().all(|seat| seat.linked)),
+        )
+        .await
+        .expect("both linked");
+
+        // B goes AFK → wire shows B afk, and B's readiness is untouched.
+        write_json(&mut cb_write, &ClientMsg::SetAfk { afk: true })
+            .await
+            .unwrap();
+        let afk = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.seats.get(1).map(|x| x.afk).unwrap_or(false)
+            }),
+        )
+        .await
+        .expect("B afk visible");
+        assert!(!afk.seats[1].ready, "AFK must not touch readiness");
+        assert!(!afk.seats[0].afk, "A is not AFK");
+
+        // B drops both halves → server sees EOF → afk clears (present-on-return).
+        drop(cb_buf);
+        drop(cb_write);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.seats.get(1).map(|x| !x.linked && !x.afk).unwrap_or(false)
+            }),
+        )
+        .await
+        .expect("afk cleared on disconnect");
     }
 
     /// A discuss note appends to the gate's thread and is projected onto the

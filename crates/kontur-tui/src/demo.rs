@@ -57,12 +57,14 @@ impl Demo {
                 role: Role::Host,
                 activity: "reviewing".into(),
                 operator: self.signer_a.operator_id(),
+                afk: false,
             },
             Station {
                 label: "OPERATOR".into(),
                 role: Role::Operator,
                 activity: "reviewing".into(),
                 operator: self.signer_b.operator_id(),
+                afk: false,
             },
         ]
     }

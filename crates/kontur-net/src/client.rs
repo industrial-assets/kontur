@@ -194,6 +194,10 @@ impl SessionClient {
         .await
     }
 
+    pub async fn set_afk(&self, afk: bool) -> io::Result<()> {
+        self.send(ClientMsg::SetAfk { afk }).await
+    }
+
     pub async fn answer(
         &self,
         question: usize,

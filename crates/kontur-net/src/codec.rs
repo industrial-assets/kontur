@@ -133,6 +133,7 @@ mod tests {
                 role: WireRole::Host,
                 linked: true,
                 ready: false,
+                afk: false,
             }],
             fleet: vec![],
             log: vec!["started".to_string()],

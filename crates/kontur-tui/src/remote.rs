@@ -71,6 +71,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
                 "dropped".into()
             },
             operator: ws.operator,
+            afk: ws.afk,
         };
         // Guarantee exactly 2 stations; pad with a placeholder if needed.
         let a = iter.next();
@@ -84,6 +85,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
                     role: Role::Operator,
                     activity: "absent".into(),
                     operator: OperatorId([0; 32]),
+                    afk: false,
                 },
             ],
             _ => [
@@ -92,12 +94,14 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
                     role: Role::Host,
                     activity: "absent".into(),
                     operator: OperatorId([0; 32]),
+                    afk: false,
                 },
                 Station {
                     label: "B".into(),
                     role: Role::Operator,
                     activity: "absent".into(),
                     operator: OperatorId([0; 32]),
+                    afk: false,
                 },
             ],
         }
@@ -264,7 +268,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
 /// - Executing no gate             → None
 /// - Closed / AwaitOperators       → None
 pub fn attention_for(state: &WireState, own: OperatorId) -> Option<Attention> {
-    // Helpers: seat index for `own`, label of the other seat.
+    // Helpers: seat index for `own`, label of the other seat (AFK-annotated).
     let own_seat_idx = state.seats.iter().position(|s| s.operator == own);
     let other_label = |own_idx: usize| -> String {
         state
@@ -272,9 +276,26 @@ pub fn attention_for(state: &WireState, own: OperatorId) -> Option<Attention> {
             .iter()
             .enumerate()
             .find(|(i, _)| *i != own_idx)
-            .map(|(_, s)| s.label.clone())
+            .map(|(_, s)| {
+                if s.afk {
+                    format!("{} (AFK)", s.label)
+                } else {
+                    s.label.clone()
+                }
+            })
             .unwrap_or_else(|| "other".into())
     };
+
+    // If THIS seat is AFK, the console is unattended — show a single calm line
+    // so resuming is one keypress; nothing else needs shouting at an empty chair.
+    if let Some(idx) = own_seat_idx {
+        if state.seats.get(idx).map(|s| s.afk).unwrap_or(false) {
+            return Some(Attention {
+                text: "you are AFK — press [z] to resume".into(),
+                loud: false,
+            });
+        }
+    }
 
     match &state.phase {
         WirePhase::DispatchReady { .. } => {
@@ -945,6 +966,17 @@ pub async fn run_remote(
                 log_scroll = log_scroll.saturating_sub(1);
             }
 
+            // Toggle this seat's AFK presence.
+            Some(Action::ToggleAfk) => {
+                let own_afk = state
+                    .seats
+                    .iter()
+                    .find(|s| s.operator == own)
+                    .map(|s| s.afk)
+                    .unwrap_or(false);
+                let _ = client.set_afk(!own_afk).await;
+            }
+
             Some(Action::ToggleLink) => {
                 link_mode = match link_mode {
                     LinkMode::Lan => LinkMode::Wan,
@@ -1276,6 +1308,7 @@ mod tests {
                     role: WireRole::Host,
                     linked: true,
                     ready: false,
+                    afk: false,
                 },
                 WireSeat {
                     label: "B".into(),
@@ -1283,6 +1316,7 @@ mod tests {
                     role: WireRole::Operator,
                     linked: true,
                     ready: false,
+                    afk: false,
                 },
             ],
             fleet: vec![],
@@ -1339,6 +1373,38 @@ mod tests {
         assert!(
             wire_to_view(&dispatch, own, 0).instruction.is_none(),
             "no TASK line while composing at the dispatch gate"
+        );
+    }
+
+    // Own AFK → a single calm resume line, nothing loud.
+    #[test]
+    fn attention_own_afk_is_calm_resume_line() {
+        let own = op(1);
+        let mut state = base_state(WirePhase::DispatchReady {
+            prompt: "do it".into(),
+        });
+        state.seats[0].afk = true; // seat A is own (op(1))
+        let att = attention_for(&state, own).expect("afk line");
+        assert!(!att.loud, "AFK console must not be loud");
+        assert!(att.text.contains("AFK"));
+        assert!(att.text.contains("[z]"));
+    }
+
+    // Waiting on an AFK colleague annotates the label and stays calm.
+    #[test]
+    fn attention_other_afk_is_annotated() {
+        let own = op(1);
+        let mut state = base_state(WirePhase::DispatchReady {
+            prompt: "do it".into(),
+        });
+        state.seats[0].ready = true; // own ready
+        state.seats[1].afk = true; // other AFK, not ready
+        let att = attention_for(&state, own).expect("waiting line");
+        assert!(!att.loud);
+        assert!(
+            att.text.contains("(AFK)"),
+            "must annotate the AFK colleague; got: {}",
+            att.text
         );
     }
 

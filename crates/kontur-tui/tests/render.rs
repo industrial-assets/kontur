@@ -38,12 +38,14 @@ fn base(active: ActiveRegion) -> SessionView {
                 role: Role::Host,
                 activity: "watching".into(),
                 operator: OperatorId([1; 32]),
+                afk: false,
             },
             Station {
                 label: "B · J.REED".into(),
                 role: Role::Operator,
                 activity: "reviewing".into(),
                 operator: OperatorId([2; 32]),
+                afk: false,
             },
         ],
         fleet: vec![],
@@ -640,4 +642,13 @@ fn clarify_surface_renders_questions_and_picks() {
     assert!(s.contains("2) sqlite"));
     assert!(s.contains("3) provide your own"));
     assert!(s.contains("you: postgres · other: —"), "picks; got:\n{s}");
+}
+
+/// A station flagged AFK renders "AFK" instead of its activity.
+#[test]
+fn station_shows_afk() {
+    let mut view = base(ActiveRegion::Idle);
+    view.stations[1].afk = true;
+    let s = draw(&view);
+    assert!(s.contains("AFK"), "AFK badge must render; got:\n{s}");
 }

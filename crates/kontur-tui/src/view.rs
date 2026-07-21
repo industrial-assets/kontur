@@ -23,6 +23,7 @@ pub struct Station {
     pub role: Role,
     pub activity: String,
     pub operator: OperatorId,
+    pub afk: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

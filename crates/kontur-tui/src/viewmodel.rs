@@ -132,12 +132,14 @@ mod tests {
                 role: Role::Host,
                 activity: "watching".into(),
                 operator: a,
+                afk: false,
             },
             Station {
                 label: "B · J.REED".into(),
                 role: Role::Operator,
                 activity: "reviewing".into(),
                 operator: b,
+                afk: false,
             },
         ]
     }

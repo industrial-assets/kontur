@@ -28,6 +28,7 @@ Pair programming assumed a driver at the keyboard and a navigator watching the c
 - **Clarify first.** If the instruction is genuinely ambiguous, the agent asks the operators multiple-choice questions (each with a "provide your own answer" option) and waits — it never assumes. Both operators answer; if they disagree, the question re-asks as *[A's answer / B's answer / accept both]* until they converge.
 - **Plan next.** The agent proposes its task list of bounded, single-concern changes and is blocked until both seats approve it — the plan gate is enforced, not advisory. Either seat can select (`j`/`k`), edit (`e`), delete (`d`), or reorder (`<`/`>`) tasks; any edit resets both ready flags. The approved list is returned to the agent verbatim; steer-first approach preferred — `[r]` routes a revision prompt to the agent.
 - **One task at a time.** Agents work sequentially; each finished change parks at a gate.
+- **Step away safely.** Either seat can toggle AFK (`[z]`) when they walk off; the other keeps doing all single-operator work (review, draft, steer, claim, discuss) and the console shows "waiting on … (AFK)". AFK is presence only — nothing needing the away seat's second key merges without them.
 - **Two keys, independent.** On high-risk gates the first verdict is sealed until the second is cast — no anchoring, no rubber-stamp. A no-go must carry its fix. A hand-edit applies instantly for emergencies but still needs both keys before it merges.
 - **Merge with a trail.** The approved set lands as one reviewed commit carrying `Reviewed-by` trailers and an `Audit-chain:` trailer naming the chain head; the signed, hash-chained gate records are written to `.kontur/audit-<head>.json` in the repo at session close (merged or abandoned) and verify offline with `kontur audit <file>`.
 
@@ -80,7 +81,7 @@ kontur host --mem --prompt "initial text (editable in-console)"
 kontur join --addr host:7777 --seed 2
 ```
 
-**Console keys:** `?` help · `y` ready · `p` edit prompt · `j`/`k` scroll diff · `↑`/`↓` scroll log · `tab` select file · `c` claim gate · `d` discuss note · `g` go (2× if truncated) · `r` no-go+steer · `e` edit file · `l` invite LAN/WAN · `K` abandon (confirm) · `q` quit.  Press `?` any time for a phase-aware keymap.
+**Console keys:** `?` help · `y` ready · `p` edit prompt · `j`/`k` scroll diff · `↑`/`↓` scroll log · `tab` select file · `c` claim gate · `d` discuss note · `z` AFK (away) · `g` go (2× if truncated) · `r` no-go+steer · `e` edit file · `l` invite LAN/WAN · `K` abandon (confirm) · `q` quit.  Press `?` any time for a phase-aware keymap.
 
 Invite codes carry the secret the operator's key is derived from — send privately; operator-supplied keys with host-side approval are future work.
 

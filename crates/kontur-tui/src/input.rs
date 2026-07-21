@@ -54,6 +54,8 @@ pub enum Action {
     PlanSteerBegin,
     /// Toggle a soft presence claim on the active gate.
     ClaimGate,
+    /// Toggle this seat's AFK (away-from-keyboard) presence flag.
+    ToggleAfk,
     /// Move the highlighted clarification question.
     ClarifyNext,
     ClarifyPrev,
@@ -101,6 +103,7 @@ pub fn map_key(
             KeyCode::Char('k') | KeyCode::Up => Action::ClarifyPrev,
             KeyCode::Char('a') => Action::ClarifyCustomBegin,
             KeyCode::Char(c @ '1'..='9') => Action::ClarifyDigit(c as u8 - b'0'),
+            KeyCode::Char('z') => Action::ToggleAfk,
             KeyCode::Char('K') => Action::AbandonBegin,
             KeyCode::Char('q') => Action::Quit,
             KeyCode::Char('?') => Action::Help,
@@ -118,6 +121,7 @@ pub fn map_key(
             KeyCode::Char('<') => Action::PlanMoveUp,
             KeyCode::Char('>') => Action::PlanMoveDown,
             KeyCode::Char('y') => Action::Ready,
+            KeyCode::Char('z') => Action::ToggleAfk,
             KeyCode::Char('K') => Action::AbandonBegin,
             KeyCode::Char('q') => Action::Quit,
             _ => Action::None,
@@ -131,6 +135,7 @@ pub fn map_key(
         KeyCode::Char('d') => Action::Discuss,
         KeyCode::Char('c') => Action::ClaimGate,
         KeyCode::Char('l') => Action::ToggleLink,
+        KeyCode::Char('z') => Action::ToggleAfk,
         KeyCode::Tab => Action::CycleFile,
         KeyCode::Char('y') => Action::Ready,
         KeyCode::Char('p') => Action::PromptBegin,
@@ -179,6 +184,11 @@ mod tests {
         );
         assert_eq!(
             map_key(KeyCode::Char('z'), KeyModifiers::NONE, false, false, false),
+            Action::ToggleAfk
+        );
+        // An genuinely-unmapped key stays None.
+        assert_eq!(
+            map_key(KeyCode::Char('x'), KeyModifiers::NONE, false, false, false),
             Action::None
         );
     }

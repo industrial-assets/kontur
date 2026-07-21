@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Wire protocol version. Bump on any incompatible change to the message
 /// types below. A client that omits the field (pre-versioning build) is read
 /// as version 0, which mismatches any real version and is rejected cleanly.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Serde default for `Hello.protocol` — pre-versioning clients deserialize to 0.
 fn protocol_v0() -> u32 {
@@ -57,6 +57,11 @@ pub enum ClientMsg {
     Answer {
         question: usize,
         choice: WireChoice,
+    },
+    /// Toggle this seat's AFK (away-from-keyboard) presence flag. Presence
+    /// only — never affects verdict eligibility or any dual-consent step.
+    SetAfk {
+        afk: bool,
     },
     /// Application-level keepalive. Sent periodically by the client; the server
     /// treats its arrival as liveness and replies `Pong`. Never gated.
@@ -117,6 +122,9 @@ pub struct WireSeat {
     pub role: WireRole,
     pub linked: bool,
     pub ready: bool,
+    /// This seat has manually stepped away (AFK). Presence only — never
+    /// affects gate eligibility; gates needing this seat's key still park.
+    pub afk: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

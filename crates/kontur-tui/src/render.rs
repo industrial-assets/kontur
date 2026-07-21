@@ -106,6 +106,7 @@ pub fn help_lines(active: &ActiveRegion, host_unlinked: bool) -> Vec<String> {
     out.push("  ↵    submit        esc cancel".into());
     out.push("  alt+↵ newline      ←/→/home/end move cursor".into());
     out.push("GLOBAL".into());
+    out.push("  z    toggle AFK (away) · presence only, never merges alone".into());
     out.push("  ↑/↓  scroll log    K   abandon session".into());
     if host_unlinked {
         out.push("  l    invite: LAN / WAN".into());
@@ -225,8 +226,21 @@ fn stations(frame: &mut Frame, area: Rect, view: &SessionView) {
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
     for (i, st) in view.stations.iter().enumerate() {
         let block = Block::bordered().title(st.label.clone());
-        let body = format!("{} · {}", st.role.label(), st.activity);
-        frame.render_widget(Paragraph::new(body).block(block), cols[i]);
+        let body = if st.afk {
+            format!("{} · AFK", st.role.label())
+        } else {
+            format!("{} · {}", st.role.label(), st.activity)
+        };
+        let p = if st.afk {
+            Paragraph::new(Span::styled(
+                body,
+                Style::default().add_modifier(Modifier::DIM),
+            ))
+            .block(block)
+        } else {
+            Paragraph::new(body).block(block)
+        };
+        frame.render_widget(p, cols[i]);
     }
 }
 
@@ -734,12 +748,14 @@ mod tests {
                     role: Role::Host,
                     activity: "linked".into(),
                     operator: OperatorId([1; 32]),
+                    afk: false,
                 },
                 Station {
                     label: "B".into(),
                     role: Role::Operator,
                     activity: "linked".into(),
                     operator: OperatorId([2; 32]),
+                    afk: false,
                 },
             ],
             fleet: vec![],
