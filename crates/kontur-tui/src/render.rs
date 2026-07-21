@@ -290,6 +290,18 @@ fn render_diff_pane(
 
 fn render_verdict_bar(frame: &mut Frame, area: Rect, card: &crate::view::GateCard) {
     let mut lines: Vec<Line> = Vec::new();
+    // Command outcome first — a failed run is the loudest fact on the card.
+    if let Some((cmd, code)) = &card.last_cmd {
+        let short: String = cmd.chars().take(48).collect();
+        if *code == 0 {
+            lines.push(Line::from(format!("   last cmd: {short} · exit 0")));
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!("   last cmd: {short} · FAILED exit {code}"),
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+        }
+    }
     for key in &card.keys {
         let status = match key.status {
             KeyStatus::Awaiting => "□ awaiting verdict",
@@ -666,6 +678,7 @@ mod tests {
                 truncated: false,
             }],
             diff_truncated: false,
+            last_cmd: None,
         };
         let rendered = draw(&minimal_view(ActiveRegion::Gate(card)));
         // Left LOG title visible simultaneously with right DIFF title.
@@ -710,6 +723,7 @@ mod tests {
             escalation_required: false,
             file_diffs: vec![],
             diff_truncated: false,
+            last_cmd: None,
         };
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -743,6 +757,7 @@ mod tests {
                 truncated: true,
             }],
             diff_truncated: true,
+            last_cmd: None,
         };
         let rendered = draw(&minimal_view(ActiveRegion::Gate(card)));
         assert!(

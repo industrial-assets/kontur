@@ -32,6 +32,9 @@ pub enum HostEvent {
     Command {
         task: TaskId,
         command: String,
+        /// Exit code of the completed command — the event is emitted after
+        /// execution so reviewers see outcomes, not just invocations.
+        exit_code: i32,
     },
     GateOpened {
         gate_id: GateId,
@@ -284,6 +287,7 @@ impl GateHost {
         let _ = self.events.send(HostEvent::Command {
             task: task_id.clone(),
             command: command.to_owned(),
+            exit_code: out.exit_code,
         });
         Ok(out)
     }
@@ -877,6 +881,29 @@ mod tests {
             .await
             .unwrap();
         assert!(host.persist_audit().await.is_none());
+    }
+
+    /// run_command emits its event after execution, carrying the exit code.
+    #[tokio::test]
+    async fn command_event_carries_exit_code() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let context = ctx(vec![op1, op2]);
+        let host = GateHost::new(context, ws);
+        let mut events = host.subscribe_events();
+        host.run_command(&TaskId("t1".into()), "cargo test", ".")
+            .await
+            .unwrap();
+        match events.recv().await.unwrap() {
+            HostEvent::Command {
+                command, exit_code, ..
+            } => {
+                assert_eq!(command, "cargo test");
+                assert_eq!(exit_code, 0);
+            }
+            other => panic!("expected Command event, got {other:?}"),
+        }
     }
 
     fn go_verdict(seed: u8, gate_id: &GateId, dh: Hash) -> CastVerdict {

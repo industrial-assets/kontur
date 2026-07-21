@@ -364,6 +364,10 @@ fn wire_gate_to_card(wg: &WireGate, stations: &[Station; 2]) -> GateCard {
             })
             .collect(),
         diff_truncated: wg.diff_truncated,
+        last_cmd: wg
+            .last_cmd
+            .as_ref()
+            .map(|c| (c.command.clone(), c.exit_code)),
     }
 }
 
@@ -1056,6 +1060,7 @@ mod tests {
                 truncated: false,
             }],
             diff_truncated: false,
+            last_cmd: None,
         }
     }
 

@@ -128,6 +128,16 @@ pub struct WireGate {
     /// True when any file's section was capped. Operators who approve a
     /// truncated diff must explicitly acknowledge before their `go` is cast.
     pub diff_truncated: bool,
+    /// The task's most recent command and its exit code — the closest thing
+    /// to a test result the review surface can show truthfully.
+    pub last_cmd: Option<WireCmd>,
+}
+
+/// A completed command and its outcome.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct WireCmd {
+    pub command: String,
+    pub exit_code: i32,
 }
 
 /// One file's diff section at a gate.

@@ -11,8 +11,8 @@ use kontur_mcp::{GateHost, HostEvent};
 
 use crate::codec::{read_json, write_json};
 use crate::protocol::{
-    ClientMsg, ServerMsg, WireFileDiff, WireFleetCard, WireGate, WirePhase, WireRole, WireSeat,
-    WireState,
+    ClientMsg, ServerMsg, WireCmd, WireFileDiff, WireFleetCard, WireGate, WirePhase, WireRole,
+    WireSeat, WireState,
 };
 
 // ---------------------------------------------------------------------------
@@ -98,6 +98,8 @@ struct Net {
     /// SetPrompt during DispatchReady. After dispatch it is locked — the agent
     /// is running against the text that was actually consented to.
     prompt: String,
+    /// Most recent command + exit code per task id, for the gate card.
+    last_cmd: std::collections::HashMap<String, WireCmd>,
 }
 
 struct Inner {
@@ -172,6 +174,7 @@ impl SessionServer {
             started: Instant::now(),
             agent_plan: None,
             prompt: cfg.prompt.clone(),
+            last_cmd: std::collections::HashMap::new(),
         };
 
         let server = SessionServer {
@@ -225,7 +228,11 @@ impl SessionServer {
                 drop(net);
                 self.refresh_locked().await;
             }
-            HostEvent::Command { command, .. } => {
+            HostEvent::Command {
+                task,
+                command,
+                exit_code,
+            } => {
                 let truncated: String = command.chars().take(40).collect();
                 let card = WireFleetCard {
                     id: agent_id.to_owned(),
@@ -240,7 +247,23 @@ impl SessionServer {
                 } else {
                     net.fleet.push(card);
                 }
-                push_log(&mut net, &format!("{agent_id} ran {truncated}"));
+                net.last_cmd.insert(
+                    task.0.clone(),
+                    WireCmd {
+                        command: command.clone(),
+                        exit_code,
+                    },
+                );
+                // Outcome, not just invocation: a failed command is
+                // decision-relevant and must not read like a passing one.
+                if exit_code == 0 {
+                    push_log(&mut net, &format!("{agent_id} ran {truncated} · exit 0"));
+                } else {
+                    push_log(
+                        &mut net,
+                        &format!("{agent_id} ran {truncated} · FAILED exit {exit_code}"),
+                    );
+                }
                 drop(net);
                 self.refresh_locked().await;
             }
@@ -1130,6 +1153,7 @@ impl SessionServer {
 
         let fleet = net.fleet.clone();
         let log: Vec<String> = net.log.iter().cloned().collect();
+        let last_cmds = net.last_cmd.clone();
 
         drop(net);
 
@@ -1173,6 +1197,7 @@ impl SessionServer {
                     escalation_required: gv.escalation_required,
                     file_diffs,
                     diff_truncated,
+                    last_cmd: last_cmds.get(&gv.task_id.0).cloned(),
                 })
             } else {
                 None

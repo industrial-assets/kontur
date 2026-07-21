@@ -92,6 +92,7 @@ fn gate_shows_summary_and_sealed_key_never_value() {
         escalation_required: false,
         file_diffs: vec![],
         diff_truncated: false,
+        last_cmd: None,
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
     assert!(s.contains("auth/session.rs"));
@@ -221,6 +222,7 @@ fn gate_shows_diff_and_log_simultaneously() {
             truncated: false,
         }],
         diff_truncated: false,
+        last_cmd: None,
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
     // Both left-pane LOG and right-pane DIFF must be visible at once.
@@ -246,6 +248,7 @@ fn gate_truncated_flag_shows_truncated_in_diff_title() {
             truncated: true,
         }],
         diff_truncated: true,
+        last_cmd: None,
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
     assert!(
@@ -307,6 +310,7 @@ fn gate_files_bar_shows_selection_marker() {
         escalation_required: false,
         file_diffs: vec![],
         diff_truncated: false,
+        last_cmd: None,
     };
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal
@@ -357,6 +361,7 @@ fn diff_pane_shows_only_selected_file_section() {
             },
         ],
         diff_truncated: true,
+        last_cmd: None,
     };
     let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
     terminal
@@ -373,4 +378,29 @@ fn diff_pane_shows_only_selected_file_section() {
     );
     // Title names the selected file and carries its truncation marker.
     assert!(s.contains("package-lock.json (TRUNCATED)"), "got:\n{s}");
+}
+
+/// The gate card surfaces the task's last command outcome; a non-zero exit
+/// reads as FAILED (bold) so a red test run can't pass as a green one.
+#[test]
+fn gate_card_shows_failed_command_loudly() {
+    let mut card = GateCard {
+        gate_id: "gate-cmd".into(),
+        task: "t1".into(),
+        files: vec!["a.rs".into()],
+        loc: 3,
+        keys: vec![],
+        escalation_required: false,
+        file_diffs: vec![],
+        diff_truncated: false,
+        last_cmd: Some(("cargo test".into(), 101)),
+    };
+    let s = draw(&base(ActiveRegion::Gate(card.clone())));
+    assert!(
+        s.contains("last cmd: cargo test · FAILED exit 101"),
+        "got:\n{s}"
+    );
+    card.last_cmd = Some(("cargo test".into(), 0));
+    let s = draw(&base(ActiveRegion::Gate(card)));
+    assert!(s.contains("last cmd: cargo test · exit 0"), "got:\n{s}");
 }

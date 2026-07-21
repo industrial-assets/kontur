@@ -85,6 +85,8 @@ pub struct GateCard {
     /// True when any file's section was truncated at 64 KiB on the server. A
     /// `go` on a truncated diff requires a second `g` press to acknowledge.
     pub diff_truncated: bool,
+    /// The task's most recent command and exit code, shown on the verdict bar.
+    pub last_cmd: Option<(String, i32)>,
 }
 
 /// One file's diff section at a gate.
