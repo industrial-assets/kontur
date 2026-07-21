@@ -156,6 +156,10 @@ pub struct WireState {
     pub fleet: Vec<WireFleetCard>,
     pub log: Vec<String>,
     pub gate: Option<WireGate>,
+    /// The session instruction, carried in every phase so it stays visible
+    /// after dispatch (during plan review and execution), not only while it
+    /// is being composed at the dispatch gate.
+    pub prompt: String,
 }
 
 #[cfg(test)]

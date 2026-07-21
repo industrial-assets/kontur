@@ -73,6 +73,7 @@ pub async fn build_session_view(
         invite: None,
         notice: None,
         attention: None,
+        instruction: None,
     }
 }
 

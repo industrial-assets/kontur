@@ -122,6 +122,23 @@ fn stations(frame: &mut Frame, area: Rect, view: &SessionView) {
     }
 }
 
+/// The dispatched instruction, shown above the fleet so the ask stays visible
+/// through plan review and execution. First line only (wrapped); the full text
+/// lived at the dispatch gate and is locked now.
+fn task_bar(frame: &mut Frame, area: Rect, view: &SessionView) {
+    let text = view
+        .instruction
+        .as_deref()
+        .unwrap_or_default()
+        .replace('\n', " ");
+    frame.render_widget(
+        Paragraph::new(Line::from(format!(" {text}")))
+            .block(Block::bordered().title("TASK"))
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
 fn fleet(frame: &mut Frame, area: Rect, view: &SessionView) {
     let lines: Vec<Line> = view
         .fleet
@@ -203,10 +220,19 @@ fn panes(
     let cols =
         Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).split(area);
 
-    // Left pane: fleet (5 rows compact) + log (rest).
-    let left = Layout::vertical([Constraint::Length(5), Constraint::Min(3)]).split(cols[0]);
-    fleet(frame, left[0], view);
-    log(frame, left[1], view, log_scroll);
+    // Left pane: TASK line (when an instruction is live) + fleet + log.
+    let task_rows: u16 = if view.instruction.is_some() { 3 } else { 0 };
+    let left = Layout::vertical([
+        Constraint::Length(task_rows),
+        Constraint::Length(5),
+        Constraint::Min(3),
+    ])
+    .split(cols[0]);
+    if task_rows > 0 {
+        task_bar(frame, left[0], view);
+    }
+    fleet(frame, left[1], view);
+    log(frame, left[2], view, log_scroll);
 
     // Right pane: gate surface or phase card.
     match &view.active {
@@ -532,6 +558,7 @@ mod tests {
             invite: None,
             notice: None,
             attention: None,
+            instruction: None,
         }
     }
 

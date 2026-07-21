@@ -161,6 +161,10 @@ pub struct SessionView {
     /// loud=true → this seat must act NOW; loud=false → informational wait.
     /// None → no row (fleet/log already show activity; no line needed).
     pub attention: Option<Attention>,
+    /// The dispatched instruction, shown as a TASK line above the fleet during
+    /// plan review and execution so the ask stays visible after dispatch.
+    /// None while composing (the PROMPT pane shows the draft) and at close.
+    pub instruction: Option<String>,
 }
 
 #[cfg(test)]

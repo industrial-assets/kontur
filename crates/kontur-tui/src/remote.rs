@@ -187,6 +187,16 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
         }),
     };
 
+    // The instruction stays on screen after dispatch (plan review + execution);
+    // while composing at the dispatch gate the PROMPT pane shows the draft, so
+    // no separate TASK line is needed there.
+    let instruction = match &state.phase {
+        WirePhase::PlanReview { .. } | WirePhase::Executing if !state.prompt.is_empty() => {
+            Some(state.prompt.clone())
+        }
+        _ => None,
+    };
+
     SessionView {
         banner: Banner {
             session: "remote".into(),
@@ -200,6 +210,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
         invite: None,
         notice: None,
         attention: None,
+        instruction,
     }
 }
 
@@ -443,6 +454,7 @@ pub async fn run_remote(
         fleet: vec![],
         log: vec![],
         gate: None,
+        prompt: String::new(),
     };
     let (state_tx, state_rx) = watch::channel(initial);
 
@@ -1104,6 +1116,7 @@ mod tests {
             fleet: vec![],
             log: vec![],
             gate: None,
+            prompt: String::new(),
         }
     }
 
@@ -1124,6 +1137,35 @@ mod tests {
             diff_truncated: false,
             last_cmd: None,
         }
+    }
+
+    // The instruction is surfaced after dispatch (PlanReview + Executing) and
+    // hidden while composing at the dispatch gate.
+    #[test]
+    fn instruction_visible_after_dispatch_only() {
+        let own = op(1);
+        let mut planning = base_state(WirePhase::PlanReview { tasks: vec![] });
+        planning.prompt = "do the thing".into();
+        assert_eq!(
+            wire_to_view(&planning, own, 0).instruction.as_deref(),
+            Some("do the thing")
+        );
+
+        let mut executing = base_state(WirePhase::Executing);
+        executing.prompt = "do the thing".into();
+        assert_eq!(
+            wire_to_view(&executing, own, 0).instruction.as_deref(),
+            Some("do the thing")
+        );
+
+        let mut dispatch = base_state(WirePhase::DispatchReady {
+            prompt: "do the thing".into(),
+        });
+        dispatch.prompt = "do the thing".into();
+        assert!(
+            wire_to_view(&dispatch, own, 0).instruction.is_none(),
+            "no TASK line while composing at the dispatch gate"
+        );
     }
 
     // Sealed key stays Sealed in the view.

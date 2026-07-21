@@ -159,6 +159,7 @@ impl SessionServer {
             fleet: vec![],
             log: vec![],
             gate: None,
+            prompt: String::new(),
         };
 
         let (state_tx, _) = watch::channel(initial_state);
@@ -1154,6 +1155,7 @@ impl SessionServer {
         let fleet = net.fleet.clone();
         let log: Vec<String> = net.log.iter().cloned().collect();
         let last_cmds = net.last_cmd.clone();
+        let prompt_snapshot = net.prompt.clone();
 
         drop(net);
 
@@ -1210,6 +1212,7 @@ impl SessionServer {
             fleet,
             log,
             gate,
+            prompt: prompt_snapshot,
         }
     }
 }

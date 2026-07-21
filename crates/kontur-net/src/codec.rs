@@ -136,6 +136,7 @@ mod tests {
             fleet: vec![],
             log: vec!["started".to_string()],
             gate: None,
+            prompt: String::new(),
         }));
 
         let recovered: ServerMsg = roundtrip(&original).await;

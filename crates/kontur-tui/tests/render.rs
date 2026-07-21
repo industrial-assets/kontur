@@ -53,6 +53,7 @@ fn base(active: ActiveRegion) -> SessionView {
         invite: None,
         notice: None,
         attention: None,
+        instruction: None,
     }
 }
 
@@ -458,5 +459,30 @@ fn log_scrollback_shows_history_and_offset() {
     assert!(
         back.contains("LOG ↑"),
         "offset marker shown when scrolled back"
+    );
+}
+
+/// The dispatched instruction stays on screen after dispatch: a TASK line
+/// renders in the left pane during execution.
+#[test]
+fn task_bar_shows_dispatched_instruction() {
+    let mut view = base(ActiveRegion::Idle);
+    view.instruction = Some("harden the auth session parser".into());
+    let s = draw(&view);
+    assert!(s.contains("TASK"), "TASK title must render; got:\n{s}");
+    assert!(
+        s.contains("harden the auth session parser"),
+        "instruction text must render; got:\n{s}"
+    );
+}
+
+/// No TASK line when there is no live instruction (idle / composing).
+#[test]
+fn task_bar_absent_without_instruction() {
+    let view = base(ActiveRegion::Idle);
+    let s = draw(&view);
+    assert!(
+        !s.contains("TASK"),
+        "no TASK line without an instruction; got:\n{s}"
     );
 }
