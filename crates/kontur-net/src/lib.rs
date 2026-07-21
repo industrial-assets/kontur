@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod agent_endpoint;
+pub mod clarify;
 pub mod client;
 pub mod codec;
 pub mod difftext;
