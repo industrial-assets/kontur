@@ -23,8 +23,18 @@ pub struct CommandOutput {
 /// The worktree side-effect port. The gate host owns an `Arc<dyn Workspace>`.
 /// Implementations must be cheap to call under the session lock (sync, fast).
 pub trait Workspace: Send + Sync {
-    fn apply_write(&self, task_id: &TaskId, path: &str, contents: &[u8]) -> Result<(), WorkspaceError>;
-    fn run_command(&self, task_id: &TaskId, command: &str, cwd: &str) -> Result<CommandOutput, WorkspaceError>;
+    fn apply_write(
+        &self,
+        task_id: &TaskId,
+        path: &str,
+        contents: &[u8],
+    ) -> Result<(), WorkspaceError>;
+    fn run_command(
+        &self,
+        task_id: &TaskId,
+        command: &str,
+        cwd: &str,
+    ) -> Result<CommandOutput, WorkspaceError>;
     /// Callers must not issue concurrent writes to the task between freeze and gate-open; the frozen diff is what operators sign against.
     fn freeze_task_diff(&self, task_id: &TaskId) -> Result<FrozenDiff, WorkspaceError>;
     fn accept_task(&self, task_id: &TaskId) -> Result<(), WorkspaceError>;
@@ -80,15 +90,31 @@ pub struct InMemoryWorkspace {
 
 impl InMemoryWorkspace {
     pub fn new() -> Self {
-        InMemoryWorkspace { inner: Mutex::new(Inner::default()) }
+        InMemoryWorkspace {
+            inner: Mutex::new(Inner::default()),
+        }
     }
 
     pub fn accepted_tasks(&self) -> Vec<TaskId> {
-        self.inner.lock().unwrap().accepted.iter().cloned().map(TaskId).collect()
+        self.inner
+            .lock()
+            .unwrap()
+            .accepted
+            .iter()
+            .cloned()
+            .map(TaskId)
+            .collect()
     }
 
     pub fn discarded_tasks(&self) -> Vec<TaskId> {
-        self.inner.lock().unwrap().discarded.iter().cloned().map(TaskId).collect()
+        self.inner
+            .lock()
+            .unwrap()
+            .discarded
+            .iter()
+            .cloned()
+            .map(TaskId)
+            .collect()
     }
 
     pub fn merged_message(&self) -> Option<String> {
@@ -113,19 +139,44 @@ impl Default for InMemoryWorkspace {
 }
 
 impl Workspace for InMemoryWorkspace {
-    fn apply_write(&self, task_id: &TaskId, path: &str, contents: &[u8]) -> Result<(), WorkspaceError> {
-        self.inner.lock().unwrap().task_mut(&task_id.0).writes.push((path.to_string(), contents.to_vec()));
+    fn apply_write(
+        &self,
+        task_id: &TaskId,
+        path: &str,
+        contents: &[u8],
+    ) -> Result<(), WorkspaceError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .task_mut(&task_id.0)
+            .writes
+            .push((path.to_string(), contents.to_vec()));
         Ok(())
     }
 
-    fn run_command(&self, task_id: &TaskId, command: &str, _cwd: &str) -> Result<CommandOutput, WorkspaceError> {
-        self.inner.lock().unwrap().task_mut(&task_id.0).commands.push(command.to_string());
-        Ok(CommandOutput { stdout: String::new(), exit_code: 0 })
+    fn run_command(
+        &self,
+        task_id: &TaskId,
+        command: &str,
+        _cwd: &str,
+    ) -> Result<CommandOutput, WorkspaceError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .task_mut(&task_id.0)
+            .commands
+            .push(command.to_string());
+        Ok(CommandOutput {
+            stdout: String::new(),
+            exit_code: 0,
+        })
     }
 
     fn freeze_task_diff(&self, task_id: &TaskId) -> Result<FrozenDiff, WorkspaceError> {
         let g = self.inner.lock().unwrap();
-        let buf = g.task(&task_id.0).ok_or_else(|| WorkspaceError::UnknownTask(task_id.0.clone()))?;
+        let buf = g
+            .task(&task_id.0)
+            .ok_or_else(|| WorkspaceError::UnknownTask(task_id.0.clone()))?;
         // First-seen order of paths; last write wins per path — matches FsWorkspace
         // (which reads final on-disk content) so both impls produce the same diff hash.
         let mut files: Vec<String> = Vec::new();
@@ -185,7 +236,10 @@ impl Workspace for InMemoryWorkspace {
 /// Path containment is enforced here and relied on by GitWorkspace,
 /// FsWorkspace `apply_write` and `read_file`. InMemoryWorkspace has no
 /// filesystem — containment is not applicable there (no escape path).
-pub fn contained_join(root: &std::path::Path, rel: &str) -> Result<std::path::PathBuf, WorkspaceError> {
+pub fn contained_join(
+    root: &std::path::Path,
+    rel: &str,
+) -> Result<std::path::PathBuf, WorkspaceError> {
     use std::path::Component;
     if rel.is_empty() {
         return Err(WorkspaceError::Io("path must not be empty".into()));
@@ -197,10 +251,14 @@ pub fn contained_join(root: &std::path::Path, rel: &str) -> Result<std::path::Pa
     for component in rel_path.components() {
         match component {
             Component::ParentDir => {
-                return Err(WorkspaceError::Io(format!("path traversal rejected: {rel}")));
+                return Err(WorkspaceError::Io(format!(
+                    "path traversal rejected: {rel}"
+                )));
             }
             Component::Prefix(_) => {
-                return Err(WorkspaceError::Io(format!("path prefix not allowed: {rel}")));
+                return Err(WorkspaceError::Io(format!(
+                    "path prefix not allowed: {rel}"
+                )));
             }
             _ => {}
         }
@@ -264,7 +322,10 @@ mod tests {
         let ws = InMemoryWorkspace::new();
         assert!(ws.merged_message().is_none());
         ws.merge_session("session end\n\nReviewed-by: A").unwrap();
-        assert_eq!(ws.merged_message(), Some("session end\n\nReviewed-by: A".to_string()));
+        assert_eq!(
+            ws.merged_message(),
+            Some("session end\n\nReviewed-by: A".to_string())
+        );
     }
 
     #[test]

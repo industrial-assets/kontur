@@ -74,10 +74,17 @@ impl KonturServer {
 
 #[tool_router(server_handler)]
 impl KonturServer {
-    #[tool(name = "write_file", description = "Write a file in the agent's worktree (recorded, not gated).")]
+    #[tool(
+        name = "write_file",
+        description = "Write a file in the agent's worktree (recorded, not gated)."
+    )]
     async fn write_file(
         &self,
-        Parameters(WriteFileInput { task_id, path, contents }): Parameters<WriteFileInput>,
+        Parameters(WriteFileInput {
+            task_id,
+            path,
+            contents,
+        }): Parameters<WriteFileInput>,
     ) -> Result<Json<OkOutput>, ErrorData> {
         self.host
             .record_write(&TaskId(task_id), &path, contents.as_bytes())
@@ -86,25 +93,41 @@ impl KonturServer {
         Ok(Json(OkOutput { ok: true }))
     }
 
-    #[tool(name = "run_command", description = "Run a command in the agent's worktree (recorded, not gated).")]
+    #[tool(
+        name = "run_command",
+        description = "Run a command in the agent's worktree (recorded, not gated)."
+    )]
     async fn run_command(
         &self,
-        Parameters(RunCommandInput { task_id, command, cwd }): Parameters<RunCommandInput>,
+        Parameters(RunCommandInput {
+            task_id,
+            command,
+            cwd,
+        }): Parameters<RunCommandInput>,
     ) -> Result<Json<CommandOut>, ErrorData> {
         let out = self
             .host
             .run_command(&TaskId(task_id), &command, &cwd)
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        Ok(Json(CommandOut { stdout: out.stdout, exit_code: out.exit_code }))
+        Ok(Json(CommandOut {
+            stdout: out.stdout,
+            exit_code: out.exit_code,
+        }))
     }
 
-    #[tool(name = "propose_plan", description = "Submit the agent's task plan for operator approval; blocks until both operators approve.")]
+    #[tool(
+        name = "propose_plan",
+        description = "Submit the agent's task plan for operator approval; blocks until both operators approve."
+    )]
     async fn propose_plan(
         &self,
         Parameters(ProposePlanInput { tasks }): Parameters<ProposePlanInput>,
     ) -> Result<Json<ProposePlanOutput>, ErrorData> {
-        let mut rx = self.host.propose_plan(tasks).await
+        let mut rx = self
+            .host
+            .propose_plan(tasks)
+            .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         // Await a decision. borrow_and_update reads the current value and marks
@@ -117,7 +140,9 @@ impl KonturServer {
                 PlanDecision::Approved => break,
                 PlanDecision::Steered(s) => {
                     return Err(ErrorData::invalid_request(
-                        format!("plan rejected: {s} — revise the task list and call propose_plan again"),
+                        format!(
+                            "plan rejected: {s} — revise the task list and call propose_plan again"
+                        ),
                         None,
                     ));
                 }
@@ -129,10 +154,16 @@ impl KonturServer {
 
         // Return the APPROVED task list — operators may have edited it.
         let final_tasks = self.host.proposed_plan().await.unwrap_or_default();
-        Ok(Json(ProposePlanOutput { approved: true, tasks: final_tasks }))
+        Ok(Json(ProposePlanOutput {
+            approved: true,
+            tasks: final_tasks,
+        }))
     }
 
-    #[tool(name = "propose_task_complete", description = "Submit the completed task for four-eyes review; blocks until both operators sign off.")]
+    #[tool(
+        name = "propose_task_complete",
+        description = "Submit the completed task for four-eyes review; blocks until both operators sign off."
+    )]
     async fn propose_task_complete(
         &self,
         Parameters(ProposeInput { task_id, tokens }): Parameters<ProposeInput>,
@@ -152,7 +183,10 @@ impl KonturServer {
                 break;
             }
             if rx.changed().await.is_err() {
-                return Err(ErrorData::internal_error("session closed before gate resolved", None));
+                return Err(ErrorData::internal_error(
+                    "session closed before gate resolved",
+                    None,
+                ));
             }
         }
 
@@ -173,9 +207,15 @@ impl KonturServer {
                     Some(Remedy::HandEdit(h)) => format!("hand-edit:{}", h.0),
                     None => "blocked".to_string(),
                 };
-                Err(ErrorData::invalid_request(format!("task rejected: {remedy}"), None))
+                Err(ErrorData::invalid_request(
+                    format!("task rejected: {remedy}"),
+                    None,
+                ))
             }
-            other => Err(ErrorData::internal_error(format!("non-terminal gate state: {other:?}"), None)),
+            other => Err(ErrorData::internal_error(
+                format!("non-terminal gate state: {other:?}"),
+                None,
+            )),
         }
     }
 }

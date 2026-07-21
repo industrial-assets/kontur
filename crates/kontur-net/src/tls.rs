@@ -10,12 +10,12 @@
 use std::io;
 use std::sync::Arc;
 
-use rcgen::{CertifiedKey, generate_simple_self_signed};
-use rustls::ServerConfig;
+use rcgen::{generate_simple_self_signed, CertifiedKey};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName};
+use rustls::ServerConfig;
 use sha2::{Digest, Sha256};
 use tokio::net::TcpStream;
-use tokio_rustls::{TlsAcceptor, TlsConnector, client::TlsStream as ClientTlsStream};
+use tokio_rustls::{client::TlsStream as ClientTlsStream, TlsAcceptor, TlsConnector};
 
 // ---------------------------------------------------------------------------
 // SessionTls
@@ -45,14 +45,12 @@ impl SessionTls {
 pub fn generate() -> SessionTls {
     // Generate a self-signed certificate with rcgen.
     let subject_alt_names = vec!["kontur-session".to_string()];
-    let CertifiedKey { cert, key_pair } =
-        generate_simple_self_signed(subject_alt_names)
-            .expect("rcgen: failed to generate self-signed cert");
+    let CertifiedKey { cert, key_pair } = generate_simple_self_signed(subject_alt_names)
+        .expect("rcgen: failed to generate self-signed cert");
 
     let cert_der: CertificateDer<'static> = cert.into();
-    let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
-        PrivatePkcs8KeyDer::from(key_pair.serialize_der()),
-    );
+    let key_der =
+        rustls::pki_types::PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_pair.serialize_der()));
 
     // Fingerprint = SHA-256(DER bytes).
     let fingerprint: [u8; 32] = Sha256::digest(cert_der.as_ref()).into();
@@ -80,10 +78,7 @@ pub fn generate() -> SessionTls {
 ///
 /// No CA chain, no hostname check: the pin (delivered via the private invite
 /// link) is the sole trust root.
-pub async fn connect_pinned(
-    addr: &str,
-    fp16: [u8; 16],
-) -> io::Result<ClientTlsStream<TcpStream>> {
+pub async fn connect_pinned(addr: &str, fp16: [u8; 16]) -> io::Result<ClientTlsStream<TcpStream>> {
     let stream = TcpStream::connect(addr).await?;
 
     let client_config = rustls::ClientConfig::builder()
@@ -93,8 +88,7 @@ pub async fn connect_pinned(
 
     let connector = TlsConnector::from(Arc::new(client_config));
     // The server name is irrelevant — we pin by cert fingerprint, not hostname.
-    let server_name = ServerName::try_from("kontur-session")
-        .expect("static server name is valid");
+    let server_name = ServerName::try_from("kontur-session").expect("static server name is valid");
 
     connector
         .connect(server_name, stream)
@@ -242,10 +236,9 @@ mod tests {
     #[test]
     fn fp_hex_roundtrip() {
         let fp: [u8; 32] = [
-            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
-            0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10,
-            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
-            0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54,
+            0x32, 0x10, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+            0xcc, 0xdd, 0xee, 0xff,
         ];
         let hex = fp_hex(&fp);
         assert_eq!(hex.len(), 64);
@@ -328,6 +321,10 @@ mod tests {
 
         // Correct fingerprint → should succeed.
         let result = connect_pinned(&addr, fingerprint).await;
-        assert!(result.is_ok(), "correct pin must succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "correct pin must succeed: {:?}",
+            result.err()
+        );
     }
 }

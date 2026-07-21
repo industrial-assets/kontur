@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use kontur_core::{CastVerdict, GateId, Hash, OperatorId, VerdictView};
+use serde::{Deserialize, Serialize};
 
 /// Operator role transmitted on the wire. An enum prevents the casing-mismatch
 /// bug where the server emits `"Host"` but the client compared `== "HOST"`.
@@ -11,33 +11,57 @@ pub enum WireRole {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum ClientMsg {
-    Hello { seat: String, operator: OperatorId },
+    Hello {
+        seat: String,
+        operator: OperatorId,
+    },
     Ready,
-    Cast { gate_id: GateId, verdict: CastVerdict },
-    HandEdit { path: String, contents: String },
+    Cast {
+        gate_id: GateId,
+        verdict: CastVerdict,
+    },
+    HandEdit {
+        path: String,
+        contents: String,
+    },
     Abandon,
     Bye,
-    SetPrompt { prompt: String },
+    SetPrompt {
+        prompt: String,
+    },
     /// Request the current on-disk contents of a worktree file.
     /// Response arrives as `ServerMsg::FileContent` on the same connection.
-    FetchFile { path: String },
+    FetchFile {
+        path: String,
+    },
     /// Replace the current plan with a new task list. Valid only during
     /// `PlanReview`; resets both ready flags so both seats must re-consent.
-    EditPlan { tasks: Vec<String> },
+    EditPlan {
+        tasks: Vec<String>,
+    },
     /// Send a steer prompt to the agent to revise its plan. Valid only during
     /// `PlanReview`; resets both ready flags and withdraws the current plan list.
-    SteerPlan { steer: String },
+    SteerPlan {
+        steer: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum ServerMsg {
-    Welcome { seat: String },
+    Welcome {
+        seat: String,
+    },
     State(Box<WireState>),
-    Rejected { reason: String },
+    Rejected {
+        reason: String,
+    },
     /// Reply to `ClientMsg::FetchFile`.  `contents` is `None` when the path
     /// does not exist in the worktree (new file) or the file is binary (binary
     /// round-trip via text editor is out of scope; edit locally on the host).
-    FileContent { path: String, contents: Option<String> },
+    FileContent {
+        path: String,
+        contents: Option<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -52,10 +76,20 @@ pub struct WireSeat {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum WirePhase {
     AwaitOperators,
-    DispatchReady { prompt: String },
-    PlanReview { tasks: Vec<String> },
+    DispatchReady {
+        prompt: String,
+    },
+    PlanReview {
+        tasks: Vec<String>,
+    },
     Executing,
-    Closed { gates: usize, chain_verified: bool, reviewers: Vec<String>, merged: bool, abandoned: bool },
+    Closed {
+        gates: usize,
+        chain_verified: bool,
+        reviewers: Vec<String>,
+        merged: bool,
+        abandoned: bool,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -101,7 +135,10 @@ mod tests {
 
     #[test]
     fn sealed_key_on_the_wire_carries_no_value() {
-        let view = VerdictView { operator: OperatorId([1; 32]), status: VerdictStatus::Sealed };
+        let view = VerdictView {
+            operator: OperatorId([1; 32]),
+            status: VerdictStatus::Sealed,
+        };
         let json = serde_json::to_string(&view).unwrap();
         assert!(json.contains("Sealed"));
         assert!(!json.contains("Revealed"));

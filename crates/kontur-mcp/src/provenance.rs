@@ -41,7 +41,14 @@ mod tests {
         let frozen = ws.freeze_task_diff(&task).unwrap();
         let dh = diff_hash(&frozen);
 
-        let ctx = SessionContext::new("do it", OperatorId([1; 32]), "agent-01", "claude", "1.0", vec![OperatorId([1; 32])]);
+        let ctx = SessionContext::new(
+            "do it",
+            OperatorId([1; 32]),
+            "agent-01",
+            "claude",
+            "1.0",
+            vec![OperatorId([1; 32])],
+        );
         let p = build_provenance(&ctx, &task, dh, &frozen, 6400);
 
         assert_eq!(p.task_id, task);

@@ -2,8 +2,11 @@ use std::sync::Arc;
 
 use kontur_core::{Ed25519Signer, Signer};
 use kontur_mcp::{GateHost, GitWorkspace, InMemoryWorkspace, SessionContext};
-use kontur_net::{ScriptedAgent, SessionConfig, SessionServer, WirePhase, serve_agent_endpoint, generate_tls, attach_tls};
-use kontur_tui::claude_agent::{build_claude_command, mcp_config_json, agent_prompt};
+use kontur_net::{
+    attach_tls, generate_tls, serve_agent_endpoint, ScriptedAgent, SessionConfig, SessionServer,
+    WirePhase,
+};
+use kontur_tui::claude_agent::{agent_prompt, build_claude_command, mcp_config_json};
 use kontur_tui::demo::{run, Demo};
 use kontur_tui::link::{derive_seed, discover_ip, format_invite, parse_invite};
 use kontur_tui::remote::run_remote;
@@ -147,7 +150,10 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         /// Seeds supplied explicitly via --seeds; no invite can be derived.
         Explicit([u8; 32], [u8; 32]),
         /// Seeds derived from randomly-generated secrets; invite links are available.
-        Derived { secret_a: [u8; 16], secret_b: [u8; 16] },
+        Derived {
+            secret_a: [u8; 16],
+            secret_b: [u8; 16],
+        },
     }
 
     let seed_mode = match explicit_seeds {
@@ -160,9 +166,7 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
 
     let (seed_a, seed_b) = match &seed_mode {
         SeedMode::Explicit(a, b) => (*a, *b),
-        SeedMode::Derived { secret_a, secret_b } => {
-            (derive_seed(secret_a), derive_seed(secret_b))
-        }
+        SeedMode::Derived { secret_a, secret_b } => (derive_seed(secret_a), derive_seed(secret_b)),
     };
 
     let (effective_repo, use_cwd) = if mem {
@@ -266,7 +270,9 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         let server_clone = server.clone();
         tokio::spawn(async move {
             loop {
-                let Ok((stream, _)) = op_listener.accept().await else { break };
+                let Ok((stream, _)) = op_listener.accept().await else {
+                    break;
+                };
                 attach_tls(&server_clone, &acceptor, stream).await;
             }
         });
@@ -492,7 +498,10 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         println!("    kontur join {link}");
         if let Some(remote) = &remote_link {
             println!();
-            println!("  remote operator (off your network)? forward port {} on your router, then send:", op_addr.port());
+            println!(
+                "  remote operator (off your network)? forward port {} on your router, then send:",
+                op_addr.port()
+            );
             println!("    kontur join {remote}");
         }
     } else {
@@ -500,7 +509,10 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
     }
     println!();
     if let Some(ref log_path) = claude_log_path {
-        println!("  spawning claude code as the agent (log: {})", log_path.display());
+        println!(
+            "  spawning claude code as the agent (log: {})",
+            log_path.display()
+        );
         println!("  the agent will launch once both seats approve the dispatch gate.");
     } else {
         println!("  attach a real Claude Code as the agent (--claude flag, or manually):");
@@ -529,7 +541,12 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
             SeedMode::Derived { secret_b, .. } => {
                 let lan_cmd = lan_ip
                     .as_ref()
-                    .map(|lip| format!("kontur join {}", format_invite(lip, op_addr.port(), secret_b, &fp16)))
+                    .map(|lip| {
+                        format!(
+                            "kontur join {}",
+                            format_invite(lip, op_addr.port(), secret_b, &fp16)
+                        )
+                    })
                     .or_else(|| invite_link.as_ref().map(|l| format!("kontur join {l}")));
                 let wan_cmd = remote_link.as_ref().map(|r| format!("kontur join {r}"));
                 Some(kontur_tui::link::InviteLinks {
@@ -552,8 +569,8 @@ async fn join_cmd(args: &[String]) -> std::io::Result<()> {
     // If the first arg looks like a kontur:// link, parse it directly.
     if let Some(first) = args.first() {
         if first.starts_with("kontur://") {
-            let (addr, secret16, fp16) = parse_invite(first)
-                .map_err(|e| err(format!("invalid invite link: {e}")))?;
+            let (addr, secret16, fp16) =
+                parse_invite(first).map_err(|e| err(format!("invalid invite link: {e}")))?;
             let seed = derive_seed(&secret16);
             return run_remote(&addr, "OPERATOR".into(), seed, None, Some(fp16)).await;
         }
@@ -642,8 +659,7 @@ fn gen_random_16() -> std::io::Result<[u8; 16]> {
 }
 
 fn gen_random_bytes(buf: &mut [u8]) -> std::io::Result<()> {
-    getrandom::getrandom(buf)
-        .map_err(|e| err(format!("getrandom: {e}")))
+    getrandom::getrandom(buf).map_err(|e| err(format!("getrandom: {e}")))
 }
 
 // ---------------------------------------------------------------------------

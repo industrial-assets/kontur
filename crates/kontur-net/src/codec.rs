@@ -1,14 +1,14 @@
+use serde::{Deserialize, Serialize};
 use std::io;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
-use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 use tokio::io::BufReader;
 
 /// Write a serializable value as JSON-lines to an async writer.
 pub async fn write_json<W: AsyncWrite + Unpin, T: Serialize>(w: &mut W, v: &T) -> io::Result<()> {
-    let mut line = serde_json::to_string(v)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut line =
+        serde_json::to_string(v).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     line.push('\n');
     w.write_all(line.as_bytes()).await?;
     w.flush().await
@@ -27,7 +27,10 @@ pub async fn read_json<R: AsyncBufRead + Unpin, T: for<'de> Deserialize<'de>>(
         return Ok(None);
     }
     if line.len() > 1_000_000 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "message too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "message too large",
+        ));
     }
     serde_json::from_str(line.trim_end())
         .map(Some)
@@ -37,8 +40,8 @@ pub async fn read_json<R: AsyncBufRead + Unpin, T: for<'de> Deserialize<'de>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{ClientMsg, ServerMsg, WireRole, WireState, WirePhase, WireSeat};
-    use kontur_core::{OperatorId, GateId, Verdict, ReviewDepth, Timestamp, Sig, CastVerdict};
+    use crate::protocol::{ClientMsg, ServerMsg, WirePhase, WireRole, WireSeat, WireState};
+    use kontur_core::{CastVerdict, GateId, OperatorId, ReviewDepth, Sig, Timestamp, Verdict};
 
     async fn roundtrip<T>(v: &T) -> T
     where
@@ -162,8 +165,14 @@ mod tests {
         write_json(&mut w, &msg1).await.unwrap();
         write_json(&mut w, &msg2).await.unwrap();
 
-        let back1: ClientMsg = read_json(&mut reader).await.unwrap().expect("first message");
-        let back2: ClientMsg = read_json(&mut reader).await.unwrap().expect("second message");
+        let back1: ClientMsg = read_json(&mut reader)
+            .await
+            .unwrap()
+            .expect("first message");
+        let back2: ClientMsg = read_json(&mut reader)
+            .await
+            .unwrap()
+            .expect("second message");
 
         assert_eq!(msg1, back1);
         assert_eq!(msg2, back2);

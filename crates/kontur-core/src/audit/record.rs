@@ -187,16 +187,34 @@ mod tests {
 
     fn blocked_hold() -> DualHold {
         let mut h = DualHold::new(
-            GateId("g1".into()), TaskId("t1".into()), Hash([9u8; 32]),
-            GatePolicy::default(), MakerSet::new(), Authorship::Agent,
+            GateId("g1".into()),
+            TaskId("t1".into()),
+            Hash([9u8; 32]),
+            GatePolicy::default(),
+            MakerSet::new(),
+            Authorship::Agent,
         );
         let s1 = Ed25519Signer::from_seed([1; 32]);
-        let cv = CastVerdict::create(&s1, &FixedClock(1000), h.gate_id(), h.diff_hash(),
-            Verdict::Go, ReviewDepth::FullDiff, None);
+        let cv = CastVerdict::create(
+            &s1,
+            &FixedClock(1000),
+            h.gate_id(),
+            h.diff_hash(),
+            Verdict::Go,
+            ReviewDepth::FullDiff,
+            None,
+        );
         h.cast(0, cv).unwrap();
         let s2 = Ed25519Signer::from_seed([2; 32]);
-        let cv = CastVerdict::create(&s2, &FixedClock(1001), h.gate_id(), h.diff_hash(),
-            Verdict::NoGo(crate::Remedy::Steer("cache it".into())), ReviewDepth::FullDiff, None);
+        let cv = CastVerdict::create(
+            &s2,
+            &FixedClock(1001),
+            h.gate_id(),
+            h.diff_hash(),
+            Verdict::NoGo(crate::Remedy::Steer("cache it".into())),
+            ReviewDepth::FullDiff,
+            None,
+        );
         h.cast(1, cv).unwrap();
         h
     }
@@ -213,9 +231,17 @@ mod tests {
 
     #[test]
     fn open_hold_still_refused() {
-        let h = DualHold::new(GateId("g2".into()), TaskId("t2".into()), Hash([1u8; 32]),
-            GatePolicy::default(), MakerSet::new(), Authorship::Agent);
-        assert_eq!(GateRecord::build(Hash([0u8; 32]), provenance(), &h).unwrap_err(),
-            RecordError::HoldUnresolved);
+        let h = DualHold::new(
+            GateId("g2".into()),
+            TaskId("t2".into()),
+            Hash([1u8; 32]),
+            GatePolicy::default(),
+            MakerSet::new(),
+            Authorship::Agent,
+        );
+        assert_eq!(
+            GateRecord::build(Hash([0u8; 32]), provenance(), &h).unwrap_err(),
+            RecordError::HoldUnresolved
+        );
     }
 }

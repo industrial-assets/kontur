@@ -5,8 +5,7 @@ use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 use tokio::sync::{mpsc, Mutex};
 
 use kontur_core::{
-    CastVerdict, Clock, Ed25519Signer, OperatorId, Remedy, ReviewDepth, Signer,
-    Timestamp, Verdict,
+    CastVerdict, Clock, Ed25519Signer, OperatorId, Remedy, ReviewDepth, Signer, Timestamp, Verdict,
 };
 
 use crate::codec::{read_json, write_json};
@@ -162,18 +161,27 @@ impl SessionClient {
     /// Send a prompt edit. Valid only during DispatchReady; the server will
     /// Reject it otherwise and reset both ready flags on acceptance.
     pub async fn set_prompt(&self, prompt: &str) -> io::Result<()> {
-        self.send(ClientMsg::SetPrompt { prompt: prompt.to_owned() }).await
+        self.send(ClientMsg::SetPrompt {
+            prompt: prompt.to_owned(),
+        })
+        .await
     }
 
     /// Replace the plan with an edited task list. Valid only during PlanReview;
     /// the server will Reject it otherwise and reset both ready flags on acceptance.
     pub async fn edit_plan(&self, tasks: &[String]) -> io::Result<()> {
-        self.send(ClientMsg::EditPlan { tasks: tasks.to_vec() }).await
+        self.send(ClientMsg::EditPlan {
+            tasks: tasks.to_vec(),
+        })
+        .await
     }
 
     /// Send a plan steer to the agent. Valid only during PlanReview.
     pub async fn steer_plan(&self, steer: &str) -> io::Result<()> {
-        self.send(ClientMsg::SteerPlan { steer: steer.to_owned() }).await
+        self.send(ClientMsg::SteerPlan {
+            steer: steer.to_owned(),
+        })
+        .await
     }
 
     /// Request the current worktree contents of a file. The response arrives
@@ -181,7 +189,10 @@ impl SessionClient {
     /// TUI correlates by path. Fire-and-forget: the caller reads the response
     /// from the receiver it obtained at `attach` time.
     pub async fn fetch_file(&self, path: &str) -> io::Result<()> {
-        self.send(ClientMsg::FetchFile { path: path.to_owned() }).await
+        self.send(ClientMsg::FetchFile {
+            path: path.to_owned(),
+        })
+        .await
     }
 
     /// Sign a Go verdict against the gate described by `wire_gate` and send it.
@@ -195,8 +206,14 @@ impl SessionClient {
     }
 
     /// Sign a NoGo verdict with a Steer remedy and send it.
-    pub async fn cast_nogo(&self, gate: &WireGate, steer: &str, depth: ReviewDepth) -> io::Result<()> {
-        let verdict = self.build_verdict(gate, Verdict::NoGo(Remedy::Steer(steer.to_owned())), depth);
+    pub async fn cast_nogo(
+        &self,
+        gate: &WireGate,
+        steer: &str,
+        depth: ReviewDepth,
+    ) -> io::Result<()> {
+        let verdict =
+            self.build_verdict(gate, Verdict::NoGo(Remedy::Steer(steer.to_owned())), depth);
         self.send(ClientMsg::Cast {
             gate_id: gate.gate_id.clone(),
             verdict,
@@ -256,8 +273,8 @@ mod tests {
     use kontur_mcp::{GateHost, InMemoryWorkspace, SessionContext};
 
     use crate::agent::run_agent;
-    use crate::server::ScriptedAgent;
     use crate::protocol::{ServerMsg, WirePhase};
+    use crate::server::ScriptedAgent;
     use crate::server::{ScriptedTask, SessionConfig, SessionServer};
 
     // -----------------------------------------------------------------------
@@ -343,28 +360,44 @@ mod tests {
         server.attach(srv_b).await;
 
         // Attach both clients (handshake happens inside attach).
-        let (client_a, mut rx_a) =
-            tokio::time::timeout(Duration::from_secs(5), SessionClient::attach(stream_a, "A".into(), seed_a))
-                .await
-                .expect("client_a attach timed out")
-                .expect("client_a attach failed");
+        let (client_a, mut rx_a) = tokio::time::timeout(
+            Duration::from_secs(5),
+            SessionClient::attach(stream_a, "A".into(), seed_a),
+        )
+        .await
+        .expect("client_a attach timed out")
+        .expect("client_a attach failed");
 
-        let (client_b, mut rx_b) =
-            tokio::time::timeout(Duration::from_secs(5), SessionClient::attach(stream_b, "B".into(), seed_b))
-                .await
-                .expect("client_b attach timed out")
-                .expect("client_b attach failed");
+        let (client_b, mut rx_b) = tokio::time::timeout(
+            Duration::from_secs(5),
+            SessionClient::attach(stream_b, "B".into(), seed_b),
+        )
+        .await
+        .expect("client_b attach timed out")
+        .expect("client_b attach failed");
 
         // Wait for DispatchReady on both sides.
-        next_state_matching(&mut rx_a, |s| matches!(s.phase, WirePhase::DispatchReady { .. })).await;
-        next_state_matching(&mut rx_b, |s| matches!(s.phase, WirePhase::DispatchReady { .. })).await;
+        next_state_matching(&mut rx_a, |s| {
+            matches!(s.phase, WirePhase::DispatchReady { .. })
+        })
+        .await;
+        next_state_matching(&mut rx_b, |s| {
+            matches!(s.phase, WirePhase::DispatchReady { .. })
+        })
+        .await;
 
         // Both signal ready → PlanReview.
         client_a.ready().await.unwrap();
         client_b.ready().await.unwrap();
 
-        next_state_matching(&mut rx_a, |s| matches!(s.phase, WirePhase::PlanReview { .. })).await;
-        next_state_matching(&mut rx_b, |s| matches!(s.phase, WirePhase::PlanReview { .. })).await;
+        next_state_matching(&mut rx_a, |s| {
+            matches!(s.phase, WirePhase::PlanReview { .. })
+        })
+        .await;
+        next_state_matching(&mut rx_b, |s| {
+            matches!(s.phase, WirePhase::PlanReview { .. })
+        })
+        .await;
 
         // Both signal ready → Executing.
         client_a.ready().await.unwrap();
@@ -374,31 +407,36 @@ mod tests {
         next_state_matching(&mut rx_b, |s| matches!(s.phase, WirePhase::Executing)).await;
 
         // Wait for a gate to appear on A's stream.
-        let state_with_gate =
-            next_state_matching(&mut rx_a, |s| s.gate.is_some()).await;
+        let state_with_gate = next_state_matching(&mut rx_a, |s| s.gate.is_some()).await;
         let wire_gate = state_with_gate.gate.unwrap();
 
         // A casts go.
-        client_a.cast_go(&wire_gate, ReviewDepth::FullDiff).await.unwrap();
+        client_a
+            .cast_go(&wire_gate, ReviewDepth::FullDiff)
+            .await
+            .unwrap();
 
         // B must see A's key as Sealed before B votes.
         let state_after_a = next_state_matching(&mut rx_b, |s| {
-            s.gate
-                .as_ref()
-                .map(|g| !g.keys.is_empty())
-                .unwrap_or(false)
+            s.gate.as_ref().map(|g| !g.keys.is_empty()).unwrap_or(false)
         })
         .await;
 
         let gate_b = state_after_a.gate.as_ref().unwrap();
         assert!(
-            gate_b.keys.iter().any(|k| k.status == VerdictStatus::Sealed),
+            gate_b
+                .keys
+                .iter()
+                .any(|k| k.status == VerdictStatus::Sealed),
             "A's key should be Sealed on B's view before B votes"
         );
 
         // B casts go.
         let wire_gate_b = state_after_a.gate.unwrap();
-        client_b.cast_go(&wire_gate_b, ReviewDepth::FullDiff).await.unwrap();
+        client_b
+            .cast_go(&wire_gate_b, ReviewDepth::FullDiff)
+            .await
+            .unwrap();
 
         // Both should see Closed with chain_verified.
         let closed_a =
@@ -422,7 +460,10 @@ mod tests {
         // --- Duplicate cast assertion ---
         // A tries to cast again on the same (now-closed) gate.
         // The server should reject it and send back a Rejected message on A's stream.
-        client_a.cast_go(&wire_gate, ReviewDepth::FullDiff).await.unwrap();
+        client_a
+            .cast_go(&wire_gate, ReviewDepth::FullDiff)
+            .await
+            .unwrap();
 
         // Drain until we get the Rejected.
         let rejected = tokio::time::timeout(Duration::from_secs(5), async {
@@ -437,10 +478,7 @@ mod tests {
         .await
         .expect("timed out waiting for Rejected on duplicate cast");
 
-        assert!(
-            !rejected.is_empty(),
-            "Rejected reason should not be empty"
-        );
+        assert!(!rejected.is_empty(), "Rejected reason should not be empty");
     }
 
     // -----------------------------------------------------------------------
@@ -451,7 +489,10 @@ mod tests {
     fn system_clock_is_positive() {
         let ts = SystemClock.now();
         // 2020-01-01 in millis is ~1_577_836_800_000
-        assert!(ts.0 > 1_577_836_800_000, "timestamp looks too small: {}", ts.0);
+        assert!(
+            ts.0 > 1_577_836_800_000,
+            "timestamp looks too small: {}",
+            ts.0
+        );
     }
-
 }

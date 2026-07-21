@@ -22,11 +22,30 @@ fn buf_string(buf: &Buffer) -> String {
 
 fn base(active: ActiveRegion) -> SessionView {
     SessionView {
-        banner: Banner { session: "4417".into(), version: "0.1.0".into() },
-        status: StatusStrip { linked: true, four_eyes: true, fleet_count: 3, needs_you: 1, tokens: 6400 },
+        banner: Banner {
+            session: "4417".into(),
+            version: "0.1.0".into(),
+        },
+        status: StatusStrip {
+            linked: true,
+            four_eyes: true,
+            fleet_count: 3,
+            needs_you: 1,
+            tokens: 6400,
+        },
         stations: [
-            Station { label: "A · YOU".into(), role: Role::Host, activity: "watching".into(), operator: OperatorId([1; 32]) },
-            Station { label: "B · J.REED".into(), role: Role::Operator, activity: "reviewing".into(), operator: OperatorId([2; 32]) },
+            Station {
+                label: "A · YOU".into(),
+                role: Role::Host,
+                activity: "watching".into(),
+                operator: OperatorId([1; 32]),
+            },
+            Station {
+                label: "B · J.REED".into(),
+                role: Role::Operator,
+                activity: "reviewing".into(),
+                operator: OperatorId([2; 32]),
+            },
         ],
         fleet: vec![],
         log: vec![],
@@ -58,8 +77,16 @@ fn gate_shows_summary_and_sealed_key_never_value() {
         files: vec!["auth/session.rs".into()],
         loc: 47,
         keys: vec![
-            KeyView { label: "A · YOU".into(), role: Role::Host, status: KeyStatus::Awaiting },
-            KeyView { label: "B · J.REED".into(), role: Role::Operator, status: KeyStatus::Sealed },
+            KeyView {
+                label: "A · YOU".into(),
+                role: Role::Host,
+                status: KeyStatus::Awaiting,
+            },
+            KeyView {
+                label: "B · J.REED".into(),
+                role: Role::Operator,
+                status: KeyStatus::Sealed,
+            },
         ],
         escalation_required: false,
         diff_preview: None,
@@ -76,7 +103,13 @@ fn gate_shows_summary_and_sealed_key_never_value() {
 
 #[test]
 fn session_close_shows_verified_chain() {
-    let summary = AuditSummary { gates: 4, reviewers: vec!["A · YOU".into(), "B · J.REED".into()], chain_verified: true, merged: true, abandoned: false };
+    let summary = AuditSummary {
+        gates: 4,
+        reviewers: vec!["A · YOU".into(), "B · J.REED".into()],
+        chain_verified: true,
+        merged: true,
+        abandoned: false,
+    };
     let s = draw(&base(ActiveRegion::SessionClosed(summary)));
     assert!(s.contains("4 gates"));
     assert!(!s.contains("unanimous"));
@@ -118,7 +151,13 @@ fn dropped_link_shows_b_station_dropped() {
 
 #[test]
 fn session_close_no_longer_says_unanimous() {
-    let summary = AuditSummary { gates: 4, reviewers: vec!["A".into()], chain_verified: true, merged: true, abandoned: false };
+    let summary = AuditSummary {
+        gates: 4,
+        reviewers: vec!["A".into()],
+        chain_verified: true,
+        merged: true,
+        abandoned: false,
+    };
     let s = draw(&base(ActiveRegion::SessionClosed(summary)));
     assert!(s.contains("4 gates"));
     assert!(!s.contains("unanimous"));
@@ -163,8 +202,16 @@ fn gate_shows_diff_and_log_simultaneously() {
         files: vec!["auth/session.rs".into()],
         loc: 47,
         keys: vec![
-            KeyView { label: "A · YOU".into(), role: Role::Host, status: KeyStatus::Awaiting },
-            KeyView { label: "B · J.REED".into(), role: Role::Operator, status: KeyStatus::Sealed },
+            KeyView {
+                label: "A · YOU".into(),
+                role: Role::Host,
+                status: KeyStatus::Awaiting,
+            },
+            KeyView {
+                label: "B · J.REED".into(),
+                role: Role::Operator,
+                status: KeyStatus::Sealed,
+            },
         ],
         escalation_required: false,
         diff_preview: Some("diff --git a/auth/session.rs b/auth/session.rs\n+fn foo() {}".into()),
@@ -192,7 +239,10 @@ fn gate_truncated_flag_shows_truncated_in_diff_title() {
         diff_truncated: true,
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
-    assert!(s.contains("TRUNCATED"), "truncated diff must show TRUNCATED in title; got:\n{s}");
+    assert!(
+        s.contains("TRUNCATED"),
+        "truncated diff must show TRUNCATED in title; got:\n{s}"
+    );
 }
 
 /// Gate: files bar shows ▶ for the selected file.
@@ -209,7 +259,12 @@ fn gate_files_bar_shows_selection_marker() {
         diff_truncated: false,
     };
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    terminal.draw(|f| render(f, &base(ActiveRegion::Gate(card)), 0, 1)).unwrap();
+    terminal
+        .draw(|f| render(f, &base(ActiveRegion::Gate(card)), 0, 1))
+        .unwrap();
     let s = buf_string(terminal.backend().buffer());
-    assert!(s.contains("▶ b.rs"), "selected file must be marked with ▶; got:\n{s}");
+    assert!(
+        s.contains("▶ b.rs"),
+        "selected file must be marked with ▶; got:\n{s}"
+    );
 }

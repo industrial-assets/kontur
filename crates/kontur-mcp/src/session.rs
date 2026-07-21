@@ -51,14 +51,24 @@ mod tests {
 
     #[test]
     fn defaults_to_core_gate_policy() {
-        let ctx = SessionContext::new("do the thing", op(1), "agent-01", "claude", "1", vec![op(1), op(2)]);
+        let ctx = SessionContext::new(
+            "do the thing",
+            op(1),
+            "agent-01",
+            "claude",
+            "1",
+            vec![op(1), op(2)],
+        );
         assert_eq!(ctx.policy, GatePolicy::default());
         assert_eq!(ctx.operators.len(), 2);
     }
 
     #[test]
     fn with_policy_overrides() {
-        let p = GatePolicy { independence: Independence::Pragmatic, ..GatePolicy::default() };
+        let p = GatePolicy {
+            independence: Independence::Pragmatic,
+            ..GatePolicy::default()
+        };
         let ctx = SessionContext::new("x", op(1), "a", "m", "v", vec![op(1)]).with_policy(p);
         assert_eq!(ctx.policy.independence, Independence::Pragmatic);
     }

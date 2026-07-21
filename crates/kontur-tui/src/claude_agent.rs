@@ -93,7 +93,10 @@ mod tests {
         let args = &cmd.args;
 
         // -p flag and its value
-        let p_pos = args.iter().position(|a| a == "-p").expect("-p flag missing");
+        let p_pos = args
+            .iter()
+            .position(|a| a == "-p")
+            .expect("-p flag missing");
         assert_eq!(args[p_pos + 1], "do the thing");
 
         // --mcp-config
@@ -146,29 +149,21 @@ mod tests {
         // Must contain the port as a string in the args array.
         let args = &v["mcpServers"]["kontur"]["args"];
         let args_arr = args.as_array().expect("args should be an array");
-        let port_str: Vec<&str> = args_arr
-            .iter()
-            .filter_map(|a| a.as_str())
-            .collect();
+        let port_str: Vec<&str> = args_arr.iter().filter_map(|a| a.as_str()).collect();
         assert!(
             port_str.contains(&"7778"),
             "port 7778 not found in args: {args_arr:?}"
         );
 
         // Command must be "nc".
-        assert_eq!(
-            v["mcpServers"]["kontur"]["command"].as_str(),
-            Some("nc")
-        );
+        assert_eq!(v["mcpServers"]["kontur"]["command"].as_str(), Some("nc"));
     }
 
     #[test]
     fn mcp_config_json_different_port() {
         let json = mcp_config_json(9999);
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let args = v["mcpServers"]["kontur"]["args"]
-            .as_array()
-            .unwrap();
+        let args = v["mcpServers"]["kontur"]["args"].as_array().unwrap();
         let has_port = args.iter().any(|a| a.as_str() == Some("9999"));
         assert!(has_port, "port 9999 not found in mcp config");
     }

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
 
-use kontur_core::{OperatorId, ReviewDepth, VerdictStatus, Verdict};
+use kontur_core::{OperatorId, ReviewDepth, Verdict, VerdictStatus};
 use kontur_net::{ServerMsg, SessionClient, WireGate, WirePhase, WireRole, WireState};
 
 use crate::app::{poll_action, TerminalGuard};
@@ -29,7 +29,9 @@ enum ComposeTarget {
     ConfirmAbandon,
     Prompt,
     /// Editing a plan task in-place. `idx` is the task's index in the list.
-    PlanEdit { idx: usize },
+    PlanEdit {
+        idx: usize,
+    },
     /// Composing a plan steer prompt.
     PlanSteer,
 }
@@ -48,8 +50,15 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
         let mut iter = state.seats.iter();
         let make = |ws: &kontur_net::WireSeat| Station {
             label: ws.label.clone(),
-            role: match ws.role { WireRole::Host => Role::Host, WireRole::Operator => Role::Operator },
-            activity: if ws.linked { "linked".into() } else { "dropped".into() },
+            role: match ws.role {
+                WireRole::Host => Role::Host,
+                WireRole::Operator => Role::Operator,
+            },
+            activity: if ws.linked {
+                "linked".into()
+            } else {
+                "dropped".into()
+            },
             operator: ws.operator,
         };
         // Guarantee exactly 2 stations; pad with a placeholder if needed.
@@ -99,7 +108,11 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
     let log: Vec<LogLine> = state
         .log
         .iter()
-        .map(|l| LogLine { time: String::new(), who: String::new(), text: l.clone() })
+        .map(|l| LogLine {
+            time: String::new(),
+            who: String::new(),
+            text: l.clone(),
+        })
         .collect();
 
     // --- status strip ---
@@ -110,7 +123,11 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
     // needs_you: count pending gates (gate present + own key not yet in keys)
     let needs_you = if let Some(gate) = &state.gate {
         let own_has_key = gate.keys.iter().any(|k| k.operator == own);
-        if own_has_key { 0 } else { 1 }
+        if own_has_key {
+            0
+        } else {
+            1
+        }
     } else {
         0
     };
@@ -131,14 +148,21 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
                 state.seats.first().map(|s| s.ready).unwrap_or(false),
                 state.seats.get(1).map(|s| s.ready).unwrap_or(false),
             ];
-            ActiveRegion::Prompt { prompt: prompt.clone(), ready }
+            ActiveRegion::Prompt {
+                prompt: prompt.clone(),
+                ready,
+            }
         }
         WirePhase::PlanReview { tasks } => {
             let ready = [
                 state.seats.first().map(|s| s.ready).unwrap_or(false),
                 state.seats.get(1).map(|s| s.ready).unwrap_or(false),
             ];
-            ActiveRegion::Plan { tasks: tasks.clone(), ready, selected: plan_sel }
+            ActiveRegion::Plan {
+                tasks: tasks.clone(),
+                ready,
+                selected: plan_sel,
+            }
         }
         WirePhase::Executing => {
             if let Some(wg) = &state.gate {
@@ -147,19 +171,26 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
                 ActiveRegion::Idle
             }
         }
-        WirePhase::Closed { gates, chain_verified, reviewers, merged, abandoned } => {
-            ActiveRegion::SessionClosed(AuditSummary {
-                gates: *gates,
-                chain_verified: *chain_verified,
-                reviewers: reviewers.clone(),
-                merged: *merged,
-                abandoned: *abandoned,
-            })
-        }
+        WirePhase::Closed {
+            gates,
+            chain_verified,
+            reviewers,
+            merged,
+            abandoned,
+        } => ActiveRegion::SessionClosed(AuditSummary {
+            gates: *gates,
+            chain_verified: *chain_verified,
+            reviewers: reviewers.clone(),
+            merged: *merged,
+            abandoned: *abandoned,
+        }),
     };
 
     SessionView {
-        banner: Banner { session: "remote".into(), version: env!("CARGO_PKG_VERSION").into() },
+        banner: Banner {
+            session: "remote".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+        },
         status,
         stations,
         fleet,
@@ -184,7 +215,11 @@ fn wire_gate_to_card(wg: &WireGate, stations: &[Station; 2]) -> GateCard {
                     VerdictStatus::Revealed(Verdict::NoGo(_)) => KeyStatus::NoGo,
                 })
                 .unwrap_or(KeyStatus::Awaiting);
-            KeyView { label: st.label.clone(), role: st.role, status }
+            KeyView {
+                label: st.label.clone(),
+                role: st.role,
+                status,
+            }
         })
         .collect();
 
@@ -333,7 +368,9 @@ pub async fn run_remote(
         // The invite is decision-relevant only while the stations are not both
         // linked; the moment they are, it disappears (calm default).
         if !view.status.linked {
-            view.invite = invite.as_ref().and_then(|l| compose_invite_text(l, link_mode));
+            view.invite = invite
+                .as_ref()
+                .and_then(|l| compose_invite_text(l, link_mode));
         }
 
         let active_gate_id = state.gate.as_ref().map(|g| g.gate_id.0.clone());
@@ -383,7 +420,10 @@ pub async fn run_remote(
         // Plan steer compose: show the steer buffer in the notice row.
         if matches!(compose, ComposeTarget::PlanSteer) {
             let warn = if rejected_ttl > 0 {
-                rejected_msg.as_deref().map(|m| format!(" · {m}")).unwrap_or_default()
+                rejected_msg
+                    .as_deref()
+                    .map(|m| format!(" · {m}"))
+                    .unwrap_or_default()
             } else {
                 String::new()
             };
@@ -493,7 +533,8 @@ pub async fn run_remote(
                         GoDecision::NeedAck => {
                             truncation_ack = Some(wg.gate_id.0.clone());
                             rejected_msg = Some(
-                                "diff was truncated at 64 KB — press [g] again to sign anyway".into(),
+                                "diff was truncated at 64 KB — press [g] again to sign anyway"
+                                    .into(),
                             );
                             rejected_ttl = 60;
                         }
@@ -559,8 +600,7 @@ pub async fn run_remote(
                         Ok(contents) => {
                             // Suspend TUI, launch editor, re-enter TUI.
                             TerminalGuard::restore();
-                            let edit_result =
-                                run_editor_roundtrip(&path, contents.as_deref());
+                            let edit_result = run_editor_roundtrip(&path, contents.as_deref());
                             // Re-enter raw mode / alternate screen.
                             let _ = ratatui::crossterm::execute!(
                                 io::stdout(),
@@ -579,9 +619,8 @@ pub async fn run_remote(
                                 }
                                 Ok(Some(new_contents)) => {
                                     let _ = client.hand_edit(&path, &new_contents).await;
-                                    rejected_msg = Some(
-                                        "hand-edit sent — fresh gate opened".into(),
-                                    );
+                                    rejected_msg =
+                                        Some("hand-edit sent — fresh gate opened".into());
                                     rejected_ttl = 40;
                                 }
                             }
@@ -600,24 +639,21 @@ pub async fn run_remote(
             }
             Some(Action::PageDown) => {
                 let total = diff_line_count(&view.active);
-                diff_scroll = clamp_scroll(
-                    diff_scroll as i32 + PAGE_LINES as i32,
-                    total,
-                    PAGE_LINES,
-                );
+                diff_scroll =
+                    clamp_scroll(diff_scroll as i32 + PAGE_LINES as i32, total, PAGE_LINES);
             }
             Some(Action::PageUp) => {
-                diff_scroll = clamp_scroll(
-                    diff_scroll as i32 - PAGE_LINES as i32,
-                    0,
-                    PAGE_LINES,
-                );
+                diff_scroll = clamp_scroll(diff_scroll as i32 - PAGE_LINES as i32, 0, PAGE_LINES);
             }
 
             // Cycle selected file.
             Some(Action::CycleFile) => {
                 let files_len = if let ActiveRegion::Gate(ref card) = view.active {
-                    card.diff_preview.as_deref().map(diff_files).unwrap_or_default().len()
+                    card.diff_preview
+                        .as_deref()
+                        .map(diff_files)
+                        .unwrap_or_default()
+                        .len()
                 } else {
                     0
                 };
@@ -655,7 +691,9 @@ pub async fn run_remote(
                             // no bare veto: keep composing until a real steer exists
                         } else {
                             if let Some(wg) = &state.gate {
-                                let _ = client.cast_nogo(wg, &compose_buf, ReviewDepth::FullDiff).await;
+                                let _ = client
+                                    .cast_nogo(wg, &compose_buf, ReviewDepth::FullDiff)
+                                    .await;
                             }
                             compose = ComposeTarget::None;
                             compose_buf.clear();
@@ -684,7 +722,8 @@ pub async fn run_remote(
                             rejected_ttl = 20;
                         } else {
                             if let ActiveRegion::Plan { tasks, .. } = &view.active {
-                                let new_list = planedit::edit_task(tasks.clone(), idx, compose_buf.clone());
+                                let new_list =
+                                    planedit::edit_task(tasks.clone(), idx, compose_buf.clone());
                                 let _ = client.edit_plan(&new_list).await;
                             }
                             compose = ComposeTarget::None;
@@ -775,7 +814,9 @@ fn run_editor_roundtrip(path: &str, contents: Option<&str>) -> io::Result<Option
     let status = Command::new(&editor).arg(&tmp_path).status()?;
 
     if !status.success() {
-        return Err(io::Error::other(format!("editor exited with status {status}")));
+        return Err(io::Error::other(format!(
+            "editor exited with status {status}"
+        )));
     }
 
     // Read back.
@@ -820,10 +861,10 @@ pub fn go_gate(truncated: bool, acked: bool) -> GoDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kontur_core::{VerdictStatus, OperatorId};
-    use kontur_net::{WireGate, WirePhase, WireRole, WireSeat, WireState};
     use kontur_core::GateId;
     use kontur_core::Hash;
+    use kontur_core::{OperatorId, VerdictStatus};
+    use kontur_net::{WireGate, WirePhase, WireRole, WireSeat, WireState};
 
     fn op(b: u8) -> OperatorId {
         OperatorId([b; 32])
@@ -833,8 +874,20 @@ mod tests {
         WireState {
             phase,
             seats: vec![
-                WireSeat { label: "A".into(), operator: op(1), role: WireRole::Host, linked: true, ready: false },
-                WireSeat { label: "B".into(), operator: op(2), role: WireRole::Operator, linked: true, ready: false },
+                WireSeat {
+                    label: "A".into(),
+                    operator: op(1),
+                    role: WireRole::Host,
+                    linked: true,
+                    ready: false,
+                },
+                WireSeat {
+                    label: "B".into(),
+                    operator: op(2),
+                    role: WireRole::Operator,
+                    linked: true,
+                    ready: false,
+                },
             ],
             fleet: vec![],
             log: vec![],
@@ -910,7 +963,9 @@ mod tests {
     // DispatchReady phase → Prompt with correct ready flags.
     #[test]
     fn dispatch_ready_maps_to_prompt() {
-        let mut state = base_state(WirePhase::DispatchReady { prompt: "do the thing".into() });
+        let mut state = base_state(WirePhase::DispatchReady {
+            prompt: "do the thing".into(),
+        });
         // Set seat B as ready, A not ready.
         state.seats[1].ready = true;
 
@@ -919,7 +974,7 @@ mod tests {
             ActiveRegion::Prompt { prompt, ready } => {
                 assert_eq!(prompt, "do the thing");
                 assert!(!ready[0]); // A not ready
-                assert!(ready[1]);  // B ready
+                assert!(ready[1]); // B ready
             }
             other => panic!("expected Prompt, got {:?}", other),
         }
@@ -954,8 +1009,16 @@ mod tests {
     fn wire_role_host_maps_to_host() {
         let state = base_state(WirePhase::AwaitOperators);
         let view = wire_to_view(&state, op(1), 0);
-        assert_eq!(view.stations[0].role, crate::view::Role::Host, "seat A should be Host");
-        assert_eq!(view.stations[1].role, crate::view::Role::Operator, "seat B should be Operator");
+        assert_eq!(
+            view.stations[0].role,
+            crate::view::Role::Host,
+            "seat A should be Host"
+        );
+        assert_eq!(
+            view.stations[1].role,
+            crate::view::Role::Operator,
+            "seat B should be Operator"
+        );
     }
 
     // linked=false on a seat → StatusStrip.linked == false.
@@ -1005,14 +1068,22 @@ mod tests {
         assert!(wan.contains("forward port 7777"));
         assert!(wan.contains("[l] switch to LAN"));
 
-        let lan_only = crate::link::InviteLinks { lan: both.lan.clone(), wan: None, port: 7777 };
+        let lan_only = crate::link::InviteLinks {
+            lan: both.lan.clone(),
+            wan: None,
+            port: 7777,
+        };
         let t = compose_invite_text(&lan_only, LinkMode::Wan).unwrap();
         assert!(t.contains("192.168.1.2")); // falls back
         assert!(!t.contains("[l] switch")); // no toggle hint with one flavour
         assert!(!t.contains("forward port")); // fallback is LAN, no WAN caveat
 
         assert!(compose_invite_text(
-            &crate::link::InviteLinks { lan: None, wan: None, port: 7777 },
+            &crate::link::InviteLinks {
+                lan: None,
+                wan: None,
+                port: 7777
+            },
             LinkMode::Lan
         )
         .is_none());
@@ -1039,7 +1110,9 @@ mod tests {
     // FR-24: a verdict built with FullDiff depth carries that depth.
     #[test]
     fn cast_verdict_carries_full_diff_depth() {
-        use kontur_core::{CastVerdict, Ed25519Signer, FixedClock, GateId, Hash, ReviewDepth, Verdict, Remedy};
+        use kontur_core::{
+            CastVerdict, Ed25519Signer, FixedClock, GateId, Hash, Remedy, ReviewDepth, Verdict,
+        };
         let signer = Ed25519Signer::from_seed([5u8; 32]);
         let gate_id = GateId("gate-fr24".into());
         let diff_hash = Hash([0u8; 32]);
@@ -1052,6 +1125,10 @@ mod tests {
             ReviewDepth::FullDiff,
             None,
         );
-        assert_eq!(cv.depth, ReviewDepth::FullDiff, "CastVerdict must carry FullDiff depth");
+        assert_eq!(
+            cv.depth,
+            ReviewDepth::FullDiff,
+            "CastVerdict must carry FullDiff depth"
+        );
     }
 }

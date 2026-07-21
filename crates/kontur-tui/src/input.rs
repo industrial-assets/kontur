@@ -107,23 +107,38 @@ mod tests {
         assert_eq!(map_key(KeyCode::Char('r'), false, false), Action::NoGoBegin);
         assert_eq!(map_key(KeyCode::Char('e'), false, false), Action::HandEdit);
         assert_eq!(map_key(KeyCode::Char('q'), false, false), Action::Quit);
-        assert_eq!(map_key(KeyCode::Char('l'), false, false), Action::ToggleLink);
-        assert_eq!(map_key(KeyCode::Char('p'), false, false), Action::PromptBegin);
+        assert_eq!(
+            map_key(KeyCode::Char('l'), false, false),
+            Action::ToggleLink
+        );
+        assert_eq!(
+            map_key(KeyCode::Char('p'), false, false),
+            Action::PromptBegin
+        );
         assert_eq!(map_key(KeyCode::Char('z'), false, false), Action::None);
     }
 
     #[test]
     fn remedy_composition_captures_text() {
-        assert_eq!(map_key(KeyCode::Char('x'), true, false), Action::RemedyChar('x'));
+        assert_eq!(
+            map_key(KeyCode::Char('x'), true, false),
+            Action::RemedyChar('x')
+        );
         assert_eq!(map_key(KeyCode::Enter, true, false), Action::RemedySubmit);
         assert_eq!(map_key(KeyCode::Esc, true, false), Action::RemedyCancel);
         // 'g' while composing is text, not a Go verdict.
-        assert_eq!(map_key(KeyCode::Char('g'), true, false), Action::RemedyChar('g'));
+        assert_eq!(
+            map_key(KeyCode::Char('g'), true, false),
+            Action::RemedyChar('g')
+        );
     }
 
     #[test]
     fn scroll_keys_always_active() {
-        assert_eq!(map_key(KeyCode::Char('j'), false, false), Action::ScrollDown);
+        assert_eq!(
+            map_key(KeyCode::Char('j'), false, false),
+            Action::ScrollDown
+        );
         assert_eq!(map_key(KeyCode::Down, false, false), Action::ScrollDown);
         assert_eq!(map_key(KeyCode::Char('k'), false, false), Action::ScrollUp);
         assert_eq!(map_key(KeyCode::Up, false, false), Action::ScrollUp);
@@ -133,7 +148,10 @@ mod tests {
 
     #[test]
     fn abandon_begin_requires_uppercase_k() {
-        assert_eq!(map_key(KeyCode::Char('K'), false, false), Action::AbandonBegin);
+        assert_eq!(
+            map_key(KeyCode::Char('K'), false, false),
+            Action::AbandonBegin
+        );
         // lowercase k is scroll up, not abandon
         assert_eq!(map_key(KeyCode::Char('k'), false, false), Action::ScrollUp);
     }
@@ -146,22 +164,46 @@ mod tests {
     #[test]
     fn remedy_mode_overrides_scroll_keys() {
         // When composing a remedy, scroll keys do not fire.
-        assert_eq!(map_key(KeyCode::Char('j'), true, false), Action::RemedyChar('j'));
-        assert_eq!(map_key(KeyCode::Char('g'), true, false), Action::RemedyChar('g'));
+        assert_eq!(
+            map_key(KeyCode::Char('j'), true, false),
+            Action::RemedyChar('j')
+        );
+        assert_eq!(
+            map_key(KeyCode::Char('g'), true, false),
+            Action::RemedyChar('g')
+        );
     }
 
     #[test]
     fn plan_mode_maps_selection_and_edit_keys() {
-        assert_eq!(map_key(KeyCode::Char('j'), false, true), Action::PlanSelectDown);
+        assert_eq!(
+            map_key(KeyCode::Char('j'), false, true),
+            Action::PlanSelectDown
+        );
         assert_eq!(map_key(KeyCode::Down, false, true), Action::PlanSelectDown);
-        assert_eq!(map_key(KeyCode::Char('k'), false, true), Action::PlanSelectUp);
+        assert_eq!(
+            map_key(KeyCode::Char('k'), false, true),
+            Action::PlanSelectUp
+        );
         assert_eq!(map_key(KeyCode::Up, false, true), Action::PlanSelectUp);
-        assert_eq!(map_key(KeyCode::Char('e'), false, true), Action::PlanEditBegin);
-        assert_eq!(map_key(KeyCode::Char('d'), false, true), Action::PlanDeleteTask);
+        assert_eq!(
+            map_key(KeyCode::Char('e'), false, true),
+            Action::PlanEditBegin
+        );
+        assert_eq!(
+            map_key(KeyCode::Char('d'), false, true),
+            Action::PlanDeleteTask
+        );
         assert_eq!(map_key(KeyCode::Char('<'), false, true), Action::PlanMoveUp);
-        assert_eq!(map_key(KeyCode::Char('>'), false, true), Action::PlanMoveDown);
+        assert_eq!(
+            map_key(KeyCode::Char('>'), false, true),
+            Action::PlanMoveDown
+        );
         assert_eq!(map_key(KeyCode::Char('y'), false, true), Action::Ready);
-        assert_eq!(map_key(KeyCode::Char('K'), false, true), Action::AbandonBegin);
+        assert_eq!(
+            map_key(KeyCode::Char('K'), false, true),
+            Action::AbandonBegin
+        );
         assert_eq!(map_key(KeyCode::Char('q'), false, true), Action::Quit);
         // Unbound keys → None
         assert_eq!(map_key(KeyCode::Char('g'), false, true), Action::None);
@@ -169,7 +211,10 @@ mod tests {
 
     #[test]
     fn plan_steer_begin_maps_r_in_plan_mode() {
-        assert_eq!(map_key(KeyCode::Char('r'), false, true), Action::PlanSteerBegin);
+        assert_eq!(
+            map_key(KeyCode::Char('r'), false, true),
+            Action::PlanSteerBegin
+        );
         // r outside plan mode is NoGoBegin (unchanged)
         assert_eq!(map_key(KeyCode::Char('r'), false, false), Action::NoGoBegin);
     }
@@ -177,7 +222,13 @@ mod tests {
     #[test]
     fn composing_takes_priority_over_plan_mode() {
         // When both composing_remedy=true and plan_mode=true, text input wins.
-        assert_eq!(map_key(KeyCode::Char('j'), true, true), Action::RemedyChar('j'));
-        assert_eq!(map_key(KeyCode::Char('e'), true, true), Action::RemedyChar('e'));
+        assert_eq!(
+            map_key(KeyCode::Char('j'), true, true),
+            Action::RemedyChar('j')
+        );
+        assert_eq!(
+            map_key(KeyCode::Char('e'), true, true),
+            Action::RemedyChar('e')
+        );
     }
 }

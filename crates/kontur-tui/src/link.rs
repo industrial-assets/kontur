@@ -158,8 +158,7 @@ pub fn parse_invite(link: &str) -> Result<(String, [u8; 16], [u8; 16]), String> 
         ));
     }
 
-    let payload = base32_decode(code)
-        .map_err(|e| format!("invalid invite code: {e}"))?;
+    let payload = base32_decode(code).map_err(|e| format!("invalid invite code: {e}"))?;
 
     // 52 base32 chars → floor(52*5/8) = 32 bytes
     if payload.len() < 32 {
@@ -279,7 +278,10 @@ mod tests {
         let short_code = "aaaa"; // 4 chars → wrong length for invite
         let link = format!("kontur://1.2.3.4:7777/{short_code}");
         let err = parse_invite(&link).unwrap_err();
-        assert!(err.contains("52"), "expected error mentioning 52; got: {err}");
+        assert!(
+            err.contains("52"),
+            "expected error mentioning 52; got: {err}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -304,7 +306,12 @@ mod tests {
         let link = format_invite("127.0.0.1", 7777, &secret, &fp16);
         // Strip scheme and address to get just the code.
         let code = link.split('/').next_back().unwrap();
-        assert_eq!(code.len(), 52, "v2 code must be exactly 52 chars; got {}", code.len());
+        assert_eq!(
+            code.len(),
+            52,
+            "v2 code must be exactly 52 chars; got {}",
+            code.len()
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -361,8 +368,10 @@ mod tests {
 
     #[test]
     fn rejects_bad_scheme() {
-        let err = parse_invite("http://1.2.3.4:7777/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-            .unwrap_err();
+        let err = parse_invite(
+            "http://1.2.3.4:7777/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap_err();
         assert!(err.contains("invalid scheme"), "got: {err}");
     }
 

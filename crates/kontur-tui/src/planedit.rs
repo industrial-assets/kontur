@@ -118,7 +118,10 @@ mod tests {
     fn delete_task_single_item_errors() {
         let list = vec!["only".into()];
         let err = delete_task(list, 0).unwrap_err();
-        assert!(err.contains("at least one task"), "error message unexpected: {err}");
+        assert!(
+            err.contains("at least one task"),
+            "error message unexpected: {err}"
+        );
     }
 
     #[test]

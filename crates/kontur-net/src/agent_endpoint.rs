@@ -7,7 +7,9 @@ use kontur_mcp::GateHost;
 /// Returns when the listener errors (typically on shutdown).
 pub async fn serve_agent_endpoint(listener: tokio::net::TcpListener, host: Arc<GateHost>) {
     loop {
-        let Ok((stream, _)) = listener.accept().await else { break };
+        let Ok((stream, _)) = listener.accept().await else {
+            break;
+        };
         let server = kontur_mcp::KonturServer::new(host.clone());
         tokio::spawn(async move {
             if let Ok(running) = rmcp::serve_server(server, stream).await {

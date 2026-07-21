@@ -10,7 +10,9 @@ use kontur_core::{HoldState, OperatorId};
 use kontur_mcp::{GateHost, HostEvent};
 
 use crate::codec::{read_json, write_json};
-use crate::protocol::{ClientMsg, ServerMsg, WireFleetCard, WireGate, WirePhase, WireRole, WireSeat, WireState};
+use crate::protocol::{
+    ClientMsg, ServerMsg, WireFleetCard, WireGate, WirePhase, WireRole, WireSeat, WireState,
+};
 
 // ---------------------------------------------------------------------------
 // Public config
@@ -255,7 +257,10 @@ impl SessionServer {
                 } else {
                     net.fleet.push(card);
                 }
-                push_log(&mut net, &format!("gate {} parked at merge gate", gate_id.0));
+                push_log(
+                    &mut net,
+                    &format!("gate {} parked at merge gate", gate_id.0),
+                );
                 drop(net);
                 self.refresh_locked().await;
             }
@@ -273,7 +278,10 @@ impl SessionServer {
                 let _ = gate_id;
                 self.refresh_locked().await;
             }
-            HostEvent::GateSuperseded { old_gate_id, new_gate_id } => {
+            HostEvent::GateSuperseded {
+                old_gate_id,
+                new_gate_id,
+            } => {
                 // The stale pending hold has been removed; the fresh gate now
                 // carries the combined diff. Log and refresh so the wire
                 // projects the fresh gate immediately — realtime property.
@@ -309,7 +317,13 @@ impl SessionServer {
             }
             HostEvent::PlanSteered { steer } => {
                 let mut net = self.inner.net.lock().await;
-                push_log(&mut net, &format!("plan steer routed to agent: {}", steer.chars().take(40).collect::<String>()));
+                push_log(
+                    &mut net,
+                    &format!(
+                        "plan steer routed to agent: {}",
+                        steer.chars().take(40).collect::<String>()
+                    ),
+                );
                 drop(net);
                 self.refresh_locked().await;
             }
@@ -445,7 +459,10 @@ async fn reader_task<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(
     };
 
     let (seat_idx, operator) = match &hello {
-        ClientMsg::Hello { seat: client_label, operator } => {
+        ClientMsg::Hello {
+            seat: client_label,
+            operator,
+        } => {
             // Seat claim is keyed on OperatorId alone; the configured label
             // for that seat is used everywhere (client-sent label is ignored
             // beyond optional diagnostics).
@@ -484,10 +501,7 @@ async fn reader_task<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(
         net.seats[seat_idx].linked = true;
 
         // Both linked for first time → advance to DispatchReady
-        if net.phase == Phase::AwaitOperators
-            && net.seats[0].linked
-            && net.seats[1].linked
-        {
+        if net.phase == Phase::AwaitOperators && net.seats[0].linked && net.seats[1].linked {
             net.phase = Phase::DispatchReady;
             push_log(&mut net, "both stations linked");
         }
@@ -549,7 +563,10 @@ async fn handle_client_msg(
                     Phase::PlanReview => {
                         // Determine the effective plan: agent-proposed takes priority
                         // over the scripted config plan; if both are empty, refuse.
-                        let effective_plan = net.agent_plan.clone().unwrap_or_else(|| server.inner.cfg.plan.clone());
+                        let effective_plan = net
+                            .agent_plan
+                            .clone()
+                            .unwrap_or_else(|| server.inner.cfg.plan.clone());
                         if effective_plan.is_empty() {
                             // Consent must be re-signalled against the actual plan (no anchoring).
                             net.seats[0].ready = false;
@@ -599,7 +616,9 @@ async fn handle_client_msg(
                     // Surface SessionAbandoned as a Rejected reason so the
                     // casting operator knows post-abandon casts are closed.
                     let _ = conn_tx
-                        .send(ServerMsg::Rejected { reason: e.to_string() })
+                        .send(ServerMsg::Rejected {
+                            reason: e.to_string(),
+                        })
                         .await;
                 }
                 Ok(progress) => {
@@ -649,7 +668,9 @@ async fn handle_client_msg(
             {
                 Err(e) => {
                     let _ = conn_tx
-                        .send(ServerMsg::Rejected { reason: e.to_string() })
+                        .send(ServerMsg::Rejected {
+                            reason: e.to_string(),
+                        })
                         .await;
                 }
                 Ok(_) => {
@@ -690,17 +711,23 @@ async fn handle_client_msg(
 
             let new_phase = {
                 let net = server.inner.net.lock().await;
-                let reviewers = vec![
-                    net.seats[0].label.clone(),
-                    net.seats[1].label.clone(),
-                ];
-                Phase::Closed { gates, chain_verified, reviewers, merged: false, abandoned: true }
+                let reviewers = vec![net.seats[0].label.clone(), net.seats[1].label.clone()];
+                Phase::Closed {
+                    gates,
+                    chain_verified,
+                    reviewers,
+                    merged: false,
+                    abandoned: true,
+                }
             };
 
             {
                 let mut net = server.inner.net.lock().await;
                 net.phase = new_phase;
-                push_log(&mut net, &format!("{label} abandoned the session — nothing merged"));
+                push_log(
+                    &mut net,
+                    &format!("{label} abandoned the session — nothing merged"),
+                );
             }
 
             server.refresh_locked().await;
@@ -721,7 +748,9 @@ async fn handle_client_msg(
             match server.inner.host.read_file(&task_id, &path).await {
                 Err(e) => {
                     let _ = conn_tx
-                        .send(ServerMsg::Rejected { reason: e.to_string() })
+                        .send(ServerMsg::Rejected {
+                            reason: e.to_string(),
+                        })
                         .await;
                 }
                 Ok(maybe_bytes) => {
@@ -729,7 +758,10 @@ async fn handle_client_msg(
                         None => {
                             // File does not exist in the worktree (new file).
                             let _ = conn_tx
-                                .send(ServerMsg::FileContent { path, contents: None })
+                                .send(ServerMsg::FileContent {
+                                    path,
+                                    contents: None,
+                                })
                                 .await;
                         }
                         Some(bytes) => {
@@ -747,11 +779,15 @@ async fn handle_client_msg(
                                     // Send FileContent with contents: None AND a Rejected
                                     // notice so the operator knows to hand-edit on the host.
                                     let _ = conn_tx
-                                        .send(ServerMsg::FileContent { path: path.clone(), contents: None })
+                                        .send(ServerMsg::FileContent {
+                                            path: path.clone(),
+                                            contents: None,
+                                        })
                                         .await;
                                     let _ = conn_tx
                                         .send(ServerMsg::Rejected {
-                                            reason: "binary file — hand-edit on the host machine".into(),
+                                            reason: "binary file — hand-edit on the host machine"
+                                                .into(),
                                         })
                                         .await;
                                 }
@@ -809,14 +845,18 @@ async fn handle_client_msg(
             // Only valid during PlanReview.
             if net.phase != Phase::PlanReview {
                 let _ = conn_tx
-                    .send(ServerMsg::Rejected { reason: "plan is locked".into() })
+                    .send(ServerMsg::Rejected {
+                        reason: "plan is locked".into(),
+                    })
                     .await;
                 return;
             }
             // No bare veto — steer must have content.
             if steer.trim().is_empty() {
                 let _ = conn_tx
-                    .send(ServerMsg::Rejected { reason: "steer cannot be empty".into() })
+                    .send(ServerMsg::Rejected {
+                        reason: "steer cannot be empty".into(),
+                    })
                     .await;
                 return;
             }
@@ -945,11 +985,14 @@ impl SessionServer {
 
         let new_phase = {
             let net = inner.net.lock().await;
-            let reviewers = vec![
-                net.seats[0].label.clone(),
-                net.seats[1].label.clone(),
-            ];
-            Phase::Closed { gates, chain_verified, reviewers, merged, abandoned: false }
+            let reviewers = vec![net.seats[0].label.clone(), net.seats[1].label.clone()];
+            Phase::Closed {
+                gates,
+                chain_verified,
+                reviewers,
+                merged,
+                abandoned: false,
+            }
         };
 
         {
@@ -972,10 +1015,19 @@ impl SessionServer {
                 prompt: net.prompt.clone(),
             },
             Phase::PlanReview => WirePhase::PlanReview {
-                tasks: net.agent_plan.clone().unwrap_or_else(|| inner.cfg.plan.clone()),
+                tasks: net
+                    .agent_plan
+                    .clone()
+                    .unwrap_or_else(|| inner.cfg.plan.clone()),
             },
             Phase::Executing => WirePhase::Executing,
-            Phase::Closed { gates, chain_verified, reviewers, merged, abandoned } => WirePhase::Closed {
+            Phase::Closed {
+                gates,
+                chain_verified,
+                reviewers,
+                merged,
+                abandoned,
+            } => WirePhase::Closed {
                 gates: *gates,
                 chain_verified: *chain_verified,
                 reviewers: reviewers.clone(),
@@ -1083,14 +1135,13 @@ fn hex16(op: &OperatorId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use crate::codec::{read_json, write_json};
+    use crate::protocol::{ClientMsg, ServerMsg, WirePhase};
     use kontur_core::{
-        Ed25519Signer, GateId, Hash, OperatorId, ReviewDepth, Signer, Timestamp,
-        Verdict, Remedy,
+        Ed25519Signer, GateId, Hash, OperatorId, Remedy, ReviewDepth, Signer, Timestamp, Verdict,
     };
     use kontur_mcp::{GateHost, InMemoryWorkspace, SessionContext};
-    use crate::protocol::{ClientMsg, ServerMsg, WirePhase};
-    use crate::codec::{read_json, write_json};
+    use std::time::Duration;
     use tokio::io::BufReader;
 
     // -----------------------------------------------------------------------
@@ -1157,10 +1208,7 @@ mod tests {
 
     /// Wait until the watch receiver's current-or-next state satisfies the predicate.
     /// Checks the current state first before waiting for changes.
-    async fn wait_for_state<F>(
-        state_rx: &mut watch::Receiver<WireState>,
-        predicate: F,
-    ) -> WireState
+    async fn wait_for_state<F>(state_rx: &mut watch::Receiver<WireState>, predicate: F) -> WireState
     where
         F: Fn(&WireState) -> bool,
     {
@@ -1179,9 +1227,7 @@ mod tests {
     }
 
     /// Drain the read side of a client duplex so the server's writer doesn't block.
-    async fn drain_client<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(
-        reader: R,
-    ) {
+    async fn drain_client<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(reader: R) {
         tokio::spawn(async move {
             let mut r = reader;
             while let Ok(Some(_)) = read_json::<_, ServerMsg>(&mut r).await {}
@@ -1229,17 +1275,32 @@ mod tests {
         drain_client(BufReader::new(cb_read)).await;
 
         // Send Hello from both
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 })
-            .await
-            .unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 })
-            .await
-            .unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
         // Wait for DispatchReady
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        }))
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
         .await
         .expect("timed out waiting for DispatchReady");
 
@@ -1247,9 +1308,12 @@ mod tests {
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        }))
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
         .await
         .expect("timed out waiting for PlanReview");
 
@@ -1257,16 +1321,18 @@ mod tests {
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Executing)
-        }))
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| matches!(s.phase, WirePhase::Executing)),
+        )
         .await
         .expect("timed out waiting for Executing");
 
         // Wait for a gate
-        let state_with_gate = tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            s.gate.is_some()
-        }))
+        let state_with_gate = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.gate.is_some()),
+        )
         .await
         .expect("timed out waiting for gate");
 
@@ -1286,9 +1352,12 @@ mod tests {
         .unwrap();
 
         // Wait for at least one key sealed
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            s.gate.as_ref().map(|g| !g.keys.is_empty()).unwrap_or(false)
-        }))
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.gate.as_ref().map(|g| !g.keys.is_empty()).unwrap_or(false)
+            }),
+        )
         .await
         .expect("timed out waiting for A key sealed");
 
@@ -1304,14 +1373,21 @@ mod tests {
         .unwrap();
 
         // Wait for Closed
-        let final_state = tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Closed { .. })
-        }))
+        let final_state = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::Closed { .. })
+            }),
+        )
         .await
         .expect("timed out waiting for Closed");
 
         match &final_state.phase {
-            WirePhase::Closed { chain_verified, merged, .. } => {
+            WirePhase::Closed {
+                chain_verified,
+                merged,
+                ..
+            } => {
                 assert!(chain_verified, "chain should be verified");
                 assert!(merged, "session should have merged successfully");
             }
@@ -1319,8 +1395,14 @@ mod tests {
         }
 
         let msg = ws.merged_message().expect("should have a merge message");
-        assert!(msg.contains("Reviewed-by: A"), "merge message should contain A");
-        assert!(msg.contains("Reviewed-by: B"), "merge message should contain B");
+        assert!(
+            msg.contains("Reviewed-by: A"),
+            "merge message should contain A"
+        );
+        assert!(
+            msg.contains("Reviewed-by: B"),
+            "merge message should contain B"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1358,41 +1440,61 @@ mod tests {
         drain_client(BufReader::new(ca_read)).await;
         drain_client(BufReader::new(cb_read)).await;
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 })
-            .await
-            .unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 })
-            .await
-            .unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        }))
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
         .await
         .expect("timed out waiting for DispatchReady");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        }))
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
         .await
         .expect("timed out waiting for PlanReview");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Executing)
-        }))
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| matches!(s.phase, WirePhase::Executing)),
+        )
         .await
         .expect("timed out waiting for Executing");
 
         // Wait for first gate
-        let state_with_gate = tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            s.gate.is_some()
-        }))
+        let state_with_gate = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.gate.is_some()),
+        )
         .await
         .expect("timed out waiting for first gate");
 
@@ -1422,9 +1524,15 @@ mod tests {
         .unwrap();
 
         // Wait for a new gate (agent reworks and opens a second gate)
-        let state_with_new_gate = tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            s.gate.as_ref().map(|g| g.gate_id != gate_id).unwrap_or(false)
-        }))
+        let state_with_new_gate = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.gate
+                    .as_ref()
+                    .map(|g| g.gate_id != gate_id)
+                    .unwrap_or(false)
+            }),
+        )
         .await
         .expect("timed out waiting for rework gate");
 
@@ -1454,9 +1562,12 @@ mod tests {
         .unwrap();
 
         // Wait for Closed with gates == 2
-        let final_state = tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Closed { .. })
-        }))
+        let final_state = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::Closed { .. })
+            }),
+        )
         .await
         .expect("timed out waiting for Closed");
 
@@ -1505,41 +1616,61 @@ mod tests {
         // Keep B's read side to drain later
         let cb_buf_reader = BufReader::new(cb_read);
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 })
-            .await
-            .unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 })
-            .await
-            .unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        }))
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
         .await
         .expect("timed out waiting for DispatchReady");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        }))
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
         .await
         .expect("timed out waiting for PlanReview");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Executing)
-        }))
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| matches!(s.phase, WirePhase::Executing)),
+        )
         .await
         .expect("timed out waiting for Executing");
 
         // Wait for gate
-        let state_with_gate = tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            s.gate.is_some()
-        }))
+        let state_with_gate = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.gate.is_some()),
+        )
         .await
         .expect("timed out waiting for gate");
 
@@ -1554,9 +1685,12 @@ mod tests {
         drop(cb_write);
 
         // Wait for B to show linked=false
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            s.seats.iter().any(|seat| seat.label == "B" && !seat.linked)
-        }))
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.seats.iter().any(|seat| seat.label == "B" && !seat.linked)
+            }),
+        )
         .await
         .expect("timed out waiting for B disconnect");
 
@@ -1588,7 +1722,11 @@ mod tests {
             "gate should not close with only one key"
         );
         assert_eq!(
-            after_a_cast.gate.as_ref().map(|g| g.keys.len()).unwrap_or(0),
+            after_a_cast
+                .gate
+                .as_ref()
+                .map(|g| g.keys.len())
+                .unwrap_or(0),
             1,
             "exactly one key (A's, Sealed) should be recorded"
         );
@@ -1600,14 +1738,23 @@ mod tests {
         let (cb2_read, mut cb2_write) = tokio::io::split(client_b2);
         drain_client(BufReader::new(cb2_read)).await;
 
-        write_json(&mut cb2_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 })
-            .await
-            .unwrap();
+        write_json(
+            &mut cb2_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
         // Wait for B linked again
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            s.seats.iter().any(|seat| seat.label == "B" && seat.linked)
-        }))
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.seats.iter().any(|seat| seat.label == "B" && seat.linked)
+            }),
+        )
         .await
         .expect("timed out waiting for B reconnect");
 
@@ -1622,9 +1769,12 @@ mod tests {
         .await
         .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Closed { .. })
-        }))
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::Closed { .. })
+            }),
+        )
         .await
         .expect("timed out waiting for Closed");
     }
@@ -1658,28 +1808,55 @@ mod tests {
         drain_client(BufReader::new(ca_read)).await;
         drain_client(BufReader::new(cb_read)).await;
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 })
-            .await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 })
-            .await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })).await.expect("PlanReview");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Executing)
-        })).await.expect("Executing");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| matches!(s.phase, WirePhase::Executing)),
+        )
+        .await
+        .expect("Executing");
 
         // Trigger two concurrent agent_done calls. The finalizing flag must
         // ensure only one of them proceeds through finalize().
@@ -1693,15 +1870,24 @@ mod tests {
         h2.unwrap();
 
         // Wait for Closed.
-        let closed_state = tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Closed { .. })
-        })).await.expect("timed out waiting for Closed");
+        let closed_state = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::Closed { .. })
+            }),
+        )
+        .await
+        .expect("timed out waiting for Closed");
 
         // The merge message must be present (finalize ran at least once).
         assert!(ws.merged_message().is_some(), "merge message should be set");
 
         // The log must contain exactly one "session closed" entry.
-        let closed_count = closed_state.log.iter().filter(|l| l.contains("session closed")).count();
+        let closed_count = closed_state
+            .log
+            .iter()
+            .filter(|l| l.contains("session closed"))
+            .count();
         assert_eq!(
             closed_count, 1,
             "expected exactly one 'session closed' log entry, got {closed_count}: {:?}",
@@ -1749,47 +1935,83 @@ mod tests {
         drain_client(BufReader::new(ca_read)).await;
         drain_client(BufReader::new(cb_read)).await;
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 })
-            .await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 })
-            .await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })).await.expect("PlanReview");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Executing)
-        })).await.expect("Executing");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| matches!(s.phase, WirePhase::Executing)),
+        )
+        .await
+        .expect("Executing");
 
         // Wait for a gate to appear.
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            s.gate.is_some()
-        })).await.expect("gate");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.gate.is_some()),
+        )
+        .await
+        .expect("gate");
 
         // A sends Abandon while the gate is open.
-        write_json(&mut ca_write, &ClientMsg::Abandon).await.unwrap();
+        write_json(&mut ca_write, &ClientMsg::Abandon)
+            .await
+            .unwrap();
 
         // Session must close with abandoned=true, merged=false.
         let final_state = tokio::time::timeout(
             Duration::from_secs(5),
-            wait_for_state(&mut state_rx, |s| matches!(s.phase, WirePhase::Closed { .. })),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::Closed { .. })
+            }),
         )
         .await
         .expect("timed out waiting for Closed after Abandon");
 
         match &final_state.phase {
-            WirePhase::Closed { merged, abandoned, .. } => {
+            WirePhase::Closed {
+                merged, abandoned, ..
+            } => {
                 assert!(*abandoned, "phase must be abandoned=true");
                 assert!(!merged, "nothing should be merged on abandon");
             }
@@ -1853,33 +2075,63 @@ mod tests {
         drain_client(BufReader::new(ca_read)).await;
         drain_client(BufReader::new(cb_read)).await;
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 })
-            .await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 })
-            .await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })).await.expect("PlanReview");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Executing)
-        })).await.expect("Executing");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| matches!(s.phase, WirePhase::Executing)),
+        )
+        .await
+        .expect("Executing");
 
         // Wait for a gate.
-        let state_with_gate = tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            s.gate.is_some()
-        })).await.expect("gate");
+        let state_with_gate = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.gate.is_some()),
+        )
+        .await
+        .expect("gate");
 
         let wire_gate = state_with_gate.gate.unwrap();
         let gate_id = wire_gate.gate_id.clone();
@@ -1892,22 +2144,33 @@ mod tests {
                 gate_id: gate_id.clone(),
                 verdict: cast_go(1, &gate_id, diff_hash),
             },
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         write_json(
             &mut cb_write,
             &ClientMsg::Cast {
                 gate_id: gate_id.clone(),
                 verdict: cast_go(2, &gate_id, diff_hash),
             },
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         // Wait for normal Closed.
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Closed { .. })
-        })).await.expect("normal Closed");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::Closed { .. })
+            }),
+        )
+        .await
+        .expect("normal Closed");
 
         // Now send Abandon — must be ignored (no double-transition).
-        write_json(&mut ca_write, &ClientMsg::Abandon).await.unwrap();
+        write_json(&mut ca_write, &ClientMsg::Abandon)
+            .await
+            .unwrap();
 
         // Give the server a moment to process (if it were going to do anything).
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1915,8 +2178,13 @@ mod tests {
         // The final state must still be a normal close: abandoned=false, merged=true.
         let current = state_rx.borrow().clone();
         match &current.phase {
-            WirePhase::Closed { abandoned, merged, .. } => {
-                assert!(!abandoned, "phase must not flip to abandoned after normal close");
+            WirePhase::Closed {
+                abandoned, merged, ..
+            } => {
+                assert!(
+                    !abandoned,
+                    "phase must not flip to abandoned after normal close"
+                );
                 assert!(merged, "session must remain merged=true");
             }
             _ => panic!("expected still Closed"),
@@ -1924,8 +2192,16 @@ mod tests {
 
         // Log must contain exactly one close-type entry mentioning "session closed"
         // (no "abandoned" line appended after the fact).
-        let abandon_count = current.log.iter().filter(|l| l.contains("abandoned")).count();
-        assert_eq!(abandon_count, 0, "no abandon log line expected; log = {:?}", current.log);
+        let abandon_count = current
+            .log
+            .iter()
+            .filter(|l| l.contains("abandoned"))
+            .count();
+        assert_eq!(
+            abandon_count, 0,
+            "no abandon log line expected; log = {:?}",
+            current.log
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1954,16 +2230,26 @@ mod tests {
         drain_client(BufReader::new(ca_read)).await;
 
         // Send Hello — phase stays AwaitOperators / DispatchReady (only one seat).
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 })
-            .await
-            .unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
 
         // Allow the Hello to be processed.
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Directly call the host methods that the MCP KonturServer handler calls.
         let task = kontur_core::TaskId("t1".into());
-        server.host().record_write(&task, "main.rs", b"fn main() {}\n").await.unwrap();
+        server
+            .host()
+            .record_write(&task, "main.rs", b"fn main() {}\n")
+            .await
+            .unwrap();
         server.host().begin_task_gate(task, 0).await.unwrap();
 
         // Wait — without any further operator messages — for a WireState where
@@ -1972,8 +2258,7 @@ mod tests {
         let matched = tokio::time::timeout(
             Duration::from_secs(5),
             wait_for_state(&mut state_rx, |s| {
-                s.gate.is_some()
-                    && s.log.iter().any(|l| l.contains("wrote"))
+                s.gate.is_some() && s.log.iter().any(|l| l.contains("wrote"))
             }),
         )
         .await
@@ -2033,46 +2318,83 @@ mod tests {
         let mut ca_reader = BufReader::new(ca_read);
 
         // Send Hello from both
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 })
-            .await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 })
-            .await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
         // Drain incoming server messages on A until DispatchReady.
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })).await.expect("PlanReview");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Executing)
-        })).await.expect("Executing");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| matches!(s.phase, WirePhase::Executing)),
+        )
+        .await
+        .expect("Executing");
 
         // Wait for a gate.
-        let state_with_gate = tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            s.gate.is_some()
-        })).await.expect("gate");
+        let state_with_gate = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.gate.is_some()),
+        )
+        .await
+        .expect("gate");
 
         let wire_gate = state_with_gate.gate.unwrap();
         let gate_id = wire_gate.gate_id.clone();
         let diff_hash = wire_gate.diff_hash;
 
         // A sends Abandon.
-        write_json(&mut ca_write, &ClientMsg::Abandon).await.unwrap();
+        write_json(&mut ca_write, &ClientMsg::Abandon)
+            .await
+            .unwrap();
 
         // Wait for the session to close.
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Closed { .. })
-        })).await.expect("Closed after Abandon");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::Closed { .. })
+            }),
+        )
+        .await
+        .expect("Closed after Abandon");
 
         // Drain all outstanding state messages from A's read side so we can
         // spot the Rejected response to the upcoming Cast.
@@ -2092,7 +2414,9 @@ mod tests {
                 gate_id: gate_id.clone(),
                 verdict: cast_go(1, &gate_id, diff_hash),
             },
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         // Wait for a Rejected message whose reason contains "abandoned".
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
@@ -2142,29 +2466,68 @@ mod tests {
         drain_client(BufReader::new(ca_read)).await;
         drain_client(BufReader::new(cb_read)).await;
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         // A marks ready.
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            s.seats.first().map(|s| s.ready).unwrap_or(false)
-        })).await.expect("A ready");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.seats.first().map(|s| s.ready).unwrap_or(false)
+            }),
+        )
+        .await
+        .expect("A ready");
 
         // B edits the prompt — should reset both ready flags.
-        write_json(&mut cb_write, &ClientMsg::SetPrompt { prompt: "new prompt text".into() }).await.unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::SetPrompt {
+                prompt: "new prompt text".into(),
+            },
+        )
+        .await
+        .unwrap();
 
         let after_edit = tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
             matches!(&s.phase, WirePhase::DispatchReady { prompt } if prompt == "new prompt text")
         })).await.expect("prompt updated in wire state");
 
         // Both ready flags must have been reset.
-        assert!(!after_edit.seats[0].ready, "A ready must be reset after prompt edit");
-        assert!(!after_edit.seats[1].ready, "B ready must be reset after prompt edit");
+        assert!(
+            !after_edit.seats[0].ready,
+            "A ready must be reset after prompt edit"
+        );
+        assert!(
+            !after_edit.seats[1].ready,
+            "B ready must be reset after prompt edit"
+        );
 
         // The wire prompt must carry the new text.
         match &after_edit.phase {
@@ -2195,20 +2558,46 @@ mod tests {
 
         let mut ca_reader = BufReader::new(ca_read);
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         // Both ready → PlanReview.
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })).await.expect("PlanReview");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
 
         // Drain A's read side into a channel so we can inspect Rejected.
         let (drain_tx, mut drain_rx) = tokio::sync::mpsc::channel::<ServerMsg>(64);
@@ -2220,13 +2609,22 @@ mod tests {
         });
 
         // SetPrompt in PlanReview phase → must be Rejected.
-        write_json(&mut ca_write, &ClientMsg::SetPrompt { prompt: "too late".into() }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::SetPrompt {
+                prompt: "too late".into(),
+            },
+        )
+        .await
+        .unwrap();
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         let mut got_locked = false;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() { break; }
+            if remaining.is_zero() {
+                break;
+            }
             match tokio::time::timeout(remaining, drain_rx.recv()).await {
                 Ok(Some(ServerMsg::Rejected { reason })) if reason.contains("locked") => {
                     got_locked = true;
@@ -2236,7 +2634,10 @@ mod tests {
                 _ => break,
             }
         }
-        assert!(got_locked, "SetPrompt after dispatch must be Rejected with 'locked' in reason");
+        assert!(
+            got_locked,
+            "SetPrompt after dispatch must be Rejected with 'locked' in reason"
+        );
     }
 
     /// SetPrompt with an empty/whitespace prompt must return Rejected with
@@ -2260,12 +2661,33 @@ mod tests {
 
         let mut ca_reader = BufReader::new(ca_read);
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         let (drain_tx, mut drain_rx) = tokio::sync::mpsc::channel::<ServerMsg>(64);
         let drain_tx_clone = drain_tx.clone();
@@ -2276,13 +2698,22 @@ mod tests {
         });
 
         // Empty prompt → Rejected.
-        write_json(&mut ca_write, &ClientMsg::SetPrompt { prompt: "   ".into() }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::SetPrompt {
+                prompt: "   ".into(),
+            },
+        )
+        .await
+        .unwrap();
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         let mut got_empty_rejected = false;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() { break; }
+            if remaining.is_zero() {
+                break;
+            }
             match tokio::time::timeout(remaining, drain_rx.recv()).await {
                 Ok(Some(ServerMsg::Rejected { reason })) if reason.contains("empty") => {
                     got_empty_rejected = true;
@@ -2292,7 +2723,10 @@ mod tests {
                 _ => break,
             }
         }
-        assert!(got_empty_rejected, "empty SetPrompt must produce Rejected with 'empty' in reason");
+        assert!(
+            got_empty_rejected,
+            "empty SetPrompt must produce Rejected with 'empty' in reason"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2336,66 +2770,128 @@ mod tests {
         drain_client(BufReader::new(ca_read)).await;
         drain_client(BufReader::new(cb_read)).await;
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
         // Drive through to Executing.
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx_a, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx_a, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx_a, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })).await.expect("PlanReview");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx_a, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx_a, |s| {
-            matches!(s.phase, WirePhase::Executing)
-        })).await.expect("Executing");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx_a, |s| matches!(s.phase, WirePhase::Executing)),
+        )
+        .await
+        .expect("Executing");
 
         // Wait for the first gate (opened by the scripted agent).
-        let state_with_gate = tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx_a, |s| {
-            s.gate.is_some()
-        })).await.expect("first gate");
+        let state_with_gate = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx_a, |s| s.gate.is_some()),
+        )
+        .await
+        .expect("first gate");
         let original_gate_id = state_with_gate.gate.as_ref().unwrap().gate_id.clone();
 
         // A sends HandEdit.
         let edit_contents = "// edited by hand\npub fn guard() { todo!() }\n";
-        write_json(&mut ca_write, &ClientMsg::HandEdit {
-            path: "src/guard.rs".into(),
-            contents: edit_contents.into(),
-        }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::HandEdit {
+                path: "src/guard.rs".into(),
+                contents: edit_contents.into(),
+            },
+        )
+        .await
+        .unwrap();
 
         // Realtime property: BOTH seats receive a broadcast where the wire
         // projects the FRESH gate (not the stale original), and the
         // diff_preview contains the edited content.
         let fresh_gate_check = |s: &WireState| {
-            s.gate.as_ref().map(|g| {
-                g.gate_id != original_gate_id
-                    && g.diff_preview.as_deref().map(|d| d.contains("edited by hand")).unwrap_or(false)
-            }).unwrap_or(false)
+            s.gate
+                .as_ref()
+                .map(|g| {
+                    g.gate_id != original_gate_id
+                        && g.diff_preview
+                            .as_deref()
+                            .map(|d| d.contains("edited by hand"))
+                            .unwrap_or(false)
+                })
+                .unwrap_or(false)
         };
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx_a, fresh_gate_check))
-            .await.expect("A: wire projects fresh gate with edited content after hand-edit");
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx_b, fresh_gate_check))
-            .await.expect("B: wire projects fresh gate with edited content after hand-edit");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx_a, fresh_gate_check),
+        )
+        .await
+        .expect("A: wire projects fresh gate with edited content after hand-edit");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx_b, fresh_gate_check),
+        )
+        .await
+        .expect("B: wire projects fresh gate with edited content after hand-edit");
 
         // After supersession: ONLY the fresh gate remains pending (stale removed).
         let pending = server.inner.host.pending_gates().await;
-        assert_eq!(pending.len(), 1, "only the fresh hand-edit gate must remain pending");
-        assert_ne!(pending[0].gate_id, original_gate_id, "fresh gate must have a new id");
+        assert_eq!(
+            pending.len(),
+            1,
+            "only the fresh hand-edit gate must remain pending"
+        );
+        assert_ne!(
+            pending[0].gate_id, original_gate_id,
+            "fresh gate must have a new id"
+        );
 
         // The workspace holds the hand-edit content immediately.
         let task = kontur_core::TaskId("t1".into());
-        let new_bytes = ws.file_contents(&task, "src/guard.rs").expect("file must be recorded");
+        let new_bytes = ws
+            .file_contents(&task, "src/guard.rs")
+            .expect("file must be recorded");
         assert!(
-            new_bytes.windows(b"edited by hand".len()).any(|w| w == b"edited by hand"),
+            new_bytes
+                .windows(b"edited by hand".len())
+                .any(|w| w == b"edited by hand"),
             "workspace must reflect hand-edit content"
         );
     }
@@ -2418,8 +2914,16 @@ mod tests {
 
         // Write a file directly via the host (simulates MCP agent write).
         let task = kontur_core::TaskId("t1".into());
-        server.host().record_write(&task, "main.rs", b"fn main() {}\n").await.unwrap();
-        server.host().begin_task_gate(task.clone(), 0).await.unwrap();
+        server
+            .host()
+            .record_write(&task, "main.rs", b"fn main() {}\n")
+            .await
+            .unwrap();
+        server
+            .host()
+            .begin_task_gate(task.clone(), 0)
+            .await
+            .unwrap();
 
         // Attach one client.
         let (client_a, server_a) = tokio::io::duplex(65536);
@@ -2437,14 +2941,33 @@ mod tests {
         });
 
         // Send Hello (only one seat — that's fine for this test).
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
 
         // Wait for the gate to be visible in state.
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| s.gate.is_some()))
-            .await.expect("gate visible");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.gate.is_some()),
+        )
+        .await
+        .expect("gate visible");
 
         // --- Test 1: fetch an existing file ---
-        write_json(&mut ca_write, &ClientMsg::FetchFile { path: "main.rs".into() }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::FetchFile {
+                path: "main.rs".into(),
+            },
+        )
+        .await
+        .unwrap();
 
         let file_content = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -2454,14 +2977,26 @@ mod tests {
                     None => panic!("channel closed"),
                 }
             }
-        }).await.expect("FileContent for main.rs");
+        })
+        .await
+        .expect("FileContent for main.rs");
 
         assert_eq!(file_content.0, "main.rs");
-        assert_eq!(file_content.1.as_deref(), Some("fn main() {}\n"),
-            "contents must match what was written");
+        assert_eq!(
+            file_content.1.as_deref(),
+            Some("fn main() {}\n"),
+            "contents must match what was written"
+        );
 
         // --- Test 2: fetch a missing path → None ---
-        write_json(&mut ca_write, &ClientMsg::FetchFile { path: "does_not_exist.rs".into() }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::FetchFile {
+                path: "does_not_exist.rs".into(),
+            },
+        )
+        .await
+        .unwrap();
 
         let missing_content = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -2471,13 +3006,21 @@ mod tests {
                     None => panic!("channel closed"),
                 }
             }
-        }).await.expect("FileContent for missing path");
+        })
+        .await
+        .expect("FileContent for missing path");
 
         assert_eq!(missing_content.0, "does_not_exist.rs");
-        assert!(missing_content.1.is_none(), "missing path must return None contents");
+        assert!(
+            missing_content.1.is_none(),
+            "missing path must return None contents"
+        );
 
         // Verify the workspace recorded the write.
-        assert_eq!(ws.file_contents(&task, "main.rs"), Some(b"fn main() {}\n".to_vec()));
+        assert_eq!(
+            ws.file_contents(&task, "main.rs"),
+            Some(b"fn main() {}\n".to_vec())
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2504,26 +3047,55 @@ mod tests {
         drain_client(BufReader::new(cb_read)).await;
         let mut ca_reader = BufReader::new(ca_read);
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         // Both ready → PlanReview.
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })).await.expect("PlanReview");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
 
         // Both ready → Executing (config plan is non-empty).
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Executing)
-        })).await.expect("Executing");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| matches!(s.phase, WirePhase::Executing)),
+        )
+        .await
+        .expect("Executing");
 
         // Drain A's read side into a channel to inspect Rejected.
         let (drain_tx, mut drain_rx) = tokio::sync::mpsc::channel::<ServerMsg>(64);
@@ -2534,20 +3106,35 @@ mod tests {
         });
 
         // SteerPlan while Executing → Rejected "plan is locked".
-        write_json(&mut ca_write, &ClientMsg::SteerPlan { steer: "revise".into() }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::SteerPlan {
+                steer: "revise".into(),
+            },
+        )
+        .await
+        .unwrap();
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         let mut got = false;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() { break; }
+            if remaining.is_zero() {
+                break;
+            }
             match tokio::time::timeout(remaining, drain_rx.recv()).await {
-                Ok(Some(ServerMsg::Rejected { reason })) if reason.contains("locked") => { got = true; break; }
+                Ok(Some(ServerMsg::Rejected { reason })) if reason.contains("locked") => {
+                    got = true;
+                    break;
+                }
                 Ok(Some(_)) => continue,
                 _ => break,
             }
         }
-        assert!(got, "SteerPlan outside PlanReview must be Rejected with 'locked' in reason");
+        assert!(
+            got,
+            "SteerPlan outside PlanReview must be Rejected with 'locked' in reason"
+        );
     }
 
     /// SteerPlan with an empty/whitespace steer during PlanReview must be
@@ -2570,18 +3157,44 @@ mod tests {
         drain_client(BufReader::new(cb_read)).await;
         let mut ca_reader = BufReader::new(ca_read);
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })).await.expect("PlanReview");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
 
         let (drain_tx, mut drain_rx) = tokio::sync::mpsc::channel::<ServerMsg>(64);
         tokio::spawn(async move {
@@ -2591,20 +3204,35 @@ mod tests {
         });
 
         // Empty steer during PlanReview → Rejected.
-        write_json(&mut ca_write, &ClientMsg::SteerPlan { steer: "   ".into() }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::SteerPlan {
+                steer: "   ".into(),
+            },
+        )
+        .await
+        .unwrap();
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         let mut got = false;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() { break; }
+            if remaining.is_zero() {
+                break;
+            }
             match tokio::time::timeout(remaining, drain_rx.recv()).await {
-                Ok(Some(ServerMsg::Rejected { reason })) if reason.contains("empty") => { got = true; break; }
+                Ok(Some(ServerMsg::Rejected { reason })) if reason.contains("empty") => {
+                    got = true;
+                    break;
+                }
                 Ok(Some(_)) => continue,
                 _ => break,
             }
         }
-        assert!(got, "empty SteerPlan must be Rejected with 'empty' in reason");
+        assert!(
+            got,
+            "empty SteerPlan must be Rejected with 'empty' in reason"
+        );
     }
 
     /// A steer during PlanReview resets both ready flags and withdraws the
@@ -2627,23 +3255,54 @@ mod tests {
         drain_client(BufReader::new(ca_read)).await;
         drain_client(BufReader::new(cb_read)).await;
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         // Both ready → PlanReview.
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })).await.expect("PlanReview");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
 
         // Now that the session is live (event pump definitely subscribed), the
         // agent proposes a plan — the pump projects it onto the wire.
-        server.inner.host.propose_plan(vec!["agent-task-1".into(), "agent-task-2".into()]).await.unwrap();
+        server
+            .inner
+            .host
+            .propose_plan(vec!["agent-task-1".into(), "agent-task-2".into()])
+            .await
+            .unwrap();
 
         // Wait for the agent plan to project onto the wire.
         tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
@@ -2652,12 +3311,24 @@ mod tests {
 
         // Seat A marks ready.
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            s.seats.iter().any(|st| st.label == "A" && st.ready)
-        })).await.expect("A ready");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.seats.iter().any(|st| st.label == "A" && st.ready)
+            }),
+        )
+        .await
+        .expect("A ready");
 
         // Seat B sends a steer.
-        write_json(&mut cb_write, &ClientMsg::SteerPlan { steer: "split task 2".into() }).await.unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::SteerPlan {
+                steer: "split task 2".into(),
+            },
+        )
+        .await
+        .unwrap();
 
         // State must show: A ready=false and the plan withdrawn (agent_plan None →
         // wire falls back to the config plan, which does NOT contain agent-task-1).
@@ -2668,11 +3339,19 @@ mod tests {
         })).await.expect("A reset and plan withdrawn after steer");
 
         // Explicit assertions.
-        let a_ready = after.seats.iter().find(|st| st.label == "A").map(|st| st.ready).unwrap();
+        let a_ready = after
+            .seats
+            .iter()
+            .find(|st| st.label == "A")
+            .map(|st| st.ready)
+            .unwrap();
         assert!(!a_ready, "seat A ready must reset after steer");
         match &after.phase {
             WirePhase::PlanReview { tasks } => {
-                assert!(!tasks.contains(&"agent-task-1".to_string()), "agent plan must be withdrawn after steer");
+                assert!(
+                    !tasks.contains(&"agent-task-1".to_string()),
+                    "agent plan must be withdrawn after steer"
+                );
             }
             other => panic!("expected PlanReview, got {other:?}"),
         }
@@ -2709,23 +3388,54 @@ mod tests {
         drain_client(BufReader::new(ca_read)).await;
         drain_client(BufReader::new(cb_read)).await;
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         // Both ready → PlanReview.
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })).await.expect("PlanReview");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
 
         // Agent proposes a plan via the host (simulates propose_plan MCP call).
-        server.inner.host.propose_plan(vec!["task-alpha".into(), "task-beta".into()]).await.unwrap();
+        server
+            .inner
+            .host
+            .propose_plan(vec!["task-alpha".into(), "task-beta".into()])
+            .await
+            .unwrap();
 
         // Wait for the agent plan to appear on the wire.
         tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
@@ -2734,7 +3444,14 @@ mod tests {
 
         // Seat A edits: replaces the list with a modified version.
         let edited = vec!["task-beta".into(), "task-alpha-modified".into()];
-        write_json(&mut ca_write, &ClientMsg::EditPlan { tasks: edited.clone() }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::EditPlan {
+                tasks: edited.clone(),
+            },
+        )
+        .await
+        .unwrap();
 
         // Wait for the edit to propagate (both seats reset to not-ready).
         tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
@@ -2746,9 +3463,12 @@ mod tests {
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Executing)
-        })).await.expect("Executing");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| matches!(s.phase, WirePhase::Executing)),
+        )
+        .await
+        .expect("Executing");
 
         // KEY ASSERTION: host.proposed_plan() must equal the EDITED list, not the
         // original agent proposal. The both-ready arm called set_plan(effective_plan)
@@ -2783,31 +3503,64 @@ mod tests {
         drain_client(BufReader::new(ca_read)).await;
         drain_client(BufReader::new(cb_read)).await;
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         // Both ready → PlanReview (no propose_plan call — using cfg.plan fallback).
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })).await.expect("PlanReview");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
 
         // Confirm no agent plan was proposed (host.proposed_plan is None at this point).
-        assert_eq!(server.inner.host.proposed_plan().await, None, "no agent proposal expected before approval");
+        assert_eq!(
+            server.inner.host.proposed_plan().await,
+            None,
+            "no agent proposal expected before approval"
+        );
 
         // Both ready → Executing (cfg.plan is non-empty, so this transitions).
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Executing)
-        })).await.expect("Executing");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| matches!(s.phase, WirePhase::Executing)),
+        )
+        .await
+        .expect("Executing");
 
         // KEY ASSERTION: the both-ready arm must have pushed cfg.plan into the host
         // so the agent always sees a non-None, non-empty plan — never a surprise [].
@@ -2841,34 +3594,78 @@ mod tests {
         drain_client(BufReader::new(ca_read)).await;
         drain_client(BufReader::new(cb_read)).await;
 
-        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
-        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })).await.expect("DispatchReady");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
 
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })).await.expect("PlanReview");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
 
         // Agent proposes [a, b].
-        server.inner.host.propose_plan(vec!["a".into(), "b".into()]).await.unwrap();
+        server
+            .inner
+            .host
+            .propose_plan(vec!["a".into(), "b".into()])
+            .await
+            .unwrap();
         tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
             matches!(&s.phase, WirePhase::PlanReview { tasks } if tasks.contains(&"a".to_string()))
         })).await.expect("agent plan [a, b] on wire");
 
         // Seat A edits to [b, a-modified].
         let edited = vec!["b".into(), "a-modified".into()];
-        write_json(&mut ca_write, &ClientMsg::EditPlan { tasks: edited.clone() }).await.unwrap();
+        write_json(
+            &mut ca_write,
+            &ClientMsg::EditPlan {
+                tasks: edited.clone(),
+            },
+        )
+        .await
+        .unwrap();
 
         // Wait for edit to land on the wire.
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(&s.phase, WirePhase::PlanReview { tasks } if tasks == &edited)
-        })).await.expect("edited list on wire");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(
+                &mut state_rx,
+                |s| matches!(&s.phase, WirePhase::PlanReview { tasks } if tasks == &edited),
+            ),
+        )
+        .await
+        .expect("edited list on wire");
 
         // Capture the last PlanReview state before approval.
         let pre_approval = state_rx.borrow().clone();
@@ -2876,15 +3673,21 @@ mod tests {
             WirePhase::PlanReview { tasks } => tasks.clone(),
             other => panic!("expected PlanReview, got {other:?}"),
         };
-        assert_eq!(pre_tasks, edited, "wire tasks before approval must be the edited list");
+        assert_eq!(
+            pre_tasks, edited,
+            "wire tasks before approval must be the edited list"
+        );
 
         // Both approve.
         write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
         write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
-            matches!(s.phase, WirePhase::Executing)
-        })).await.expect("Executing");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| matches!(s.phase, WirePhase::Executing)),
+        )
+        .await
+        .expect("Executing");
 
         // Wire-level + host-level both agree on the edited list.
         let stored = server.inner.host.proposed_plan().await;

@@ -33,14 +33,23 @@ mod tests {
 
     #[test]
     fn canonical_bytes_are_stable_across_calls() {
-        let s = Sample { a: 7, b: "hi".into() };
+        let s = Sample {
+            a: 7,
+            b: "hi".into(),
+        };
         assert_eq!(canonical_bytes(&s), canonical_bytes(&s));
     }
 
     #[test]
     fn different_values_differ() {
-        let s1 = Sample { a: 7, b: "hi".into() };
-        let s2 = Sample { a: 8, b: "hi".into() };
+        let s1 = Sample {
+            a: 7,
+            b: "hi".into(),
+        };
+        let s2 = Sample {
+            a: 8,
+            b: "hi".into(),
+        };
         assert_ne!(canonical_bytes(&s1), canonical_bytes(&s2));
     }
 
