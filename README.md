@@ -8,6 +8,10 @@ Two engineers, one console, a fleet of agents — and nothing ships without both
 
 ---
 
+<a href="https://www.producthunt.com/products/kontur?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-kontur" target="_blank" rel="noopener noreferrer"><img alt="Kontur - A brutalist CLI for high-efficiency agentic pair programming | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1201525&amp;theme=light&amp;t=1784629963161"></a>
+
+---
+
 ## What it is
 
 KONTUR (kohn-toor) is a terminal-native workstation where two engineers jointly supervise a fleet of coding agents on the same codebase. One hosts the agents, one joins to co-sign; both review. Every change an agent makes is gated behind two independent human approvals before it can merge, and the whole session leaves a signed, tamper-evident audit trail.
