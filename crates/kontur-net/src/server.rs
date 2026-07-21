@@ -360,6 +360,19 @@ impl SessionServer {
                 drop(net);
                 self.refresh_locked().await;
             }
+            HostEvent::QuestionsAsked { questions } => {
+                // Placeholder handling: log that the agent asked. The full
+                // Clarify phase (operators answer, divergence reconciliation,
+                // resolve_clarification) is wired in the next part of the
+                // clarification feature. No live agent path calls this yet.
+                let mut net = self.inner.net.lock().await;
+                push_log(
+                    &mut net,
+                    &format!("agent asked {} clarification question(s)", questions.len()),
+                );
+                drop(net);
+                self.refresh_locked().await;
+            }
             HostEvent::SessionAbandoned => {
                 // The abandon handler in handle_client_msg already logs and
                 // transitions the phase; nothing extra to do here.
