@@ -1,0 +1,22 @@
+# CODEOWNERS — who must review and merge.
+#
+# Every PR against `main` requires review from a code owner listed here, and
+# only a code owner can merge (enforced by branch protection). This is Kontur's
+# four-eyes principle applied to its own repo: the maker never merges their own
+# change.
+#
+# Replace the placeholder team/handles below with real GitHub teams or users
+# before relying on enforcement. Order matters: the LAST matching pattern wins,
+# so more specific paths override the global owner.
+
+# Global owner — every file, unless a rule below overrides.
+*                       @industrial-assets/kontur-maintainers
+
+# High-risk, security-load-bearing code — the four-eyes engine, crypto, and
+# audit chain. Keep these owned by maintainers who review gate/crypto changes.
+/crates/kontur-core/    @industrial-assets/kontur-maintainers
+/crates/kontur-mcp/     @industrial-assets/kontur-maintainers
+
+# Design source of truth — behaviour decisions live here.
+/docs/                  @industrial-assets/kontur-maintainers
+/CLAUDE.md              @industrial-assets/kontur-maintainers
