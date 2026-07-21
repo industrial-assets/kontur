@@ -3,6 +3,7 @@
 pub mod app;
 pub mod boot;
 pub mod claude_agent;
+pub mod compose;
 pub mod demo;
 pub mod diffview;
 pub mod fleet;

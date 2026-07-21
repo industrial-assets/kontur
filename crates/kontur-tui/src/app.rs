@@ -22,7 +22,7 @@ impl TerminalGuard {
     pub fn enter() -> io::Result<(Self, Tui)> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
+        execute!(stdout, EnterAlternateScreen, event::EnableBracketedPaste)?;
         // Restore the terminal on panic BEFORE the default hook prints, so the
         // backtrace isn't swallowed by the alternate screen / raw mode.
         let prev = std::panic::take_hook();
@@ -37,7 +37,11 @@ impl TerminalGuard {
     /// Restore the terminal explicitly (idempotent with Drop).
     pub fn restore() {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(
+            io::stdout(),
+            event::DisableBracketedPaste,
+            LeaveAlternateScreen
+        );
     }
 }
 
@@ -56,8 +60,21 @@ pub fn poll_action(
     plan_mode: bool,
 ) -> io::Result<Option<Action>> {
     if event::poll(timeout)? {
-        if let Event::Key(key) = event::read()? {
-            return Ok(Some(map_key(key.code, composing_remedy, plan_mode)));
+        match event::read()? {
+            Event::Key(key) => {
+                return Ok(Some(map_key(
+                    key.code,
+                    key.modifiers,
+                    composing_remedy,
+                    plan_mode,
+                )));
+            }
+            // Bracketed paste: only meaningful while composing; inserted
+            // verbatim so embedded newlines can never submit mid-paste.
+            Event::Paste(text) if composing_remedy => {
+                return Ok(Some(Action::PasteText(text)));
+            }
+            _ => {}
         }
     }
     Ok(None)

@@ -340,16 +340,21 @@ fn render_phase_card(frame: &mut Frame, area: Rect, active: &ActiveRegion) {
         ActiveRegion::Prompt { prompt, ready } => {
             let a_mark = if ready[0] { "■" } else { "□" };
             let b_mark = if ready[1] { "■" } else { "□" };
-            let lines = vec![
-                Line::from(format!(" {}", prompt)),
-                Line::from(format!(
-                    " DISPATCH GATE   A ⟨{}⟩ ready   B ⟨{}⟩ ready",
-                    a_mark, b_mark
-                )),
-                Line::from(" [p] edit prompt · [y] mark ready — needs both"),
-            ];
+            // Multi-line instruction: each line of the draft renders; long
+            // lines wrap rather than clip.
+            let mut lines: Vec<Line> = prompt
+                .split('\n')
+                .map(|l| Line::from(format!(" {l}")))
+                .collect();
+            lines.push(Line::from(format!(
+                " DISPATCH GATE   A ⟨{}⟩ ready   B ⟨{}⟩ ready",
+                a_mark, b_mark
+            )));
+            lines.push(Line::from(" [p] edit prompt · [y] mark ready — needs both"));
             frame.render_widget(
-                Paragraph::new(lines).block(Block::bordered().title("PROMPT")),
+                Paragraph::new(lines)
+                    .block(Block::bordered().title("PROMPT"))
+                    .wrap(Wrap { trim: false }),
                 area,
             );
         }

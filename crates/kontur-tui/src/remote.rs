@@ -10,6 +10,7 @@ use kontur_core::{OperatorId, ReviewDepth, Verdict, VerdictStatus};
 use kontur_net::{ServerMsg, SessionClient, WireGate, WirePhase, WireRole, WireState};
 
 use crate::app::{poll_action, TerminalGuard};
+use crate::compose;
 use crate::diffview::{clamp_scroll, editor_command};
 use crate::input::Action;
 use crate::planedit;
@@ -476,6 +477,7 @@ pub async fn run_remote(
 
     let mut compose = ComposeTarget::None;
     let mut compose_buf = String::new();
+    let mut compose_cursor: usize = 0;
     // Prompt text as it was when [p] was pressed — Esc restores it (drafts
     // stream live to the other seat, so cancel must undo what they saw).
     let mut prompt_before = String::new();
@@ -663,6 +665,7 @@ pub async fn run_remote(
             Some(Action::NoGoBegin) => {
                 compose = ComposeTarget::Remedy;
                 compose_buf.clear();
+                compose_cursor = 0;
             }
 
             // Prompt edit → start composing (valid only in DispatchReady region).
@@ -673,6 +676,7 @@ pub async fn run_remote(
                     // retyping the whole instruction (same idiom as task editing).
                     // Draft is shown via the notice row while composing.
                     compose_buf = prompt.clone();
+                    compose_cursor = compose::end(&compose_buf);
                     prompt_before = prompt.clone();
                 }
             }
@@ -722,7 +726,8 @@ pub async fn run_remote(
                             // Re-enter raw mode / alternate screen.
                             let _ = ratatui::crossterm::execute!(
                                 io::stdout(),
-                                ratatui::crossterm::terminal::EnterAlternateScreen
+                                ratatui::crossterm::terminal::EnterAlternateScreen,
+                                ratatui::crossterm::event::EnableBracketedPaste
                             );
                             let _ = ratatui::crossterm::terminal::enable_raw_mode();
 
@@ -794,7 +799,7 @@ pub async fn run_remote(
                     compose = ComposeTarget::None;
                     compose_buf.clear();
                 } else {
-                    compose_buf.push(c);
+                    compose_cursor = compose::insert_char(&mut compose_buf, compose_cursor, c);
                     // Live sync: the other seat sees the draft as it is typed.
                     if matches!(compose, ComposeTarget::Prompt) {
                         let _ = client.prompt_draft(&compose_buf).await;
@@ -802,10 +807,49 @@ pub async fn run_remote(
                 }
             }
             Some(Action::RemedyBackspace) => {
-                compose_buf.pop();
+                compose_cursor = compose::backspace(&mut compose_buf, compose_cursor);
                 if matches!(compose, ComposeTarget::Prompt) {
                     let _ = client.prompt_draft(&compose_buf).await;
                 }
+            }
+            Some(Action::PasteText(text)) => {
+                // Verbatim insert — newlines included; plan tasks stay
+                // single-line so their list rendering can't break.
+                let text = if matches!(compose, ComposeTarget::PlanEdit { .. }) {
+                    text.replace('\n', " ")
+                } else {
+                    text
+                };
+                if !matches!(compose, ComposeTarget::None | ComposeTarget::ConfirmAbandon) {
+                    compose_cursor = compose::insert_str(&mut compose_buf, compose_cursor, &text);
+                    if matches!(compose, ComposeTarget::Prompt) {
+                        let _ = client.prompt_draft(&compose_buf).await;
+                    }
+                }
+            }
+            Some(Action::NewLine) => {
+                // Multi-line composes only; plan tasks are single-line.
+                if matches!(
+                    compose,
+                    ComposeTarget::Prompt | ComposeTarget::Remedy | ComposeTarget::PlanSteer
+                ) {
+                    compose_cursor = compose::insert_char(&mut compose_buf, compose_cursor, '\n');
+                    if matches!(compose, ComposeTarget::Prompt) {
+                        let _ = client.prompt_draft(&compose_buf).await;
+                    }
+                }
+            }
+            Some(Action::CursorLeft) => {
+                compose_cursor = compose::left(compose_cursor);
+            }
+            Some(Action::CursorRight) => {
+                compose_cursor = compose::right(&compose_buf, compose_cursor);
+            }
+            Some(Action::CursorHome) => {
+                compose_cursor = compose::home();
+            }
+            Some(Action::CursorEnd) => {
+                compose_cursor = compose::end(&compose_buf);
             }
             Some(Action::RemedySubmit) => {
                 match compose {
@@ -894,15 +938,24 @@ pub async fn run_remote(
 fn compose_notice(compose: &ComposeTarget, buf: &str, warn: &str) -> Option<String> {
     match compose {
         ComposeTarget::None => None,
-        ComposeTarget::Prompt => Some(format!("prompt > {buf}  [↵] submit · [esc] cancel{warn}")),
+        // The prompt draft renders in the PROMPT pane itself (multi-line, with
+        // cursor); the notice row carries only the verbs.
+        ComposeTarget::Prompt => Some(format!(
+            "editing prompt — [↵] submit · [alt+↵] newline · [esc] cancel{warn}"
+        )),
         ComposeTarget::Remedy => Some(format!(
-            "no-go steer > {buf}  [↵] cast no-go · [esc] cancel{warn}"
+            "no-go steer > {}  [↵] cast no-go · [alt+↵] newline · [esc] cancel{warn}",
+            compose::inline(buf)
         )),
         ComposeTarget::PlanEdit { idx } => Some(format!(
-            "edit t{} > {buf}  [↵] submit · [esc] cancel",
-            idx + 1
+            "edit t{} > {}  [↵] submit · [esc] cancel",
+            idx + 1,
+            compose::inline(buf)
         )),
-        ComposeTarget::PlanSteer => Some(format!("steer > {buf}  [↵] send · [esc] cancel{warn}")),
+        ComposeTarget::PlanSteer => Some(format!(
+            "steer > {}  [↵] send · [alt+↵] newline · [esc] cancel{warn}",
+            compose::inline(buf)
+        )),
         ComposeTarget::ConfirmAbandon => Some("abandon session? [y] confirm · [esc] cancel".into()),
     }
 }

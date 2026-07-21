@@ -404,3 +404,22 @@ fn gate_card_shows_failed_command_loudly() {
     let s = draw(&base(ActiveRegion::Gate(card)));
     assert!(s.contains("last cmd: cargo test · exit 0"), "got:\n{s}");
 }
+
+/// The PROMPT pane renders a multi-line draft line by line (with the compose
+/// cursor marker when present), not squashed to one row.
+#[test]
+fn prompt_pane_renders_multiline_draft() {
+    let view = base(ActiveRegion::Prompt {
+        prompt: "fix the parser\nthen add tests\u{258f}".into(),
+        ready: [false, true],
+    });
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    terminal.draw(|f| render(f, &view, 0, 0)).unwrap();
+    let s = buf_string(terminal.backend().buffer());
+    assert!(s.contains(" fix the parser"), "got:\n{s}");
+    assert!(
+        s.contains(" then add tests\u{258f}"),
+        "second line must render on its own row; got:\n{s}"
+    );
+    assert!(s.contains("DISPATCH GATE"));
+}
