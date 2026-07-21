@@ -90,7 +90,7 @@ fn gate_shows_summary_and_sealed_key_never_value() {
             },
         ],
         escalation_required: false,
-        diff_preview: None,
+        file_diffs: vec![],
         diff_truncated: false,
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
@@ -215,7 +215,11 @@ fn gate_shows_diff_and_log_simultaneously() {
             },
         ],
         escalation_required: false,
-        diff_preview: Some("diff --git a/auth/session.rs b/auth/session.rs\n+fn foo() {}".into()),
+        file_diffs: vec![kontur_tui::view::FileDiffView {
+            path: "auth/session.rs".into(),
+            diff: "diff --git a/auth/session.rs b/auth/session.rs\n+fn foo() {}".into(),
+            truncated: false,
+        }],
         diff_truncated: false,
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
@@ -236,7 +240,11 @@ fn gate_truncated_flag_shows_truncated_in_diff_title() {
         loc: 9999,
         keys: vec![],
         escalation_required: false,
-        diff_preview: Some("diff --git a/big.rs b/big.rs\n+fn big() {}".into()),
+        file_diffs: vec![kontur_tui::view::FileDiffView {
+            path: "big.rs".into(),
+            diff: "diff --git a/big.rs b/big.rs\n+fn big() {}\n… (diff truncated)".into(),
+            truncated: true,
+        }],
         diff_truncated: true,
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
@@ -297,7 +305,7 @@ fn gate_files_bar_shows_selection_marker() {
         loc: 10,
         keys: vec![],
         escalation_required: false,
-        diff_preview: None,
+        file_diffs: vec![],
         diff_truncated: false,
     };
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
@@ -323,4 +331,46 @@ fn log_lines_without_time_or_who_have_no_padding() {
     // exactly one leading space inside the bordered pane, not ~11
     assert!(s.contains(" 02:11 agent wrote src/guard.rs"));
     assert!(!s.contains("          02:11 agent wrote"));
+}
+
+/// Per-file diff view: the DIFF pane shows only the tab-selected file's
+/// section, titled with its path; the other file's hunks stay hidden.
+#[test]
+fn diff_pane_shows_only_selected_file_section() {
+    let card = GateCard {
+        gate_id: "gate-pf".into(),
+        task: "t9".into(),
+        files: vec!["a.rs".into(), "package-lock.json".into()],
+        loc: 12,
+        keys: vec![],
+        escalation_required: false,
+        file_diffs: vec![
+            kontur_tui::view::FileDiffView {
+                path: "a.rs".into(),
+                diff: "diff --git a/a.rs b/a.rs\n+alpha_marker".into(),
+                truncated: false,
+            },
+            kontur_tui::view::FileDiffView {
+                path: "package-lock.json".into(),
+                diff: "diff --git a/package-lock.json b/package-lock.json\n+lock_marker".into(),
+                truncated: true,
+            },
+        ],
+        diff_truncated: true,
+    };
+    let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+    terminal
+        .draw(|f| render(f, &base(ActiveRegion::Gate(card)), 0, 1))
+        .unwrap();
+    let s = buf_string(terminal.backend().buffer());
+    assert!(
+        s.contains("+lock_marker"),
+        "selected file's hunks must render; got:\n{s}"
+    );
+    assert!(
+        !s.contains("+alpha_marker"),
+        "unselected file's hunks must not render; got:\n{s}"
+    );
+    // Title names the selected file and carries its truncation marker.
+    assert!(s.contains("package-lock.json (TRUNCATED)"), "got:\n{s}");
 }

@@ -210,11 +210,11 @@ fn panes(
 
             if files_height > 0 {
                 render_files_bar(frame, right[0], card, selected_file);
-                render_diff_pane(frame, right[1], card, diff_scroll);
+                render_diff_pane(frame, right[1], card, diff_scroll, selected_file);
                 render_verdict_bar(frame, right[2], card);
             } else {
                 // Files bar dropped: diff is right[0], verdict is right[1]
-                render_diff_pane(frame, right[0], card, diff_scroll);
+                render_diff_pane(frame, right[0], card, diff_scroll, selected_file);
                 render_verdict_bar(frame, right[1], card);
             }
         }
@@ -230,15 +230,21 @@ fn render_files_bar(
     card: &crate::view::GateCard,
     selected_file: usize,
 ) {
-    let files_str = card
-        .files
+    // Prefer the per-file diff sections (what [tab] actually cycles); fall
+    // back to the recorded file list when no diff arrived.
+    let names: Vec<&str> = if card.file_diffs.is_empty() {
+        card.files.iter().map(String::as_str).collect()
+    } else {
+        card.file_diffs.iter().map(|fd| fd.path.as_str()).collect()
+    };
+    let files_str = names
         .iter()
         .enumerate()
         .map(|(i, f)| {
             if i == selected_file {
                 format!("▶ {f}")
             } else {
-                f.clone()
+                (*f).to_owned()
             }
         })
         .collect::<Vec<_>>()
@@ -253,14 +259,25 @@ fn render_files_bar(
     );
 }
 
-fn render_diff_pane(frame: &mut Frame, area: Rect, card: &crate::view::GateCard, scroll: u16) {
-    let title = if card.diff_truncated {
-        format!("DIFF — {} (TRUNCATED)", card.gate_id)
-    } else {
-        format!("DIFF — {}", card.gate_id)
+fn render_diff_pane(
+    frame: &mut Frame,
+    area: Rect,
+    card: &crate::view::GateCard,
+    scroll: u16,
+    selected_file: usize,
+) {
+    // Show only the tab-selected file's section; each file is truncated
+    // independently, so the marker names the file it applies to.
+    let selected = card
+        .file_diffs
+        .get(selected_file % card.file_diffs.len().max(1));
+    let title = match selected {
+        Some(fd) if fd.truncated => format!("DIFF — {} — {} (TRUNCATED)", card.gate_id, fd.path),
+        Some(fd) => format!("DIFF — {} — {}", card.gate_id, fd.path),
+        None => format!("DIFF — {}", card.gate_id),
     };
-    let body: Vec<Line<'static>> = match &card.diff_preview {
-        Some(text) => styled_diff_lines(text),
+    let body: Vec<Line<'static>> = match selected {
+        Some(fd) => styled_diff_lines(&fd.diff),
         None => vec![Line::from(" no diff available")],
     };
     frame.render_widget(
@@ -643,9 +660,11 @@ mod tests {
                 },
             ],
             escalation_required: false,
-            diff_preview: Some(
-                "diff --git a/auth/session.rs b/auth/session.rs\n+fn foo() {}".into(),
-            ),
+            file_diffs: vec![crate::view::FileDiffView {
+                path: "auth/session.rs".into(),
+                diff: "diff --git a/auth/session.rs b/auth/session.rs\n+fn foo() {}".into(),
+                truncated: false,
+            }],
             diff_truncated: false,
         };
         let rendered = draw(&minimal_view(ActiveRegion::Gate(card)));
@@ -689,7 +708,7 @@ mod tests {
             loc: 10,
             keys: vec![],
             escalation_required: false,
-            diff_preview: None,
+            file_diffs: vec![],
             diff_truncated: false,
         };
         let backend = TestBackend::new(120, 30);
@@ -718,7 +737,11 @@ mod tests {
             loc: 9999,
             keys: vec![],
             escalation_required: false,
-            diff_preview: Some("diff --git a/big.rs b/big.rs\n+fn big() {}".into()),
+            file_diffs: vec![crate::view::FileDiffView {
+                path: "big.rs".into(),
+                diff: "diff --git a/big.rs b/big.rs\n+fn big() {}".into(),
+                truncated: true,
+            }],
             diff_truncated: true,
         };
         let rendered = draw(&minimal_view(ActiveRegion::Gate(card)));

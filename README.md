@@ -114,8 +114,10 @@ claude --mcp-config kontur-mcp.json \
 Agent writes, commands, and gate openings stream live into the operator console
 as they happen — no keypress needed. Every task completion parks at a four-eyes
 gate until both operators cast a verdict — the diff is permanently visible in
-the right pane while the gate is pending; `[tab]` cycles between files;
-truncated diffs require a second `[g]` to acknowledge before casting. The
+the right pane while the gate is pending; `[tab]` cycles between per-file
+diffs, each capped independently (a huge generated file like a lockfile
+truncates only its own view, never the other files'); if any file's diff was
+truncated, a second `[g]` is required to acknowledge before casting. The
 review depth is recorded truthfully in the signed verdict. Enforcement is
 permission-level — native mutation tools are denied via CC's
 `--allowedTools`/`--disallowedTools` flags, not an OS-level sandbox. The

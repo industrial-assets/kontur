@@ -11,7 +11,8 @@ use kontur_mcp::{GateHost, HostEvent};
 
 use crate::codec::{read_json, write_json};
 use crate::protocol::{
-    ClientMsg, ServerMsg, WireFleetCard, WireGate, WirePhase, WireRole, WireSeat, WireState,
+    ClientMsg, ServerMsg, WireFileDiff, WireFleetCard, WireGate, WirePhase, WireRole, WireSeat,
+    WireState,
 };
 
 // ---------------------------------------------------------------------------
@@ -1057,26 +1058,31 @@ impl SessionServer {
         let gate = {
             let pending = inner.host.pending_gates().await;
             if let Some(gv) = pending.first() {
-                // Wire sanity cap: diffs above 64 KiB are truncated so a
-                // single giant task cannot exhaust the connection buffer.
-                // Operators who need the full diff can fetch it with FetchFile.
-                // diff_truncated is set when the cap fires so the TUI can warn
-                // the operator before accepting their go on a partial diff.
-                const DIFF_PREVIEW_CAP: usize = 64 * 1024;
-                let (diff_preview, diff_truncated) = inner
+                // Wire sanity cap: each file's diff section is independently
+                // capped at 64 KiB so one giant generated file (package-lock)
+                // cannot exhaust the connection buffer or starve the other
+                // files' diffs. Operators who need the full file can fetch it
+                // with FetchFile. `truncated` is set per file, and the gate's
+                // diff_truncated when any section was capped, so the TUI warns
+                // before accepting a go on a partial diff.
+                const FILE_DIFF_CAP: usize = 64 * 1024;
+                let file_diffs: Vec<WireFileDiff> = inner
                     .host
                     .gate_diff(&gv.gate_id)
                     .await
                     .and_then(|bytes| String::from_utf8(bytes).ok())
                     .map(|s| {
-                        if s.chars().count() > DIFF_PREVIEW_CAP {
-                            let truncated: String = s.chars().take(DIFF_PREVIEW_CAP).collect();
-                            (Some(format!("{truncated}\n… (diff truncated)")), true)
-                        } else {
-                            (Some(s), false)
-                        }
+                        let fallback = match gv.files.as_slice() {
+                            [only] => only.clone(),
+                            _ => "(all files)".to_owned(),
+                        };
+                        crate::difftext::split_file_diffs_or_whole(&s, &fallback)
+                            .into_iter()
+                            .map(|fd| cap_file_diff(fd, FILE_DIFF_CAP))
+                            .collect()
                     })
-                    .unwrap_or((None, false));
+                    .unwrap_or_default();
+                let diff_truncated = file_diffs.iter().any(|fd| fd.truncated);
 
                 Some(WireGate {
                     gate_id: gv.gate_id.clone(),
@@ -1086,7 +1092,7 @@ impl SessionServer {
                     diff_hash: gv.diff_hash,
                     keys: gv.observed.clone(),
                     escalation_required: gv.escalation_required,
-                    diff_preview,
+                    file_diffs,
                     diff_truncated,
                 })
             } else {
@@ -1107,6 +1113,26 @@ impl SessionServer {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Cap one file's diff section for the wire. Each file is capped
+/// independently so a single huge generated file cannot starve the other
+/// files' diffs or exhaust the connection buffer.
+fn cap_file_diff(fd: crate::difftext::FileDiff, cap: usize) -> WireFileDiff {
+    if fd.diff.chars().count() > cap {
+        let capped: String = fd.diff.chars().take(cap).collect();
+        WireFileDiff {
+            path: fd.path,
+            diff: format!("{capped}\n… (diff truncated)"),
+            truncated: true,
+        }
+    } else {
+        WireFileDiff {
+            path: fd.path,
+            diff: fd.diff,
+            truncated: false,
+        }
+    }
+}
 
 fn push_log(net: &mut Net, text: &str) {
     let elapsed = net.started.elapsed();
@@ -1137,6 +1163,27 @@ mod tests {
     use super::*;
     use crate::codec::{read_json, write_json};
     use crate::protocol::{ClientMsg, ServerMsg, WirePhase};
+
+    /// Per-file cap: a huge file truncates only itself; small files ride
+    /// alongside untouched.
+    #[test]
+    fn cap_applies_per_file_not_across_files() {
+        let small = crate::difftext::FileDiff {
+            path: "src/a.rs".into(),
+            diff: "diff --git a/src/a.rs b/src/a.rs\n+small\n".into(),
+        };
+        let huge = crate::difftext::FileDiff {
+            path: "package-lock.json".into(),
+            diff: format!("diff --git a/p b/p\n{}", "x".repeat(200)),
+        };
+        let capped_small = cap_file_diff(small, 100);
+        let capped_huge = cap_file_diff(huge, 100);
+        assert!(!capped_small.truncated);
+        assert!(capped_small.diff.contains("+small"));
+        assert!(capped_huge.truncated);
+        assert!(capped_huge.diff.ends_with("… (diff truncated)"));
+        assert!(capped_huge.diff.chars().count() < 200);
+    }
     use kontur_core::{
         Ed25519Signer, GateId, Hash, OperatorId, Remedy, ReviewDepth, Signer, Timestamp, Verdict,
     };
@@ -2843,17 +2890,16 @@ mod tests {
         .unwrap();
 
         // Realtime property: BOTH seats receive a broadcast where the wire
-        // projects the FRESH gate (not the stale original), and the
-        // diff_preview contains the edited content.
+        // projects the FRESH gate (not the stale original), and the per-file
+        // diffs contain the edited content.
         let fresh_gate_check = |s: &WireState| {
             s.gate
                 .as_ref()
                 .map(|g| {
                     g.gate_id != original_gate_id
-                        && g.diff_preview
-                            .as_deref()
-                            .map(|d| d.contains("edited by hand"))
-                            .unwrap_or(false)
+                        && g.file_diffs
+                            .iter()
+                            .any(|fd| fd.diff.contains("edited by hand"))
                 })
                 .unwrap_or(false)
         };
