@@ -20,6 +20,22 @@ pub enum PlanDecision {
     Steered(String),
 }
 
+/// A clarification question the agent asks the operators. The "provide your own
+/// answer" option is implicit and offered by the console, not stored here.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ClarifyQuestion {
+    pub prompt: String,
+    pub options: Vec<String>,
+}
+
+/// Resolution of a clarification exchange, awaited by the parked MCP call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClarifyDecision {
+    Pending,
+    /// One or more accepted answers per original question, in order.
+    Answered(Vec<Vec<String>>),
+}
+
 /// Live activity events for observers (the session server). Best-effort
 /// display stream — never blocks or gates the enforcement path.
 #[derive(Clone, Debug)]
@@ -57,6 +73,10 @@ pub enum HostEvent {
     /// Emitted after `steer_plan` routes a replan prompt to the agent.
     PlanSteered {
         steer: String,
+    },
+    /// The agent asked the operators to clarify ambiguity before planning.
+    QuestionsAsked {
+        questions: Vec<ClarifyQuestion>,
     },
     SessionAbandoned,
 }
@@ -117,6 +137,9 @@ struct SessionState {
     holds: Vec<HoldEntry>,
     next_gate: u64,
     plan: Option<Vec<String>>,
+    questions: Option<Vec<ClarifyQuestion>>,
+    clarify_decision_tx: watch::Sender<ClarifyDecision>,
+    _clarify_decision_rx: watch::Receiver<ClarifyDecision>,
     plan_decision_tx: watch::Sender<PlanDecision>,
     /// Kept alive so `send_replace` on `plan_decision_tx` is never a no-op
     /// (watch::send discards when there are zero receivers; keeping one here
@@ -153,6 +176,7 @@ impl GateHost {
     pub fn new(ctx: SessionContext, workspace: Arc<dyn Workspace>) -> Self {
         let (events, _) = broadcast::channel(64);
         let (plan_decision_tx, _plan_decision_rx) = watch::channel(PlanDecision::Pending);
+        let (clarify_decision_tx, _clarify_decision_rx) = watch::channel(ClarifyDecision::Pending);
         GateHost {
             state: Arc::new(Mutex::new(SessionState {
                 ctx,
@@ -160,6 +184,9 @@ impl GateHost {
                 holds: Vec::new(),
                 next_gate: 0,
                 plan: None,
+                questions: None,
+                clarify_decision_tx,
+                _clarify_decision_rx,
                 plan_decision_tx,
                 _plan_decision_rx,
                 abandoned: false,
@@ -235,6 +262,41 @@ impl GateHost {
     /// Operator face: read the currently proposed plan (None until one arrives).
     pub async fn proposed_plan(&self) -> Option<Vec<String>> {
         self.state.lock().await.plan.clone()
+    }
+
+    /// Agent face: ask the operators to clarify ambiguity. Stores the questions,
+    /// emits `HostEvent::QuestionsAsked`, and returns a watch receiver that flips
+    /// to `Answered` once the operators resolve the exchange. Same fresh-channel
+    /// discipline as `propose_plan` so a stale resolution can't bypass consent.
+    pub async fn ask_clarification(
+        &self,
+        questions: Vec<ClarifyQuestion>,
+    ) -> Result<watch::Receiver<ClarifyDecision>, GateHostError> {
+        let mut st = self.state.lock().await;
+        if st.abandoned {
+            return Err(GateHostError::SessionAbandoned);
+        }
+        let (new_tx, new_rx) = watch::channel(ClarifyDecision::Pending);
+        st.clarify_decision_tx = new_tx;
+        st._clarify_decision_rx = new_rx;
+        st.questions = Some(questions.clone());
+        let rx = st.clarify_decision_tx.subscribe();
+        drop(st);
+        let _ = self.events.send(HostEvent::QuestionsAsked { questions });
+        Ok(rx)
+    }
+
+    /// Operator face: resolve the clarification exchange with the accepted
+    /// answers, unblocking the parked `ask_clarification` MCP call.
+    pub async fn resolve_clarification(&self, answers: Vec<Vec<String>>) {
+        let st = self.state.lock().await;
+        st.clarify_decision_tx
+            .send_replace(ClarifyDecision::Answered(answers));
+    }
+
+    /// Operator face: the questions currently awaiting answers (None until asked).
+    pub async fn asked_questions(&self) -> Option<Vec<ClarifyQuestion>> {
+        self.state.lock().await.questions.clone()
     }
 
     /// Operator face: replace the stored plan with an edited version.
@@ -1288,6 +1350,57 @@ mod tests {
         // No discards from abandon (already accepted earlier).
         assert!(ws.discarded_tasks().is_empty());
         assert!(host.verify_audit().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn ask_clarification_blocks_then_resolve_flips_watch() {
+        use std::time::Duration;
+        use tokio::sync::broadcast::error::TryRecvError;
+
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let host = GateHost::new(ctx(vec![op1, op2]), ws);
+        let mut ev_rx = host.subscribe_events();
+
+        let questions = vec![ClarifyQuestion {
+            prompt: "target database?".into(),
+            options: vec!["postgres".into(), "sqlite".into()],
+        }];
+        let mut rx = host.ask_clarification(questions.clone()).await.unwrap();
+        assert_eq!(host.asked_questions().await, Some(questions.clone()));
+        assert_eq!(*rx.borrow(), ClarifyDecision::Pending);
+
+        // A QuestionsAsked event was emitted.
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(200);
+        let mut got = false;
+        loop {
+            match ev_rx.try_recv() {
+                Ok(HostEvent::QuestionsAsked { questions: q }) => {
+                    assert_eq!(q, questions);
+                    got = true;
+                    break;
+                }
+                Ok(_) => {}
+                Err(TryRecvError::Empty) => {
+                    if tokio::time::Instant::now() >= deadline {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                _ => break,
+            }
+        }
+        assert!(got, "QuestionsAsked event must be emitted");
+
+        // Resolve unblocks the watch with the answers.
+        host.resolve_clarification(vec![vec!["postgres".into()]])
+            .await;
+        rx.changed().await.unwrap();
+        assert_eq!(
+            *rx.borrow(),
+            ClarifyDecision::Answered(vec![vec!["postgres".to_string()]])
+        );
     }
 
     #[tokio::test]

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use kontur_core::{HoldState, Remedy, TaskId};
 
-use crate::gatehost::{GateHost, PlanDecision};
+use crate::gatehost::{ClarifyDecision, ClarifyQuestion, GateHost, PlanDecision};
 
 /// The rmcp server exposing the agent-facing gated tools over a `GateHost`.
 #[derive(Clone)]
@@ -64,6 +64,27 @@ pub struct ProposePlanOutput {
     /// The APPROVED task list, which operators may have edited, deleted from,
     /// or reordered from the original proposal. Execute exactly this list.
     pub tasks: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct ClarifyQuestionInput {
+    /// The question to put to the operators.
+    pub prompt: String,
+    /// The multiple-choice options. The console always adds a final
+    /// "provide your own answer" free-text option; do not include it here.
+    pub options: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct AskClarificationInput {
+    pub questions: Vec<ClarifyQuestionInput>,
+}
+
+#[derive(Serialize, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct AskClarificationOutput {
+    /// The operators' accepted answers, one entry per question in order. An
+    /// entry has two strings only when the operators chose "accept both".
+    pub answers: Vec<Vec<String>>,
 }
 
 impl KonturServer {
@@ -158,6 +179,45 @@ impl KonturServer {
             approved: true,
             tasks: final_tasks,
         }))
+    }
+
+    #[tool(
+        name = "ask_clarification",
+        description = "Ask the operators to resolve genuine ambiguity in the prompt BEFORE planning. Only call this when the prompt is truly ambiguous and you would otherwise have to assume; never ask gratuitously. Each question is multiple-choice (the console adds a 'provide your own answer' option). Blocks until both operators answer and agree; returns their accepted answers."
+    )]
+    async fn ask_clarification(
+        &self,
+        Parameters(AskClarificationInput { questions }): Parameters<AskClarificationInput>,
+    ) -> Result<Json<AskClarificationOutput>, ErrorData> {
+        if questions.is_empty() {
+            return Err(ErrorData::invalid_request(
+                "ask_clarification needs at least one question; if the prompt is clear, call propose_plan instead",
+                None,
+            ));
+        }
+        let questions: Vec<ClarifyQuestion> = questions
+            .into_iter()
+            .map(|q| ClarifyQuestion {
+                prompt: q.prompt,
+                options: q.options,
+            })
+            .collect();
+        let mut rx = self
+            .host
+            .ask_clarification(questions)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        loop {
+            match rx.borrow_and_update().clone() {
+                ClarifyDecision::Pending => {}
+                ClarifyDecision::Answered(answers) => {
+                    return Ok(Json(AskClarificationOutput { answers }));
+                }
+            }
+            if rx.changed().await.is_err() {
+                return Err(ErrorData::internal_error("session closed", None));
+            }
+        }
     }
 
     #[tool(
