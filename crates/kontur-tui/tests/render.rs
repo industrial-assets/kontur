@@ -97,6 +97,7 @@ fn gate_shows_summary_and_sealed_key_never_value() {
         diff_truncated: false,
         last_cmd: None,
         claimed_by: None,
+        discuss: Vec::new(),
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
     assert!(s.contains("auth/session.rs"));
@@ -228,6 +229,7 @@ fn gate_shows_diff_and_log_simultaneously() {
         diff_truncated: false,
         last_cmd: None,
         claimed_by: None,
+        discuss: Vec::new(),
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
     // Both left-pane LOG and right-pane DIFF must be visible at once.
@@ -255,6 +257,7 @@ fn gate_truncated_flag_shows_truncated_in_diff_title() {
         diff_truncated: true,
         last_cmd: None,
         claimed_by: None,
+        discuss: Vec::new(),
     };
     let s = draw(&base(ActiveRegion::Gate(card)));
     assert!(
@@ -318,6 +321,7 @@ fn gate_files_bar_shows_selection_marker() {
         diff_truncated: false,
         last_cmd: None,
         claimed_by: None,
+        discuss: Vec::new(),
     };
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal
@@ -370,6 +374,7 @@ fn diff_pane_shows_only_selected_file_section() {
         diff_truncated: true,
         last_cmd: None,
         claimed_by: None,
+        discuss: Vec::new(),
     };
     let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
     terminal
@@ -403,6 +408,7 @@ fn gate_card_shows_failed_command_loudly() {
         diff_truncated: false,
         last_cmd: Some(("cargo test".into(), 101)),
         claimed_by: None,
+        discuss: Vec::new(),
     };
     let s = draw(&base(ActiveRegion::Gate(card.clone())));
     assert!(
@@ -569,6 +575,7 @@ fn gate_shows_claim_marker() {
         diff_truncated: false,
         last_cmd: None,
         claimed_by: Some("j.reed".into()),
+        discuss: Vec::new(),
     };
     let s = draw(&base(ActiveRegion::Gate(card.clone())));
     assert!(
@@ -581,4 +588,32 @@ fn gate_shows_claim_marker() {
         !s.contains("▸ j.reed"),
         "no claim marker when unclaimed; got:\n{s}"
     );
+}
+
+/// A gate with discussion notes renders a DISCUSS strip with the notes.
+#[test]
+fn gate_discuss_strip_renders_notes() {
+    let card = GateCard {
+        gate_id: "gate-d".into(),
+        task: "t1".into(),
+        files: vec!["a.rs".into()],
+        loc: 3,
+        keys: vec![],
+        escalation_required: false,
+        file_diffs: vec![],
+        diff_truncated: false,
+        last_cmd: None,
+        claimed_by: None,
+        discuss: vec![("A".into(), "needs a test".into())],
+    };
+    let mut terminal = Terminal::new(TestBackend::new(160, 44)).unwrap();
+    terminal
+        .draw(|f| render(f, &base(ActiveRegion::Gate(card)), 0, 0, 0))
+        .unwrap();
+    let s = buf_string(terminal.backend().buffer());
+    assert!(
+        s.contains("DISCUSS"),
+        "discuss strip title must render; got:\n{s}"
+    );
+    assert!(s.contains("A: needs a test"), "note must render; got:\n{s}");
 }

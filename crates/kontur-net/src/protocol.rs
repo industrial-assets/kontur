@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Wire protocol version. Bump on any incompatible change to the message
 /// types below. A client that omits the field (pre-versioning build) is read
 /// as version 0, which mismatches any real version and is rejected cleanly.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Serde default for `Hello.protocol` — pre-versioning clients deserialize to 0.
 fn protocol_v0() -> u32 {
@@ -45,6 +45,12 @@ pub enum ClientMsg {
     /// Presence only — never affects verdict eligibility or the four-eyes hold.
     Claim {
         gate_id: GateId,
+    },
+    /// Append a note to a gate's discussion thread. Communication only —
+    /// visible to both seats, never affects the four-eyes hold.
+    Discuss {
+        gate_id: GateId,
+        text: String,
     },
     /// Application-level keepalive. Sent periodically by the client; the server
     /// treats its arrival as liveness and replies `Pong`. Never gated.
@@ -158,6 +164,15 @@ pub struct WireGate {
     /// Seat label of the operator currently reviewing this gate, if claimed.
     /// A soft presence signal (PRD FR-3), not a lock.
     pub claimed_by: Option<String>,
+    /// Gate-anchored discussion notes, in order. Communication only.
+    pub discuss: Vec<WireComment>,
+}
+
+/// One note in a gate's discussion thread.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct WireComment {
+    pub who: String,
+    pub text: String,
 }
 
 /// A completed command and its outcome.

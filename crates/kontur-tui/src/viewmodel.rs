@@ -93,6 +93,7 @@ fn gate_card(gv: &GateView, stations: &[Station; 2], file_diffs: Vec<FileDiffVie
         diff_truncated: false,
         last_cmd: None,
         claimed_by: None,
+        discuss: Vec::new(),
     }
 }
 

@@ -90,6 +90,7 @@ pub fn help_lines(active: &ActiveRegion, host_unlinked: bool) -> Vec<String> {
             out.push("MERGE GATE".into());
             out.push("  g    go            r   no-go + steer".into());
             out.push("  e    hand-edit a file  c   claim gate".into());
+            out.push("  d    add a discuss note".into());
             out.push("  j/k  scroll diff   tab cycle file".into());
         }
         _ => {}
@@ -338,35 +339,40 @@ fn panes(
     // Right pane: gate surface or phase card.
     match &view.active {
         ActiveRegion::Gate(card) => {
-            // Files bar: Length(4), diff: Min(5), verdict bar: Length(6).
-            // Guard: if right pane height < 15, skip files bar to preserve diff.
-            let (files_height, diff_min) = if cols[1].height < 15 {
-                (0, Constraint::Min(5))
+            // Rows: [files bar?] diff (flex) [discuss?] verdict bar. Files bar
+            // drops below 15 rows to protect the diff; the discuss strip shows
+            // only when the gate has notes and there's room (>= 18 rows).
+            let files_height: u16 = if cols[1].height < 15 { 0 } else { 4 };
+            let discuss_height: u16 = if card.discuss.is_empty() || cols[1].height < 18 {
+                0
             } else {
-                (4, Constraint::Min(5))
+                // up to 3 notes + 2 borders
+                (card.discuss.len().min(3) as u16) + 2
             };
 
-            let constraints = if files_height > 0 {
-                vec![
-                    Constraint::Length(files_height),
-                    diff_min,
-                    Constraint::Length(6),
-                ]
-            } else {
-                vec![diff_min, Constraint::Length(6)]
-            };
+            let mut constraints = Vec::new();
+            if files_height > 0 {
+                constraints.push(Constraint::Length(files_height));
+            }
+            constraints.push(Constraint::Min(5)); // diff
+            if discuss_height > 0 {
+                constraints.push(Constraint::Length(discuss_height));
+            }
+            constraints.push(Constraint::Length(6)); // verdict bar
 
             let right = Layout::vertical(constraints).split(cols[1]);
-
+            let mut i = 0;
             if files_height > 0 {
-                render_files_bar(frame, right[0], card, selected_file);
-                render_diff_pane(frame, right[1], card, diff_scroll, selected_file);
-                render_verdict_bar(frame, right[2], card);
-            } else {
-                // Files bar dropped: diff is right[0], verdict is right[1]
-                render_diff_pane(frame, right[0], card, diff_scroll, selected_file);
-                render_verdict_bar(frame, right[1], card);
+                render_files_bar(frame, right[i], card, selected_file);
+                i += 1;
             }
+            render_diff_pane(frame, right[i], card, diff_scroll, selected_file);
+            i += 1;
+            if discuss_height > 0 {
+                render_discuss(frame, right[i], card);
+                i += 1;
+            }
+            render_verdict_bar(frame, right[i], card);
         }
         other => {
             render_phase_card(frame, cols[1], other);
@@ -438,6 +444,21 @@ fn render_diff_pane(
         Paragraph::new(body)
             .block(Block::bordered().title(title))
             .scroll((scroll, 0)),
+        area,
+    );
+}
+
+/// Gate-anchored discussion notes (last few), shown between diff and verdict.
+fn render_discuss(frame: &mut Frame, area: Rect, card: &crate::view::GateCard) {
+    let take = card.discuss.len().saturating_sub(3);
+    let lines: Vec<Line> = card.discuss[take..]
+        .iter()
+        .map(|(who, text)| Line::from(format!(" {who}: {text}")))
+        .collect();
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(Block::bordered().title("DISCUSS  [d] note"))
+            .wrap(Wrap { trim: true }),
         area,
     );
 }
@@ -905,6 +926,7 @@ mod tests {
             diff_truncated: false,
             last_cmd: None,
             claimed_by: None,
+            discuss: Vec::new(),
         };
         let rendered = draw(&minimal_view(ActiveRegion::Gate(card)));
         // Left LOG title visible simultaneously with right DIFF title.
@@ -951,6 +973,7 @@ mod tests {
             diff_truncated: false,
             last_cmd: None,
             claimed_by: None,
+            discuss: Vec::new(),
         };
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -986,6 +1009,7 @@ mod tests {
             diff_truncated: true,
             last_cmd: None,
             claimed_by: None,
+            discuss: Vec::new(),
         };
         let rendered = draw(&minimal_view(ActiveRegion::Gate(card)));
         assert!(
