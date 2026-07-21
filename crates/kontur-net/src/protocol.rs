@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Wire protocol version. Bump on any incompatible change to the message
 /// types below. A client that omits the field (pre-versioning build) is read
 /// as version 0, which mismatches any real version and is rejected cleanly.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Serde default for `Hello.protocol` — pre-versioning clients deserialize to 0.
 fn protocol_v0() -> u32 {
@@ -124,7 +124,6 @@ pub enum WirePhase {
 pub struct WireFleetCard {
     pub id: String,
     pub status: String,
-    pub tokens: u64,
     pub needs_signoff: bool,
 }
 

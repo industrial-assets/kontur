@@ -23,7 +23,6 @@ pub async fn run_agent(agent: ScriptedAgent, server: SessionServer) {
             .agent_status(WireFleetCard {
                 id: task.id.clone(),
                 status: "working".into(),
-                tokens: 100 * (i as u64 + 1),
                 needs_signoff: false,
             })
             .await;
@@ -51,7 +50,6 @@ pub async fn run_agent(agent: ScriptedAgent, server: SessionServer) {
             .agent_status(WireFleetCard {
                 id: task.id.clone(),
                 status: "awaiting-signoff".into(),
-                tokens: 100 * (i as u64 + 1),
                 needs_signoff: true,
             })
             .await;
@@ -64,7 +62,6 @@ pub async fn run_agent(agent: ScriptedAgent, server: SessionServer) {
                 .agent_status(WireFleetCard {
                     id: task.id.clone(),
                     status: "done".into(),
-                    tokens: 100 * (i as u64 + 1),
                     needs_signoff: false,
                 })
                 .await;
@@ -81,7 +78,6 @@ pub async fn run_agent(agent: ScriptedAgent, server: SessionServer) {
                     .agent_status(WireFleetCard {
                         id: task.id.clone(),
                         status: "done".into(),
-                        tokens: 100 * (i as u64 + 1),
                         needs_signoff: false,
                     })
                     .await;
@@ -134,7 +130,6 @@ pub async fn run_agent(agent: ScriptedAgent, server: SessionServer) {
                 .agent_status(WireFleetCard {
                     id: task.id.clone(),
                     status: "awaiting-signoff".into(),
-                    tokens: 100 * (i as u64 + 1),
                     needs_signoff: true,
                 })
                 .await;
@@ -146,7 +141,6 @@ pub async fn run_agent(agent: ScriptedAgent, server: SessionServer) {
                     .agent_status(WireFleetCard {
                         id: task.id.clone(),
                         status: "done".into(),
-                        tokens: 100 * (i as u64 + 1),
                         needs_signoff: false,
                     })
                     .await;
@@ -162,7 +156,6 @@ pub async fn run_agent(agent: ScriptedAgent, server: SessionServer) {
         .agent_status(WireFleetCard {
             id: "agent".into(),
             status: "idle".into(),
-            tokens: 0,
             needs_signoff: false,
         })
         .await;

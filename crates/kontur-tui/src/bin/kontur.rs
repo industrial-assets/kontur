@@ -490,7 +490,6 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
                                 .agent_status(WireFleetCard {
                                     id: "claude-01".into(),
                                     status: format!("FAILED — see {}", log_path_clone.display()),
-                                    tokens: 0,
                                     needs_signoff: false,
                                 })
                                 .await;

@@ -37,7 +37,6 @@ pub struct StatusStrip {
     pub four_eyes: bool,
     pub fleet_count: usize,
     pub needs_you: usize,
-    pub tokens: u64,
 }
 
 /// One agent panel on the watch-floor.
@@ -45,7 +44,6 @@ pub struct StatusStrip {
 pub struct AgentCard {
     pub id: String,
     pub status: String,
-    pub tokens: u64,
     pub needs_signoff: bool,
 }
 

@@ -41,6 +41,11 @@ Rotation happens per task or per session; the console always labels who currentl
 
 ## 4. Console anatomy
 
+> Note (21 Jul 2026): the `… tok` token counts in the mockups below are
+> illustrative — live per-agent token telemetry is recorded future work and is
+> not currently displayed (a placeholder zero was removed rather than shipped).
+
+
 Persistent chrome, top to bottom. Regions are fixed; only their contents change by phase.
 
 > **Superseded (20 Jul 2026):** single-screen two-pane layout (left: fleet + log activity; right: work surface). When a gate is pending, the diff is always visible in the right pane and verdicts are cast on the diff surface. The `[o]` diff-open toggle is removed.

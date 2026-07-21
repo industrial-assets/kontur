@@ -25,7 +25,6 @@ pub async fn build_session_view(
         four_eyes: true,
         fleet_count: agents.len(),
         needs_you: pending.len(),
-        tokens: agents.iter().map(|a| a.tokens).sum(),
     };
 
     let active = if closed {

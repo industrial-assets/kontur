@@ -184,7 +184,7 @@ fn status(frame: &mut Frame, area: Rect, view: &SessionView) {
         format!("FLEET {}", s.fleet_count)
     };
     let line = format!(
-        " LINK {} || 4-EYES {} || {} || {} tok",
+        " LINK {} || 4-EYES {} || {}",
         if s.linked {
             "BOTH-STATIONS SYNC"
         } else {
@@ -192,7 +192,6 @@ fn status(frame: &mut Frame, area: Rect, view: &SessionView) {
         },
         if s.four_eyes { "ON" } else { "OFF" },
         needs,
-        s.tokens
     );
     frame.render_widget(Paragraph::new(line), area);
 }
@@ -234,7 +233,7 @@ fn fleet(frame: &mut Frame, area: Rect, view: &SessionView) {
             } else {
                 a.status.as_str()
             };
-            let text = format!(" {:<10} {:<20} {} tok", a.id, marker, a.tokens);
+            let text = format!(" {:<10} {}", a.id, marker);
             if a.needs_signoff {
                 Line::from(Span::styled(
                     text,
@@ -621,7 +620,6 @@ mod tests {
                 four_eyes: true,
                 fleet_count: 0,
                 needs_you: 0,
-                tokens: 0,
             },
             stations: [
                 Station {

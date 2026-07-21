@@ -31,7 +31,6 @@ fn base(active: ActiveRegion) -> SessionView {
             four_eyes: true,
             fleet_count: 3,
             needs_you: 1,
-            tokens: 6400,
         },
         stations: [
             Station {

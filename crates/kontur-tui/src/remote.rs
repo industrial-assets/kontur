@@ -100,7 +100,6 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
         .map(|f| AgentCard {
             id: f.id.clone(),
             status: f.status.clone(),
-            tokens: f.tokens,
             needs_signoff: f.needs_signoff,
         })
         .collect();
@@ -119,7 +118,6 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
     // --- status strip ---
     let both_linked = state.seats.iter().all(|s| s.linked);
     let fleet_count = fleet.len();
-    let tokens: u64 = fleet.iter().map(|a| a.tokens).sum();
 
     // needs_you: count pending gates (gate present + own key not yet in keys)
     let needs_you = if let Some(gate) = &state.gate {
@@ -138,7 +136,6 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
         four_eyes: true,
         fleet_count,
         needs_you,
-        tokens,
     };
 
     // --- active region ---

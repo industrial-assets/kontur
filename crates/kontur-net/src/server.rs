@@ -220,7 +220,6 @@ impl SessionServer {
                 let card = WireFleetCard {
                     id: agent_id.to_owned(),
                     status: format!("write {path}"),
-                    tokens: 0,
                     needs_signoff: false,
                 };
                 let mut net = self.inner.net.lock().await;
@@ -243,7 +242,6 @@ impl SessionServer {
                 let card = WireFleetCard {
                     id: agent_id.to_owned(),
                     status: format!("run {truncated}"),
-                    tokens: 0,
                     needs_signoff: false,
                 };
                 let mut net = self.inner.net.lock().await;
@@ -277,7 +275,6 @@ impl SessionServer {
                 let card = WireFleetCard {
                     id: agent_id.to_owned(),
                     status: "▶ needs sign-off".to_owned(),
-                    tokens: 0,
                     needs_signoff: true,
                 };
                 let mut net = self.inner.net.lock().await;
@@ -337,7 +334,6 @@ impl SessionServer {
                     net.fleet.push(WireFleetCard {
                         id: agent_id.to_owned(),
                         status: format!("plan: {n} task(s) awaiting approval"),
-                        tokens: 0,
                         needs_signoff: true,
                     });
                 }

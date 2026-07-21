@@ -33,9 +33,9 @@ Pair programming assumed a driver at the keyboard and a navigator watching the c
 ## The console
 
 ```
- LINK BOTH-STATIONS SYNC || 4-EYES ON || FLEET 3 (1 NEEDS YOU) || 6.4k tok
+ LINK BOTH-STATIONS SYNC || 4-EYES ON || FLEET 3 (1 NEEDS YOU)
  ┌─ AGENT-01 ────────────────────┐ ┌─ AGENT-02 ───┐ ┌─ AGENT-03 ──────┐
- │ analysing parser.py · 3.1k tok│ │ editing auth │ │ ▶ NEEDS SIGN-OFF│
+ │ analysing parser.py          │ │ editing auth │ │ ▶ NEEDS SIGN-OFF│
  └───────────────────────────────┘ └──────────────┘ └─────────────────┘
  ┌─ GATE-03 · agent-03 · auth/session.ts · +47 -12 · tests ok ────────┐
  │  KEY A  HOST · you      □ awaiting your verdict                    │
