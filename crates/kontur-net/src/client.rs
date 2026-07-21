@@ -194,6 +194,14 @@ impl SessionClient {
         .await
     }
 
+    pub async fn discuss(&self, gate_id: &kontur_core::GateId, text: &str) -> io::Result<()> {
+        self.send(ClientMsg::Discuss {
+            gate_id: gate_id.clone(),
+            text: text.to_owned(),
+        })
+        .await
+    }
+
     pub async fn abandon(&self) -> io::Result<()> {
         self.send(ClientMsg::Abandon).await
     }

@@ -87,6 +87,8 @@ pub struct GateCard {
     pub last_cmd: Option<(String, i32)>,
     /// Seat label of the operator reviewing this gate (soft presence), if any.
     pub claimed_by: Option<String>,
+    /// Gate-anchored discussion notes: (who, text) in order.
+    pub discuss: Vec<(String, String)>,
 }
 
 /// One file's diff section at a gate.

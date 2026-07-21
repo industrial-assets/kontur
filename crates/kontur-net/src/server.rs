@@ -11,8 +11,8 @@ use kontur_mcp::{GateHost, HostEvent};
 
 use crate::codec::{read_json, write_json};
 use crate::protocol::{
-    ClientMsg, ServerMsg, WireCmd, WireFileDiff, WireFleetCard, WireGate, WirePhase, WireRole,
-    WireSeat, WireState,
+    ClientMsg, ServerMsg, WireCmd, WireComment, WireFileDiff, WireFleetCard, WireGate, WirePhase,
+    WireRole, WireSeat, WireState,
 };
 
 /// How long the server waits for any client traffic before treating the peer
@@ -108,6 +108,8 @@ struct Net {
     /// Soft presence claim on the active gate: (gate_id, seat_idx). Cleared
     /// when the gate resolves (id no longer matches) or the claimer drops.
     claim: Option<(String, usize)>,
+    /// Gate discussion notes, keyed by gate id: (seat_idx, text) in order.
+    discuss: std::collections::HashMap<String, Vec<(usize, String)>>,
 }
 
 struct Inner {
@@ -185,6 +187,7 @@ impl SessionServer {
             prompt: cfg.prompt.clone(),
             last_cmd: std::collections::HashMap::new(),
             claim: None,
+            discuss: std::collections::HashMap::new(),
         };
 
         let server = SessionServer {
@@ -902,6 +905,20 @@ async fn handle_client_msg(
             drop(net);
             server.refresh_locked().await;
         }
+        ClientMsg::Discuss { gate_id, text } => {
+            let text = text.trim().to_owned();
+            if !text.is_empty() {
+                let mut net = server.inner.net.lock().await;
+                let label = net.seats[seat_idx].label.clone();
+                net.discuss
+                    .entry(gate_id.0.clone())
+                    .or_default()
+                    .push((seat_idx, text.clone()));
+                push_log(&mut net, &format!("{label} noted on {}: {text}", gate_id.0));
+                drop(net);
+                server.refresh_locked().await;
+            }
+        }
         ClientMsg::Ping => {
             // Liveness only: arrival already reset the read timeout; reply so a
             // client can detect a dead host in turn. Never touches gate state.
@@ -1205,6 +1222,7 @@ impl SessionServer {
         let last_cmds = net.last_cmd.clone();
         let prompt_snapshot = net.prompt.clone();
         let claim_snapshot = net.claim.clone();
+        let discuss_snapshot = net.discuss.clone();
         let seat_labels = [net.seats[0].label.clone(), net.seats[1].label.clone()];
 
         drop(net);
@@ -1253,6 +1271,18 @@ impl SessionServer {
                     claimed_by: claim_snapshot.as_ref().and_then(|(gid, idx)| {
                         (gid == &gv.gate_id.0).then(|| seat_labels[*idx].clone())
                     }),
+                    discuss: discuss_snapshot
+                        .get(&gv.gate_id.0)
+                        .map(|notes| {
+                            notes
+                                .iter()
+                                .map(|(idx, text)| WireComment {
+                                    who: seat_labels[*idx].clone(),
+                                    text: text.clone(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                 })
             } else {
                 None
@@ -3059,6 +3089,99 @@ mod tests {
             got_empty_rejected,
             "empty SetPrompt must produce Rejected with 'empty' in reason"
         );
+    }
+
+    /// A discuss note appends to the gate's thread and is projected onto the
+    /// wire gate with the author's label.
+    #[tokio::test]
+    async fn discuss_note_appears_on_gate() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let (server, _ws) = make_server(op1, op2, vec!["guard.rs".into()]);
+        let mut state_rx = server.state_rx();
+
+        let agent = ScriptedAgent {
+            tasks: vec![ScriptedTask {
+                id: "t1".into(),
+                path: "src/guard.rs".into(),
+                contents: "// guard\n".into(),
+            }],
+        };
+        tokio::spawn(crate::agent::run_agent(agent, server.clone()));
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        drain_client(BufReader::new(cb_read)).await;
+
+        for (w, seat, op) in [(&mut ca_write, "A", op1), (&mut cb_write, "B", op2)] {
+            write_json(
+                w,
+                &ClientMsg::Hello {
+                    seat: seat.into(),
+                    operator: op,
+                    protocol: crate::protocol::PROTOCOL_VERSION,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+        let gate = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.gate.is_some()),
+        )
+        .await
+        .expect("gate");
+        let gid = gate.gate.unwrap().gate_id;
+
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Discuss {
+                gate_id: gid,
+                text: "  is this covered by a test?  ".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let noted = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.gate
+                    .as_ref()
+                    .map(|g| !g.discuss.is_empty())
+                    .unwrap_or(false)
+            }),
+        )
+        .await
+        .expect("discuss note visible");
+        let note = &noted.gate.unwrap().discuss[0];
+        assert_eq!(note.who, "B");
+        assert_eq!(note.text, "is this covered by a test?", "trimmed");
     }
 
     /// A [c] claim marks the active gate with the claimer's label on the wire,

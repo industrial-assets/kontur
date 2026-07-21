@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
 
-use kontur_core::{OperatorId, ReviewDepth, Verdict, VerdictStatus};
+use kontur_core::{GateId, OperatorId, ReviewDepth, Verdict, VerdictStatus};
 use kontur_net::{ServerMsg, SessionClient, WireGate, WirePhase, WireRole, WireState};
 
 use crate::app::{poll_action, TerminalGuard};
@@ -37,6 +37,10 @@ enum ComposeTarget {
     },
     /// Composing a plan steer prompt.
     PlanSteer,
+    /// Composing a gate discussion note.
+    Discuss {
+        gate_id: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +387,11 @@ fn wire_gate_to_card(wg: &WireGate, stations: &[Station; 2]) -> GateCard {
             .as_ref()
             .map(|c| (c.command.clone(), c.exit_code)),
         claimed_by: wg.claimed_by.clone(),
+        discuss: wg
+            .discuss
+            .iter()
+            .map(|c| (c.who.clone(), c.text.clone()))
+            .collect(),
     }
 }
 
@@ -717,6 +726,17 @@ pub async fn run_remote(
             }
 
             // Abandon → request confirmation.
+            // Open a discussion-note compose for the active gate.
+            Some(Action::Discuss) => {
+                if let Some(wg) = &state.gate {
+                    compose = ComposeTarget::Discuss {
+                        gate_id: wg.gate_id.0.clone(),
+                    };
+                    compose_buf.clear();
+                    compose_cursor = 0;
+                }
+            }
+
             // Toggle a soft presence claim on the active gate.
             Some(Action::ClaimGate) => {
                 if let Some(wg) = &state.gate {
@@ -958,6 +978,14 @@ pub async fn run_remote(
                             compose_buf.clear();
                         }
                     }
+                    ComposeTarget::Discuss { gate_id } => {
+                        if !compose_buf.trim().is_empty() {
+                            let gid = GateId(gate_id.clone());
+                            let _ = client.discuss(&gid, &compose_buf).await;
+                        }
+                        compose = ComposeTarget::None;
+                        compose_buf.clear();
+                    }
                     ComposeTarget::None => {}
                 }
             }
@@ -1004,6 +1032,10 @@ fn compose_notice(compose: &ComposeTarget, buf: &str, warn: &str) -> Option<Stri
         )),
         ComposeTarget::PlanSteer => Some(format!(
             "steer > {}  [↵] send · [alt+↵] newline · [esc] cancel{warn}",
+            compose::inline(buf)
+        )),
+        ComposeTarget::Discuss { .. } => Some(format!(
+            "note > {}  [↵] post · [esc] cancel{warn}",
             compose::inline(buf)
         )),
         ComposeTarget::ConfirmAbandon => Some("abandon session? [y] confirm · [esc] cancel".into()),
@@ -1166,6 +1198,7 @@ mod tests {
             diff_truncated: false,
             last_cmd: None,
             claimed_by: None,
+            discuss: Vec::new(),
         }
     }
 

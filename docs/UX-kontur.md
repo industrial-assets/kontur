@@ -247,8 +247,18 @@ A hand-edit applies to the worktree *immediately* — the catastrophe-aversion p
 
 *Strict-mode variant:* the editor is a maker and cannot sign. With only two operators, the gate then can't reach two eligible keys and **escalates to a third signatory** per the availability policy (§9, PRD §10.1). The console makes that state explicit rather than silently letting the editor self-approve.
 
-### 6.8 Discuss — before the keys turn
-`[d]` opens a side-thread that pauses verdicts, for when the two operators need to align before casting. It resolves into a `go` or a `no-go+remedy`; the fact that a gate needed discussion is recorded (outcome `resolved-after-disagreement`, PRD FR-14).
+### 6.8 Discuss — gate-anchored notes (21 Jul 2026)
+`[d]` composes a short note attached to the active gate; both seats see the
+thread as a **DISCUSS** strip on the gate surface (it appears only when the
+gate has notes and there's room), so operators can align in-band without
+switching to out-of-band chat. Notes are communication only — they do **not**
+pause verdicts and do not by themselves change the recorded outcome.
+
+> Future work: the fuller design — a side-thread that *pauses* verdicts and
+> records that a gate needed discussion (outcome `resolved-after-disagreement`,
+> PRD FR-14) — is not yet built. Today, `resolved-after-disagreement` is
+> recorded when a gate actually resolves after a no-go+remedy, independent of
+> the discuss thread.
 
 ```
  DISCUSS · GATE-03   (verdicts paused)
