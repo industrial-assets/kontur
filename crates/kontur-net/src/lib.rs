@@ -1,16 +1,18 @@
-pub mod protocol;
-pub mod codec;
-pub mod server;
 pub mod agent;
-pub mod client;
 pub mod agent_endpoint;
+pub mod client;
+pub mod codec;
+pub mod protocol;
+pub mod server;
 pub mod tls;
 
-pub use protocol::{
-    ClientMsg, ServerMsg, WireRole, WireSeat, WirePhase, WireFleetCard, WireGate, WireState,
-};
-pub use codec::{write_json, read_json};
-pub use server::{SessionConfig, SessionServer, ScriptedAgent, ScriptedTask};
-pub use client::{SessionClient, SystemClock};
 pub use agent_endpoint::serve_agent_endpoint;
-pub use tls::{SessionTls, generate as generate_tls, connect_pinned, attach_tls, fp_hex, parse_fp_hex};
+pub use client::{SessionClient, SystemClock};
+pub use codec::{read_json, write_json};
+pub use protocol::{
+    ClientMsg, ServerMsg, WireFleetCard, WireGate, WirePhase, WireRole, WireSeat, WireState,
+};
+pub use server::{ScriptedAgent, ScriptedTask, SessionConfig, SessionServer};
+pub use tls::{
+    attach_tls, connect_pinned, fp_hex, generate as generate_tls, parse_fp_hex, SessionTls,
+};

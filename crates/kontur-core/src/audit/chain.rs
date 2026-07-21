@@ -33,16 +33,15 @@ pub enum ChainBreak {
 
 impl AuditChain {
     pub fn new() -> Self {
-        AuditChain { records: Vec::new() }
+        AuditChain {
+            records: Vec::new(),
+        }
     }
 
     /// The hash to chain the next record onto: the last record's `this_hash`,
     /// or `GENESIS` when empty.
     pub fn head(&self) -> Hash {
-        self.records
-            .last()
-            .map(|r| r.this_hash)
-            .unwrap_or(GENESIS)
+        self.records.last().map(|r| r.this_hash).unwrap_or(GENESIS)
     }
 
     /// Append a record. Its `prev_hash` must equal the current head.
@@ -80,7 +79,11 @@ pub fn verify_chain(records: &[GateRecord]) -> Result<(), ChainBreak> {
                 depth: checker.depth,
                 cast_at: checker.cast_at,
             };
-            if !verify(checker.operator, &canonical_bytes(&content), &checker.signature) {
+            if !verify(
+                checker.operator,
+                &canonical_bytes(&content),
+                &checker.signature,
+            ) {
                 return Err(ChainBreak::BadCheckerSignature(i));
             }
         }
@@ -189,7 +192,10 @@ mod tests {
         let mut records = chain.records().to_vec();
         // Tamper with recorded provenance without recomputing the hash.
         records[0].core.provenance.loc = 999;
-        assert_eq!(verify_chain(&records).unwrap_err(), ChainBreak::HashMismatch(0));
+        assert_eq!(
+            verify_chain(&records).unwrap_err(),
+            ChainBreak::HashMismatch(0)
+        );
     }
 
     #[test]
@@ -206,7 +212,10 @@ mod tests {
         // Two individually-valid records, but the second points at the wrong prev.
         let r1 = record(GENESIS, "g1");
         let r2 = record(Hash([7u8; 32]), "g2"); // valid hash over its own core, wrong prev link
-        assert_eq!(verify_chain(&[r1, r2]).unwrap_err(), ChainBreak::BrokenLink(1));
+        assert_eq!(
+            verify_chain(&[r1, r2]).unwrap_err(),
+            ChainBreak::BrokenLink(1)
+        );
     }
 
     #[test]
@@ -233,13 +242,28 @@ mod tests {
         chain.append(record(GENESIS, "g1")).unwrap();
         // blocked record chained after the satisfied one
         let h = {
-            let mut h = DualHold::new(GateId("g2".into()), TaskId("t2".into()), Hash([9u8; 32]),
-                GatePolicy::default(), MakerSet::new(), Authorship::Agent);
-            for (seed, v) in [(1u8, Verdict::Go),
-                (2u8, Verdict::NoGo(crate::Remedy::Steer("fix".into())))] {
+            let mut h = DualHold::new(
+                GateId("g2".into()),
+                TaskId("t2".into()),
+                Hash([9u8; 32]),
+                GatePolicy::default(),
+                MakerSet::new(),
+                Authorship::Agent,
+            );
+            for (seed, v) in [
+                (1u8, Verdict::Go),
+                (2u8, Verdict::NoGo(crate::Remedy::Steer("fix".into()))),
+            ] {
                 let s = Ed25519Signer::from_seed([seed; 32]);
-                let cv = CastVerdict::create(&s, &FixedClock(1000 + seed as i64), h.gate_id(),
-                    h.diff_hash(), v, ReviewDepth::FullDiff, None);
+                let cv = CastVerdict::create(
+                    &s,
+                    &FixedClock(1000 + seed as i64),
+                    h.gate_id(),
+                    h.diff_hash(),
+                    v,
+                    ReviewDepth::FullDiff,
+                    None,
+                );
                 let ev = h.version();
                 h.cast(ev, cv).unwrap();
             }

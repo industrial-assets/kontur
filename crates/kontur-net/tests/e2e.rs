@@ -12,8 +12,8 @@ use std::time::Duration;
 use kontur_core::{Ed25519Signer, ReviewDepth, Signer};
 use kontur_mcp::{GateHost, GitWorkspace, SessionContext};
 use kontur_net::{
-    ScriptedAgent, ScriptedTask, SessionClient, SessionConfig, SessionServer,
-    WirePhase, generate_tls, attach_tls,
+    attach_tls, generate_tls, ScriptedAgent, ScriptedTask, SessionClient, SessionConfig,
+    SessionServer, WirePhase,
 };
 
 // ---------------------------------------------------------------------------
@@ -119,9 +119,7 @@ impl StateCursor {
             // failure time.
             let msg = tokio::time::timeout(Duration::from_secs(55), self.rx.recv())
                 .await
-                .unwrap_or_else(|_| {
-                    panic!("[{label}] timed out waiting for state; saw: {seen:?}")
-                })
+                .unwrap_or_else(|_| panic!("[{label}] timed out waiting for state; saw: {seen:?}"))
                 .expect("channel closed unexpectedly");
             match msg {
                 kontur_net::ServerMsg::State(ws) => {
@@ -164,8 +162,7 @@ async fn e2e_two_clients_scripted_agent_real_tcp_git() {
         // Use a unique session name to avoid worktree path collisions.
         let session = format!("e2e-{}", std::process::id());
 
-        let ws = GitWorkspace::create(repo.clone(), &session)
-            .expect("GitWorkspace::create failed");
+        let ws = GitWorkspace::create(repo.clone(), &session).expect("GitWorkspace::create failed");
         let ws = Arc::new(ws);
 
         let ctx = SessionContext::new(
@@ -199,7 +196,9 @@ async fn e2e_two_clients_scripted_agent_real_tcp_git() {
             let server_clone = server.clone();
             tokio::spawn(async move {
                 loop {
-                    let Ok((stream, _)) = op_listener.accept().await else { break };
+                    let Ok((stream, _)) = op_listener.accept().await else {
+                        break;
+                    };
                     attach_tls(&server_clone, &acceptor, stream).await;
                 }
             });
@@ -237,50 +236,60 @@ async fn e2e_two_clients_scripted_agent_real_tcp_git() {
         // --- 5. Step through protocol ------------------------------------------
 
         // Both connected → wait for DispatchReady.
-        cur_a.await_matching("A:dispatch-ready", |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })
-        .await;
-        cur_b.await_matching("B:dispatch-ready", |s| {
-            matches!(s.phase, WirePhase::DispatchReady { .. })
-        })
-        .await;
+        cur_a
+            .await_matching("A:dispatch-ready", |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            })
+            .await;
+        cur_b
+            .await_matching("B:dispatch-ready", |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            })
+            .await;
 
         // Both ready → PlanReview.
         client_a.ready().await.unwrap();
         client_b.ready().await.unwrap();
 
-        cur_a.await_matching("A:plan-review", |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })
-        .await;
-        cur_b.await_matching("B:plan-review", |s| {
-            matches!(s.phase, WirePhase::PlanReview { .. })
-        })
-        .await;
+        cur_a
+            .await_matching("A:plan-review", |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            })
+            .await;
+        cur_b
+            .await_matching("B:plan-review", |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            })
+            .await;
 
         // Both ready → Executing.
         client_a.ready().await.unwrap();
         client_b.ready().await.unwrap();
 
-        cur_a.await_matching("A:executing", |s| matches!(s.phase, WirePhase::Executing)).await;
-        cur_b.await_matching("B:executing", |s| matches!(s.phase, WirePhase::Executing)).await;
+        cur_a
+            .await_matching("A:executing", |s| matches!(s.phase, WirePhase::Executing))
+            .await;
+        cur_b
+            .await_matching("B:executing", |s| matches!(s.phase, WirePhase::Executing))
+            .await;
 
         // --- 6. Wait for a gate ------------------------------------------------
-        let state_with_gate =
-            cur_a.await_matching("A:gate-appears", |s| s.gate.is_some()).await;
+        let state_with_gate = cur_a
+            .await_matching("A:gate-appears", |s| s.gate.is_some())
+            .await;
         let wire_gate = state_with_gate.gate.unwrap();
 
         // --- 7. A casts go; assert B sees A's key as Sealed --------------------
-        client_a.cast_go(&wire_gate, ReviewDepth::FullDiff).await.unwrap();
+        client_a
+            .cast_go(&wire_gate, ReviewDepth::FullDiff)
+            .await
+            .unwrap();
 
-        let state_after_a = cur_b.await_matching("B:sees-A-sealed", |s| {
-            s.gate
-                .as_ref()
-                .map(|g| !g.keys.is_empty())
-                .unwrap_or(false)
-        })
-        .await;
+        let state_after_a = cur_b
+            .await_matching("B:sees-A-sealed", |s| {
+                s.gate.as_ref().map(|g| !g.keys.is_empty()).unwrap_or(false)
+            })
+            .await;
 
         let gate_b_view = state_after_a.gate.as_ref().unwrap();
         assert!(
@@ -293,15 +302,29 @@ async fn e2e_two_clients_scripted_agent_real_tcp_git() {
 
         // --- 8. B casts go; await Closed with chain_verified -------------------
         let wire_gate_b = state_after_a.gate.unwrap();
-        client_b.cast_go(&wire_gate_b, ReviewDepth::FullDiff).await.unwrap();
+        client_b
+            .cast_go(&wire_gate_b, ReviewDepth::FullDiff)
+            .await
+            .unwrap();
 
-        let closed_state = cur_a.await_matching("A:closed", |s| {
-            matches!(s.phase, WirePhase::Closed { chain_verified: true, .. })
-        })
-        .await;
+        let closed_state = cur_a
+            .await_matching("A:closed", |s| {
+                matches!(
+                    s.phase,
+                    WirePhase::Closed {
+                        chain_verified: true,
+                        ..
+                    }
+                )
+            })
+            .await;
 
         match &closed_state.phase {
-            WirePhase::Closed { chain_verified, merged, .. } => {
+            WirePhase::Closed {
+                chain_verified,
+                merged,
+                ..
+            } => {
                 assert!(chain_verified, "audit chain must be verified after close");
                 // merged=true carries the actual merge_session result, so seeing
                 // it guarantees the git merge completed before we inspect below.

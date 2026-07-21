@@ -153,12 +153,18 @@ mod tests {
         // "--- …" and "+++ …" lines should also be bold
         let minus_line = &lines[2]; // "--- a/src/lib.rs"
         assert!(
-            minus_line.spans[0].style.add_modifier.contains(Modifier::BOLD),
+            minus_line.spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD),
             "--- line should be bold"
         );
         let plus_header = &lines[3]; // "+++ b/src/lib.rs"
         assert!(
-            plus_header.spans[0].style.add_modifier.contains(Modifier::BOLD),
+            plus_header.spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD),
             "+++ line should be bold"
         );
     }

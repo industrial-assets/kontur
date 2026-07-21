@@ -38,7 +38,12 @@ impl Demo {
             vec![op_a, op_b],
         );
         let host = Arc::new(GateHost::new(ctx, workspace.clone()));
-        Demo { host, workspace, signer_a, signer_b }
+        Demo {
+            host,
+            workspace,
+            signer_a,
+            signer_b,
+        }
     }
 
     pub fn host(&self) -> &Arc<GateHost> {
@@ -47,20 +52,37 @@ impl Demo {
 
     pub fn stations(&self) -> [Station; 2] {
         [
-            Station { label: "HOST".into(), role: Role::Host, activity: "reviewing".into(), operator: self.signer_a.operator_id() },
-            Station { label: "OPERATOR".into(), role: Role::Operator, activity: "reviewing".into(), operator: self.signer_b.operator_id() },
+            Station {
+                label: "HOST".into(),
+                role: Role::Host,
+                activity: "reviewing".into(),
+                operator: self.signer_a.operator_id(),
+            },
+            Station {
+                label: "OPERATOR".into(),
+                role: Role::Operator,
+                activity: "reviewing".into(),
+                operator: self.signer_b.operator_id(),
+            },
         ]
     }
 
     pub fn banner(&self) -> Banner {
-        Banner { session: "4417".into(), version: env!("CARGO_PKG_VERSION").into() }
+        Banner {
+            session: "4417".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+        }
     }
 
     /// Script an agent producing a change and parking it at a gate.
     pub async fn open_demo_gate(&self) -> (GateId, Hash) {
         let task = TaskId("t1".into());
         self.workspace
-            .apply_write(&task, "auth/session.rs", b"// guarded token store\nfn guard() {}\n")
+            .apply_write(
+                &task,
+                "auth/session.rs",
+                b"// guarded token store\nfn guard() {}\n",
+            )
             .unwrap();
         let (gid, _rx) = self.host.begin_task_gate(task, 6400).await.unwrap();
         let dh = self.host.pending_gates().await[0].diff_hash;
@@ -69,12 +91,28 @@ impl Demo {
 
     /// Station A's signed go (the live operator's key).
     pub fn go_a(&self, gid: &GateId, dh: Hash) -> CastVerdict {
-        CastVerdict::create(&self.signer_a, &FixedClock(1000), gid, dh, Verdict::Go, ReviewDepth::FullDiff, None)
+        CastVerdict::create(
+            &self.signer_a,
+            &FixedClock(1000),
+            gid,
+            dh,
+            Verdict::Go,
+            ReviewDepth::FullDiff,
+            None,
+        )
     }
 
     /// The scripted second operator's go.
     pub fn go_b(&self, gid: &GateId, dh: Hash) -> CastVerdict {
-        CastVerdict::create(&self.signer_b, &FixedClock(1001), gid, dh, Verdict::Go, ReviewDepth::FullDiff, None)
+        CastVerdict::create(
+            &self.signer_b,
+            &FixedClock(1001),
+            gid,
+            dh,
+            Verdict::Go,
+            ReviewDepth::FullDiff,
+            None,
+        )
     }
 }
 
@@ -98,7 +136,15 @@ pub async fn run(demo: Demo) -> std::io::Result<()> {
 
     let (_guard, mut terminal) = TerminalGuard::enter()?;
     loop {
-        let view = build_session_view(demo.host(), &fleet, demo.stations(), demo.banner(), log.clone(), closed).await;
+        let view = build_session_view(
+            demo.host(),
+            &fleet,
+            demo.stations(),
+            demo.banner(),
+            log.clone(),
+            closed,
+        )
+        .await;
         terminal.draw(|f| render(f, &view, 0, 0))?;
         if closed {
             // Draw the final frame, then wait for a quit key.
@@ -111,18 +157,34 @@ pub async fn run(demo: Demo) -> std::io::Result<()> {
             Some(Action::Quit) => break,
             Some(Action::Go) => {
                 let _ = demo.host().submit_verdict(&gid, demo.go_a(&gid, dh)).await;
-                log.push(LogLine { time: "12:11".into(), who: "you".into(), text: "go gate-001 · key sealed".into() });
+                log.push(LogLine {
+                    time: "12:11".into(),
+                    who: "you".into(),
+                    text: "go gate-001 · key sealed".into(),
+                });
                 // Scripted second key follows; only close on a real Satisfied resolution.
                 match demo.host().submit_verdict(&gid, demo.go_b(&gid, dh)).await {
                     Ok(progress) if progress.state == kontur_core::HoldState::Satisfied => {
-                        log.push(LogLine { time: "12:11".into(), who: "j.reed".into(), text: "go gate-001 · unanimous".into() });
+                        log.push(LogLine {
+                            time: "12:11".into(),
+                            who: "j.reed".into(),
+                            text: "go gate-001 · unanimous".into(),
+                        });
                         closed = true;
                     }
                     Ok(_) => {
-                        log.push(LogLine { time: "12:11".into(), who: "kontur".into(), text: "gate not yet resolved".into() });
+                        log.push(LogLine {
+                            time: "12:11".into(),
+                            who: "kontur".into(),
+                            text: "gate not yet resolved".into(),
+                        });
                     }
                     Err(_) => {
-                        log.push(LogLine { time: "12:11".into(), who: "kontur".into(), text: "second key rejected".into() });
+                        log.push(LogLine {
+                            time: "12:11".into(),
+                            who: "kontur".into(),
+                            text: "second key rejected".into(),
+                        });
                     }
                 }
             }

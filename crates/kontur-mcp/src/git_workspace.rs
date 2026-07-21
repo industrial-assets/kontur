@@ -34,14 +34,19 @@ fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, WorkspaceError> {
         .map_err(|e| WorkspaceError::Io(e.to_string()))?;
     if !out.status.success() {
         return Err(WorkspaceError::Io(format!(
-            "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr))));
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        )));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 impl GitWorkspace {
     pub fn create(repo: PathBuf, session: &str) -> Result<Self, WorkspaceError> {
-        let base = git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
+        let base = git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"])?
+            .trim()
+            .to_string();
 
         // Pre-flight: refuse to start a session on a dirty checkout so the
         // squash-merge at the end cannot conflict with uncommitted work.
@@ -60,14 +65,26 @@ impl GitWorkspace {
             .to_str()
             .ok_or_else(|| WorkspaceError::Io("worktree path is not valid UTF-8".into()))?;
         git(&repo, &["worktree", "add", worktree_str, "-b", &branch])?;
-        Ok(GitWorkspace { repo, worktree, branch, base })
+        Ok(GitWorkspace {
+            repo,
+            worktree,
+            branch,
+            base,
+        })
     }
 
-    pub fn branch(&self) -> &str { &self.branch }
+    pub fn branch(&self) -> &str {
+        &self.branch
+    }
 }
 
 impl Workspace for GitWorkspace {
-    fn apply_write(&self, _task_id: &TaskId, path: &str, contents: &[u8]) -> Result<(), WorkspaceError> {
+    fn apply_write(
+        &self,
+        _task_id: &TaskId,
+        path: &str,
+        contents: &[u8],
+    ) -> Result<(), WorkspaceError> {
         let full = contained_join(&self.worktree, path)?;
         if let Some(p) = full.parent() {
             std::fs::create_dir_all(p).map_err(|e| WorkspaceError::Io(e.to_string()))?;
@@ -75,9 +92,22 @@ impl Workspace for GitWorkspace {
         std::fs::write(&full, contents).map_err(|e| WorkspaceError::Io(e.to_string()))
     }
 
-    fn run_command(&self, _task_id: &TaskId, command: &str, cwd: &str) -> Result<CommandOutput, WorkspaceError> {
-        let dir = if cwd.is_empty() { self.worktree.clone() } else { self.worktree.join(cwd) };
-        let out = Command::new("sh").arg("-c").arg(command).current_dir(&dir).output()
+    fn run_command(
+        &self,
+        _task_id: &TaskId,
+        command: &str,
+        cwd: &str,
+    ) -> Result<CommandOutput, WorkspaceError> {
+        let dir = if cwd.is_empty() {
+            self.worktree.clone()
+        } else {
+            self.worktree.join(cwd)
+        };
+        let out = Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .current_dir(&dir)
+            .output()
             .map_err(|e| WorkspaceError::Io(e.to_string()))?;
         Ok(CommandOutput {
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -111,7 +141,10 @@ impl Workspace for GitWorkspace {
 
     fn accept_task(&self, task_id: &TaskId) -> Result<(), WorkspaceError> {
         git(&self.worktree, &["add", "-A"])?;
-        git(&self.worktree, &["commit", "-m", &format!("kontur: task {}", task_id.0)])?;
+        git(
+            &self.worktree,
+            &["commit", "-m", &format!("kontur: task {}", task_id.0)],
+        )?;
         Ok(())
     }
 
@@ -150,10 +183,16 @@ mod tests {
         use std::sync::atomic::{AtomicU32, Ordering};
         static N: AtomicU32 = AtomicU32::new(0);
         let mut p = std::env::temp_dir();
-        p.push(format!("kontur-git-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+        p.push(format!(
+            "kontur-git-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
-        let run = |args: &[&str]| { git(&p, args).unwrap(); };
+        let run = |args: &[&str]| {
+            git(&p, args).unwrap();
+        };
         git(&p, &["init", "-b", "main"]).unwrap();
         run(&["config", "user.email", "test@kontur.local"]);
         run(&["config", "user.name", "Kontur Test"]);
@@ -184,12 +223,14 @@ mod tests {
         let repo = temp_repo();
         let ws = GitWorkspace::create(repo.clone(), "s1").unwrap();
         let t = TaskId("t1".into());
-        ws.apply_write(&t, "src/lib.rs", b"pub fn f() {}\n").unwrap();
+        ws.apply_write(&t, "src/lib.rs", b"pub fn f() {}\n")
+            .unwrap();
         let frozen = ws.freeze_task_diff(&t).unwrap();
         assert_eq!(frozen.files, vec!["src/lib.rs".to_string()]);
         assert!(frozen.loc >= 1);
         ws.accept_task(&t).unwrap();
-        ws.merge_session("kontur session s1\n\nReviewed-by: A <a>\nReviewed-by: B <b>").unwrap();
+        ws.merge_session("kontur session s1\n\nReviewed-by: A <a>\nReviewed-by: B <b>")
+            .unwrap();
         let log = git(&repo, &["log", "-1", "--format=%B", "main"]).unwrap();
         assert!(log.contains("Reviewed-by: A <a>"));
         assert!(log.contains("Reviewed-by: B <b>"));
@@ -220,7 +261,8 @@ mod tests {
         let repo = temp_repo();
         let ws = GitWorkspace::create(repo, "s-rf1").unwrap();
         let t = TaskId("t1".into());
-        ws.apply_write(&t, "src/lib.rs", b"pub fn f() {}\n").unwrap();
+        ws.apply_write(&t, "src/lib.rs", b"pub fn f() {}\n")
+            .unwrap();
         assert_eq!(
             ws.read_file(&t, "src/lib.rs").unwrap(),
             Some(b"pub fn f() {}\n".to_vec())

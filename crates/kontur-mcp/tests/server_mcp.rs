@@ -9,10 +9,17 @@ use kontur_mcp::{GateHost, InMemoryWorkspace, KonturServer, SessionContext};
 use rmcp::model::CallToolRequestParams;
 use rmcp::{serve_server, ServiceExt};
 
-
 fn go(seed: u8, gate_id: &GateId, dh: Hash) -> CastVerdict {
     let signer = Ed25519Signer::from_seed([seed; 32]);
-    CastVerdict::create(&signer, &FixedClock(1000 + seed as i64), gate_id, dh, Verdict::Go, ReviewDepth::FullDiff, None)
+    CastVerdict::create(
+        &signer,
+        &FixedClock(1000 + seed as i64),
+        gate_id,
+        dh,
+        Verdict::Go,
+        ReviewDepth::FullDiff,
+        None,
+    )
 }
 
 /// Poll the operator face until a gate appears (the agent-side handler opens it
@@ -32,7 +39,14 @@ async fn agent_write_then_propose_gated_by_two_operators() {
     let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
     let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
     let ws = Arc::new(InMemoryWorkspace::new());
-    let ctx = SessionContext::new("refactor guard", op1, "agent-01", "claude", "1.0", vec![op1, op2]);
+    let ctx = SessionContext::new(
+        "refactor guard",
+        op1,
+        "agent-01",
+        "claude",
+        "1.0",
+        vec![op1, op2],
+    );
     let host = Arc::new(GateHost::new(ctx, ws.clone()));
 
     // Wire an in-process client<->server over a duplex pipe.
@@ -48,15 +62,19 @@ async fn agent_write_then_propose_gated_by_two_operators() {
     let client = ().serve(client_io).await.expect("client handshake");
 
     // 1) write_file — ungated, executes in the workspace.
-    let write_args = serde_json::json!({ "task_id": "t1", "path": "a.rs", "contents": "guarded\n" })
-        .as_object()
-        .cloned()
-        .unwrap();
+    let write_args =
+        serde_json::json!({ "task_id": "t1", "path": "a.rs", "contents": "guarded\n" })
+            .as_object()
+            .cloned()
+            .unwrap();
     client
         .call_tool(CallToolRequestParams::new("write_file").with_arguments(write_args))
         .await
         .expect("write_file call");
-    assert_eq!(ws.file_contents(&TaskId("t1".into()), "a.rs"), Some(b"guarded\n".to_vec()));
+    assert_eq!(
+        ws.file_contents(&TaskId("t1".into()), "a.rs"),
+        Some(b"guarded\n".to_vec())
+    );
 
     // 2) propose_task_complete — blocks; drive it on a task.
     let propose_args = serde_json::json!({ "task_id": "t1", "tokens": 42 })
@@ -66,14 +84,20 @@ async fn agent_write_then_propose_gated_by_two_operators() {
     let client2 = client.clone();
     let propose = tokio::spawn(async move {
         client2
-            .call_tool(CallToolRequestParams::new("propose_task_complete").with_arguments(propose_args))
+            .call_tool(
+                CallToolRequestParams::new("propose_task_complete").with_arguments(propose_args),
+            )
             .await
     });
 
     // 3) Two operators sign off via the operator face.
     let (gate_id, dh) = wait_for_gate(&host).await;
-    host.submit_verdict(&gate_id, go(1, &gate_id, dh)).await.unwrap();
-    host.submit_verdict(&gate_id, go(2, &gate_id, dh)).await.unwrap();
+    host.submit_verdict(&gate_id, go(1, &gate_id, dh))
+        .await
+        .unwrap();
+    host.submit_verdict(&gate_id, go(2, &gate_id, dh))
+        .await
+        .unwrap();
 
     // 4) The blocked tool call now returns success, and the audit chain holds.
     let result = propose.await.expect("join").expect("propose call ok");
@@ -88,7 +112,14 @@ async fn propose_plan_blocks_until_approved() {
     let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
     let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
     let ws = Arc::new(InMemoryWorkspace::new());
-    let ctx = SessionContext::new("plan gate test", op1, "agent-02", "claude", "1.0", vec![op1, op2]);
+    let ctx = SessionContext::new(
+        "plan gate test",
+        op1,
+        "agent-02",
+        "claude",
+        "1.0",
+        vec![op1, op2],
+    );
     let host = Arc::new(GateHost::new(ctx, ws));
 
     let (server_io, client_io) = tokio::io::duplex(8192);
@@ -126,7 +157,10 @@ async fn propose_plan_blocks_until_approved() {
     );
 
     // Assert the tool call has NOT yet completed (plan not approved).
-    assert!(!propose.is_finished(), "propose_plan must still be blocking");
+    assert!(
+        !propose.is_finished(),
+        "propose_plan must still be blocking"
+    );
 
     // Approve — should unblock the tool call.
     host.approve_plan().await;
@@ -153,7 +187,14 @@ async fn propose_plan_steered_returns_error_then_approve_succeeds() {
     let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
     let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
     let ws = Arc::new(InMemoryWorkspace::new());
-    let ctx = SessionContext::new("plan steer test", op1, "agent-03", "claude", "1.0", vec![op1, op2]);
+    let ctx = SessionContext::new(
+        "plan steer test",
+        op1,
+        "agent-03",
+        "claude",
+        "1.0",
+        vec![op1, op2],
+    );
     let host = Arc::new(GateHost::new(ctx, ws));
 
     let (server_io, client_io) = tokio::io::duplex(8192);
@@ -193,7 +234,10 @@ async fn propose_plan_steered_returns_error_then_approve_succeeds() {
         .expect("task join")
         .expect_err("steered plan must surface as an MCP error");
     let msg = err.to_string();
-    assert!(msg.contains("split task 2"), "error must carry the steer: {msg}");
+    assert!(
+        msg.contains("split task 2"),
+        "error must carry the steer: {msg}"
+    );
 
     // Agent re-proposes; approve; success.
     let plan_args2 = serde_json::json!({ "tasks": ["task a", "task b"] })
@@ -220,7 +264,11 @@ async fn propose_plan_steered_returns_error_then_approve_succeeds() {
         .expect("approve must unblock within 5s")
         .expect("task join")
         .expect("propose_plan tool call ok");
-    assert_eq!(result2.is_error, Some(false), "re-proposed plan must succeed after approve");
+    assert_eq!(
+        result2.is_error,
+        Some(false),
+        "re-proposed plan must succeed after approve"
+    );
     let text2 = match &result2.content[0] {
         rmcp::model::ContentBlock::Text(t) => t.text.clone(),
         other => panic!("unexpected content: {other:?}"),

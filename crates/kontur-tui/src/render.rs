@@ -77,7 +77,11 @@ fn status(frame: &mut Frame, area: Rect, view: &SessionView) {
     };
     let line = format!(
         " LINK {} || 4-EYES {} || {} || {} tok",
-        if s.linked { "BOTH-STATIONS SYNC" } else { "B-STATION DROPPED" },
+        if s.linked {
+            "BOTH-STATIONS SYNC"
+        } else {
+            "B-STATION DROPPED"
+        },
         if s.four_eyes { "ON" } else { "OFF" },
         needs,
         s.tokens
@@ -86,7 +90,8 @@ fn status(frame: &mut Frame, area: Rect, view: &SessionView) {
 }
 
 fn stations(frame: &mut Frame, area: Rect, view: &SessionView) {
-    let cols = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
+    let cols =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
     for (i, st) in view.stations.iter().enumerate() {
         let block = Block::bordered().title(st.label.clone());
         let body = format!("{} · {}", st.role.label(), st.activity);
@@ -99,16 +104,26 @@ fn fleet(frame: &mut Frame, area: Rect, view: &SessionView) {
         .fleet
         .iter()
         .map(|a| {
-            let marker = if a.needs_signoff { "▶ NEEDS SIGN-OFF" } else { a.status.as_str() };
+            let marker = if a.needs_signoff {
+                "▶ NEEDS SIGN-OFF"
+            } else {
+                a.status.as_str()
+            };
             let text = format!(" {:<10} {:<20} {} tok", a.id, marker, a.tokens);
             if a.needs_signoff {
-                Line::from(Span::styled(text, Style::default().add_modifier(Modifier::BOLD)))
+                Line::from(Span::styled(
+                    text,
+                    Style::default().add_modifier(Modifier::BOLD),
+                ))
             } else {
                 Line::from(text)
             }
         })
         .collect();
-    frame.render_widget(Paragraph::new(lines).block(Block::bordered().title("FLEET")), area);
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title("FLEET")),
+        area,
+    );
 }
 
 fn log(frame: &mut Frame, area: Rect, view: &SessionView) {
@@ -117,7 +132,10 @@ fn log(frame: &mut Frame, area: Rect, view: &SessionView) {
         .iter()
         .map(|l| Line::from(format!(" {} {:<8} {}", l.time, l.who, l.text)))
         .collect();
-    frame.render_widget(Paragraph::new(lines).block(Block::bordered().title("LOG")), area);
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title("LOG")),
+        area,
+    );
 }
 
 /// Render the two-pane area (below stations, above command line).
@@ -149,7 +167,11 @@ fn panes(
             };
 
             let constraints = if files_height > 0 {
-                vec![Constraint::Length(files_height), diff_min, Constraint::Length(6)]
+                vec![
+                    Constraint::Length(files_height),
+                    diff_min,
+                    Constraint::Length(6),
+                ]
             } else {
                 vec![diff_min, Constraint::Length(6)]
             };
@@ -182,7 +204,13 @@ fn render_files_bar(
         .files
         .iter()
         .enumerate()
-        .map(|(i, f)| if i == selected_file { format!("▶ {f}") } else { f.clone() })
+        .map(|(i, f)| {
+            if i == selected_file {
+                format!("▶ {f}")
+            } else {
+                f.clone()
+            }
+        })
         .collect::<Vec<_>>()
         .join("  ");
     let lines = vec![
@@ -266,7 +294,11 @@ fn render_phase_card(frame: &mut Frame, area: Rect, active: &ActiveRegion) {
                 area,
             );
         }
-        ActiveRegion::Plan { tasks, ready, selected } => {
+        ActiveRegion::Plan {
+            tasks,
+            ready,
+            selected,
+        } => {
             let a_mark = if ready[0] { "■" } else { "□" };
             let b_mark = if ready[1] { "■" } else { "□" };
             let mut lines: Vec<Line> = tasks
@@ -291,7 +323,10 @@ fn render_phase_card(frame: &mut Frame, area: Rect, active: &ActiveRegion) {
         }
         ActiveRegion::Intervention(card) => {
             let lines = vec![
-                Line::from(format!(" NO-GO · {} — a remedy is required (steer or edit)", card.gate_id)),
+                Line::from(format!(
+                    " NO-GO · {} — a remedy is required (steer or edit)",
+                    card.gate_id
+                )),
                 Line::from(format!(" steer > {}", card.steer)),
                 Line::from(" [↵] send steer · [esc] cancel"),
             ];
@@ -321,7 +356,10 @@ fn render_phase_card(frame: &mut Frame, area: Rect, active: &ActiveRegion) {
             } else {
                 let mut lines = vec![
                     Line::from(format!(" {} gates", summary.gates)),
-                    Line::from(format!(" Reviewed-by: {}", summary.reviewers.join("   Reviewed-by: "))),
+                    Line::from(format!(
+                        " Reviewed-by: {}",
+                        summary.reviewers.join("   Reviewed-by: ")
+                    )),
                     Line::from(if summary.chain_verified {
                         " chain verified ✓ (tamper-evident)".to_string()
                     } else {
@@ -376,11 +414,30 @@ mod tests {
 
     fn minimal_view(active: ActiveRegion) -> SessionView {
         SessionView {
-            banner: Banner { session: "test".into(), version: "0.0.0".into() },
-            status: StatusStrip { linked: true, four_eyes: true, fleet_count: 0, needs_you: 0, tokens: 0 },
+            banner: Banner {
+                session: "test".into(),
+                version: "0.0.0".into(),
+            },
+            status: StatusStrip {
+                linked: true,
+                four_eyes: true,
+                fleet_count: 0,
+                needs_you: 0,
+                tokens: 0,
+            },
             stations: [
-                Station { label: "A".into(), role: Role::Host, activity: "linked".into(), operator: OperatorId([1; 32]) },
-                Station { label: "B".into(), role: Role::Operator, activity: "linked".into(), operator: OperatorId([2; 32]) },
+                Station {
+                    label: "A".into(),
+                    role: Role::Host,
+                    activity: "linked".into(),
+                    operator: OperatorId([1; 32]),
+                },
+                Station {
+                    label: "B".into(),
+                    role: Role::Operator,
+                    activity: "linked".into(),
+                    operator: OperatorId([2; 32]),
+                },
             ],
             fleet: vec![],
             log: vec![],
@@ -543,24 +600,52 @@ mod tests {
             files: vec!["auth/session.rs".into()],
             loc: 47,
             keys: vec![
-                KeyView { label: "A".into(), role: Role::Host, status: KeyStatus::Awaiting },
-                KeyView { label: "B".into(), role: Role::Operator, status: KeyStatus::Sealed },
+                KeyView {
+                    label: "A".into(),
+                    role: Role::Host,
+                    status: KeyStatus::Awaiting,
+                },
+                KeyView {
+                    label: "B".into(),
+                    role: Role::Operator,
+                    status: KeyStatus::Sealed,
+                },
             ],
             escalation_required: false,
-            diff_preview: Some("diff --git a/auth/session.rs b/auth/session.rs\n+fn foo() {}".into()),
+            diff_preview: Some(
+                "diff --git a/auth/session.rs b/auth/session.rs\n+fn foo() {}".into(),
+            ),
             diff_truncated: false,
         };
         let rendered = draw(&minimal_view(ActiveRegion::Gate(card)));
         // Left LOG title visible simultaneously with right DIFF title.
-        assert!(rendered.contains("LOG"), "LOG title must appear in left pane; got:\n{rendered}");
-        assert!(rendered.contains("DIFF"), "DIFF title must appear in right pane; got:\n{rendered}");
+        assert!(
+            rendered.contains("LOG"),
+            "LOG title must appear in left pane; got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("DIFF"),
+            "DIFF title must appear in right pane; got:\n{rendered}"
+        );
         // Verdict bar keys.
-        assert!(rendered.contains("[g] go"), "verdict bar must show [g] go; got:\n{rendered}");
+        assert!(
+            rendered.contains("[g] go"),
+            "verdict bar must show [g] go; got:\n{rendered}"
+        );
         // Sealed key renders correctly.
-        assert!(rendered.contains("cast — sealed"), "sealed key must show 'cast — sealed'; got:\n{rendered}");
+        assert!(
+            rendered.contains("cast — sealed"),
+            "sealed key must show 'cast — sealed'; got:\n{rendered}"
+        );
         // Sealed key must NOT reveal a value.
-        assert!(!rendered.contains("■ GO"), "sealed key must not show GO; got:\n{rendered}");
-        assert!(!rendered.contains("■ NO-GO"), "sealed key must not show NO-GO; got:\n{rendered}");
+        assert!(
+            !rendered.contains("■ GO"),
+            "sealed key must not show GO; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("■ NO-GO"),
+            "sealed key must not show NO-GO; got:\n{rendered}"
+        );
     }
 
     /// Gate: files bar shows ▶ selection marker and LOC count.
@@ -578,10 +663,18 @@ mod tests {
         };
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render(f, &minimal_view(ActiveRegion::Gate(card)), 0, 1)).unwrap();
+        terminal
+            .draw(|f| render(f, &minimal_view(ActiveRegion::Gate(card)), 0, 1))
+            .unwrap();
         let rendered = terminal.backend().to_string();
-        assert!(rendered.contains("▶ b.rs"), "selected file must be marked with ▶; got:\n{rendered}");
-        assert!(rendered.contains("+10 loc"), "files bar must show LOC count; got:\n{rendered}");
+        assert!(
+            rendered.contains("▶ b.rs"),
+            "selected file must be marked with ▶; got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("+10 loc"),
+            "files bar must show LOC count; got:\n{rendered}"
+        );
     }
 
     /// Gate: truncated diff shows (TRUNCATED) in title.
@@ -598,6 +691,9 @@ mod tests {
             diff_truncated: true,
         };
         let rendered = draw(&minimal_view(ActiveRegion::Gate(card)));
-        assert!(rendered.contains("TRUNCATED"), "truncated diff must show TRUNCATED in title; got:\n{rendered}");
+        assert!(
+            rendered.contains("TRUNCATED"),
+            "truncated diff must show TRUNCATED in title; got:\n{rendered}"
+        );
     }
 }

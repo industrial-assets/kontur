@@ -14,8 +14,8 @@ use std::time::Duration;
 use kontur_core::{Ed25519Signer, ReviewDepth, Signer};
 use kontur_mcp::{GateHost, GitWorkspace, SessionContext};
 use kontur_net::{
-    SessionClient, SessionConfig, SessionServer, WirePhase,
-    serve_agent_endpoint, generate_tls, attach_tls,
+    attach_tls, generate_tls, serve_agent_endpoint, SessionClient, SessionConfig, SessionServer,
+    WirePhase,
 };
 use rmcp::model::CallToolRequestParams;
 use rmcp::ServiceExt;
@@ -113,9 +113,7 @@ impl StateCursor {
         loop {
             let msg = tokio::time::timeout(Duration::from_secs(55), self.rx.recv())
                 .await
-                .unwrap_or_else(|_| {
-                    panic!("[{label}] timed out waiting for state; saw: {seen:?}")
-                })
+                .unwrap_or_else(|_| panic!("[{label}] timed out waiting for state; saw: {seen:?}"))
                 .expect("channel closed unexpectedly");
             match msg {
                 kontur_net::ServerMsg::State(ws) => {

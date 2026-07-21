@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use kontur_core::{
-    reviewed_by as core_reviewed_by, verify_chain, Authorship, AuditChain, CastVerdict, ChainBreak,
+    reviewed_by as core_reviewed_by, verify_chain, AuditChain, Authorship, CastVerdict, ChainBreak,
     DualHold, GateId, GateRecord, Hash, HoldState, MakerSet, OperatorId, Provenance, Remedy,
     TaskId, VerdictView,
 };
@@ -24,17 +24,37 @@ pub enum PlanDecision {
 /// display stream — never blocks or gates the enforcement path.
 #[derive(Clone, Debug)]
 pub enum HostEvent {
-    Write { task: TaskId, path: String, bytes: usize },
-    Command { task: TaskId, command: String },
-    GateOpened { gate_id: GateId, task: TaskId },
-    GateResolved { gate_id: GateId, state: HoldState },
+    Write {
+        task: TaskId,
+        path: String,
+        bytes: usize,
+    },
+    Command {
+        task: TaskId,
+        command: String,
+    },
+    GateOpened {
+        gate_id: GateId,
+        task: TaskId,
+    },
+    GateResolved {
+        gate_id: GateId,
+        state: HoldState,
+    },
     /// Emitted after `hand_edit` removes a stale pending hold and replaces it
     /// with a fresh one over the combined diff. The wire then projects the
     /// fresh gate — realtime property.
-    GateSuperseded { old_gate_id: GateId, new_gate_id: GateId },
-    PlanProposed { tasks: Vec<String> },
+    GateSuperseded {
+        old_gate_id: GateId,
+        new_gate_id: GateId,
+    },
+    PlanProposed {
+        tasks: Vec<String>,
+    },
     /// Emitted after `steer_plan` routes a replan prompt to the agent.
-    PlanSteered { steer: String },
+    PlanSteered {
+        steer: String,
+    },
     SessionAbandoned,
 }
 
@@ -157,7 +177,10 @@ impl GateHost {
     /// to `PlanDecision::Approved` when both operators approve (or
     /// `PlanDecision::Steered` when they route a replan). Re-proposal overwrites
     /// (idempotent).
-    pub async fn propose_plan(&self, tasks: Vec<String>) -> Result<watch::Receiver<PlanDecision>, GateHostError> {
+    pub async fn propose_plan(
+        &self,
+        tasks: Vec<String>,
+    ) -> Result<watch::Receiver<PlanDecision>, GateHostError> {
         let mut st = self.state.lock().await;
         if st.abandoned {
             return Err(GateHostError::SessionAbandoned);
@@ -200,7 +223,8 @@ impl GateHost {
             if st.abandoned {
                 return;
             }
-            st.plan_decision_tx.send_replace(PlanDecision::Steered(steer.clone()));
+            st.plan_decision_tx
+                .send_replace(PlanDecision::Steered(steer.clone()));
         }
         let _ = self.events.send(HostEvent::PlanSteered { steer });
     }
@@ -234,7 +258,12 @@ impl GateHost {
     }
 
     /// Agent face: record a worktree write on a task (not gated).
-    pub async fn record_write(&self, task_id: &TaskId, path: &str, contents: &[u8]) -> Result<(), GateHostError> {
+    pub async fn record_write(
+        &self,
+        task_id: &TaskId,
+        path: &str,
+        contents: &[u8],
+    ) -> Result<(), GateHostError> {
         self.workspace.apply_write(task_id, path, contents)?;
         let _ = self.events.send(HostEvent::Write {
             task: task_id.clone(),
@@ -245,7 +274,12 @@ impl GateHost {
     }
 
     /// Agent face: run a command in the worktree (not gated).
-    pub async fn run_command(&self, task_id: &TaskId, command: &str, cwd: &str) -> Result<CommandOutput, GateHostError> {
+    pub async fn run_command(
+        &self,
+        task_id: &TaskId,
+        command: &str,
+        cwd: &str,
+    ) -> Result<CommandOutput, GateHostError> {
         let out = self.workspace.run_command(task_id, command, cwd)?;
         let _ = self.events.send(HostEvent::Command {
             task: task_id.clone(),
@@ -256,7 +290,11 @@ impl GateHost {
 
     /// Open a gate over a task's frozen diff. Returns the gate id and a receiver
     /// the awaiting agent-side handler watches for resolution.
-    pub async fn open_gate(&self, task_id: TaskId, provenance: Provenance) -> (GateId, watch::Receiver<HoldState>) {
+    pub async fn open_gate(
+        &self,
+        task_id: TaskId,
+        provenance: Provenance,
+    ) -> (GateId, watch::Receiver<HoldState>) {
         let mut st = self.state.lock().await;
         st.next_gate += 1;
         let id = GateId(format!("gate-{:03}", st.next_gate));
@@ -270,7 +308,13 @@ impl GateHost {
             Authorship::Agent,
         );
         let (tx, rx) = watch::channel(HoldState::Open);
-        st.holds.push(HoldEntry { hold, provenance, watch_tx: tx, escalation_required: false, carried_watchers: vec![] });
+        st.holds.push(HoldEntry {
+            hold,
+            provenance,
+            watch_tx: tx,
+            escalation_required: false,
+            carried_watchers: vec![],
+        });
         drop(st);
         let _ = self.events.send(HostEvent::GateOpened {
             gate_id: id.clone(),
@@ -281,7 +325,11 @@ impl GateHost {
 
     /// Operator face: cast a signed verdict on a gate. On resolution, accepts or
     /// discards the task and publishes the new state on the gate's watch.
-    pub async fn submit_verdict(&self, gate_id: &GateId, cv: CastVerdict) -> Result<GateProgress, GateHostError> {
+    pub async fn submit_verdict(
+        &self,
+        gate_id: &GateId,
+        cv: CastVerdict,
+    ) -> Result<GateProgress, GateHostError> {
         let mut st = self.state.lock().await;
         if st.abandoned {
             return Err(GateHostError::SessionAbandoned);
@@ -307,7 +355,9 @@ impl GateHost {
                     (e.hold.task_id().clone(), rec)
                 };
                 self.workspace.accept_task(&task_id)?;
-                st.chain.append(record).expect("chain head matches prev by construction");
+                st.chain
+                    .append(record)
+                    .expect("chain head matches prev by construction");
                 None
             }
             HoldState::Blocked => {
@@ -318,7 +368,9 @@ impl GateHost {
                         .expect("a resolved hold always builds a record");
                     (e.hold.task_id().clone(), e.hold.blocking_remedy(), rec)
                 };
-                st.chain.append(record).expect("chain head matches prev by construction");
+                st.chain
+                    .append(record)
+                    .expect("chain head matches prev by construction");
                 self.workspace.discard_task(&task_id)?;
                 remedy
             }
@@ -343,7 +395,11 @@ impl GateHost {
                 state,
             });
         }
-        Ok(GateProgress { state, escalation_required, remedy })
+        Ok(GateProgress {
+            state,
+            escalation_required,
+            remedy,
+        })
     }
 
     /// Verify the whole audit chain (tamper-evidence check).
@@ -443,7 +499,11 @@ impl GateHost {
             .find(|r| &r.core.gate_id == effective_id)
             .map(core_reviewed_by)
             .unwrap_or_default();
-        Some(GateFinal { state, remedy, reviewed_by })
+        Some(GateFinal {
+            state,
+            remedy,
+            reviewed_by,
+        })
     }
 
     /// Operator face: a hand-edit. Applies to the worktree immediately, then
@@ -531,7 +591,13 @@ impl GateHost {
             st.superseded.push((old_id.clone(), id.clone()));
         }
 
-        st.holds.push(HoldEntry { hold, provenance, watch_tx: tx, escalation_required, carried_watchers });
+        st.holds.push(HoldEntry {
+            hold,
+            provenance,
+            watch_tx: tx,
+            escalation_required,
+            carried_watchers,
+        });
         drop(st);
 
         // Emit supersession events after the lock drops (best-effort display).
@@ -553,9 +619,18 @@ impl GateHost {
     /// an operator opens to review.
     pub async fn gate_diff(&self, gate_id: &GateId) -> Option<Vec<u8>> {
         let st = self.state.lock().await;
-        let task_id = st.holds.iter().find(|e| e.hold.gate_id() == gate_id)?.hold.task_id().clone();
+        let task_id = st
+            .holds
+            .iter()
+            .find(|e| e.hold.gate_id() == gate_id)?
+            .hold
+            .task_id()
+            .clone();
         drop(st);
-        self.workspace.freeze_task_diff(&task_id).ok().map(|f| f.bytes)
+        self.workspace
+            .freeze_task_diff(&task_id)
+            .ok()
+            .map(|f| f.bytes)
     }
 
     /// Number of records currently in the audit chain.
@@ -567,7 +642,11 @@ impl GateHost {
     /// Returns `Ok(None)` when the path does not exist (new file).
     /// Refused when the session has been abandoned — same guard as other
     /// mutating/reading operations.
-    pub async fn read_file(&self, task_id: &TaskId, path: &str) -> Result<Option<Vec<u8>>, GateHostError> {
+    pub async fn read_file(
+        &self,
+        task_id: &TaskId,
+        path: &str,
+    ) -> Result<Option<Vec<u8>>, GateHostError> {
         let st = self.state.lock().await;
         if st.abandoned {
             return Err(GateHostError::SessionAbandoned);
@@ -596,7 +675,11 @@ impl GateHost {
             let mut st = self.state.lock().await;
             st.abandoned = true;
             let mut tids = Vec::new();
-            for e in st.holds.iter().filter(|e| matches!(e.hold.state(), HoldState::Open | HoldState::Partial)) {
+            for e in st
+                .holds
+                .iter()
+                .filter(|e| matches!(e.hold.state(), HoldState::Open | HoldState::Partial))
+            {
                 tids.push(e.hold.task_id().clone());
                 // Parked proposals must not hang forever: Blocked is the honest
                 // terminal for "will never be approved". Agents treat Blocked as
@@ -636,10 +719,22 @@ mod tests {
 
     fn go_verdict(seed: u8, gate_id: &GateId, dh: Hash) -> CastVerdict {
         let signer = Ed25519Signer::from_seed([seed; 32]);
-        CastVerdict::create(&signer, &FixedClock(1000 + seed as i64), gate_id, dh, Verdict::Go, ReviewDepth::FullDiff, None)
+        CastVerdict::create(
+            &signer,
+            &FixedClock(1000 + seed as i64),
+            gate_id,
+            dh,
+            Verdict::Go,
+            ReviewDepth::FullDiff,
+            None,
+        )
     }
 
-    async fn open_a_gate(host: &GateHost, ws: &InMemoryWorkspace, ctx: &SessionContext) -> (GateId, Hash) {
+    async fn open_a_gate(
+        host: &GateHost,
+        ws: &InMemoryWorkspace,
+        ctx: &SessionContext,
+    ) -> (GateId, Hash) {
         let task = TaskId("t1".into());
         ws.apply_write(&task, "a.rs", b"x\n").unwrap();
         let frozen = ws.freeze_task_diff(&task).unwrap();
@@ -659,11 +754,17 @@ mod tests {
 
         let (gid, dh) = open_a_gate(&host, &ws, &context).await;
 
-        let p1 = host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
+        let p1 = host
+            .submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
         assert_eq!(p1.state, HoldState::Partial);
         assert!(ws.accepted_tasks().is_empty());
 
-        let p2 = host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+        let p2 = host
+            .submit_verdict(&gid, go_verdict(2, &gid, dh))
+            .await
+            .unwrap();
         assert_eq!(p2.state, HoldState::Satisfied);
 
         assert_eq!(ws.accepted_tasks(), vec![TaskId("t1".into())]);
@@ -693,11 +794,19 @@ mod tests {
         let host = GateHost::new(context.clone(), ws.clone());
         let (gid, dh) = open_a_gate(&host, &ws, &context).await;
 
-        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
-        let p2 = host.submit_verdict(&gid, nogo_verdict(2, &gid, dh, "cache it")).await.unwrap();
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
+        let p2 = host
+            .submit_verdict(&gid, nogo_verdict(2, &gid, dh, "cache it"))
+            .await
+            .unwrap();
 
         assert_eq!(p2.state, HoldState::Blocked);
-        assert_eq!(p2.remedy, Some(kontur_core::Remedy::Steer("cache it".into())));
+        assert_eq!(
+            p2.remedy,
+            Some(kontur_core::Remedy::Steer("cache it".into()))
+        );
         assert!(ws.accepted_tasks().is_empty());
         assert_eq!(ws.discarded_tasks(), vec![TaskId("t1".into())]);
         assert_eq!(host.audit_len().await, 1);
@@ -713,12 +822,17 @@ mod tests {
         let host = GateHost::new(context.clone(), ws.clone());
         let (gid, dh) = open_a_gate(&host, &ws, &context).await;
 
-        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
         let pending = host.pending_gates().await;
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].state, HoldState::Partial);
         assert_eq!(pending[0].observed.len(), 1);
-        assert_eq!(pending[0].observed[0].status, kontur_core::VerdictStatus::Sealed);
+        assert_eq!(
+            pending[0].observed[0].status,
+            kontur_core::VerdictStatus::Sealed
+        );
         assert_eq!(pending[0].diff_hash, dh);
     }
 
@@ -735,8 +849,12 @@ mod tests {
         let (gid, _rx) = host.begin_task_gate(task, 42).await.unwrap();
         let dh = host.pending_gates().await[0].diff_hash;
 
-        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
-        host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
+        host.submit_verdict(&gid, go_verdict(2, &gid, dh))
+            .await
+            .unwrap();
 
         let outcome = host.gate_outcome(&gid).await.unwrap();
         assert_eq!(outcome.state, HoldState::Satisfied);
@@ -759,14 +877,22 @@ mod tests {
             ws.clone(),
         );
 
-        let (gid, _rx) = host.hand_edit(task.clone(), "a.rs", b"guarded\n", op1).await.unwrap();
+        let (gid, _rx) = host
+            .hand_edit(task.clone(), "a.rs", b"guarded\n", op1)
+            .await
+            .unwrap();
         // Applied immediately, observable in the workspace.
         assert_eq!(ws.file_contents(&task, "a.rs"), Some(b"guarded\n".to_vec()));
 
         let dh = host.pending_gates().await[0].diff_hash;
         // Editor op1 co-signs (pragmatic), op2 co-signs -> satisfied.
-        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
-        let p = host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
+        let p = host
+            .submit_verdict(&gid, go_verdict(2, &gid, dh))
+            .await
+            .unwrap();
         assert_eq!(p.state, HoldState::Satisfied);
         assert_eq!(ws.accepted_tasks(), vec![task]);
     }
@@ -780,16 +906,28 @@ mod tests {
         let host = GateHost::new(ctx(vec![op1, op2]), ws.clone());
 
         let task = TaskId("t1".into());
-        let (gid, _rx) = host.hand_edit(task, "a.rs", b"guarded\n", op1).await.unwrap();
+        let (gid, _rx) = host
+            .hand_edit(task, "a.rs", b"guarded\n", op1)
+            .await
+            .unwrap();
         let dh = host.pending_gates().await[0].diff_hash;
 
         // op2 (non-editor) casts: accepted, but escalation is signalled (pool = 1 < 2).
-        let p = host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+        let p = host
+            .submit_verdict(&gid, go_verdict(2, &gid, dh))
+            .await
+            .unwrap();
         assert!(p.escalation_required);
 
         // op1 (the editor) is a maker in strict mode -> rejected.
-        let err = host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap_err();
-        assert_eq!(err, GateHostError::Cast(kontur_core::CastRejected::Ineligible));
+        let err = host
+            .submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err,
+            GateHostError::Cast(kontur_core::CastRejected::Ineligible)
+        );
     }
 
     #[tokio::test]
@@ -818,8 +956,12 @@ mod tests {
         assert!(!diff.is_empty());
         assert_eq!(host.audit_len().await, 0);
 
-        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
-        host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
+        host.submit_verdict(&gid, go_verdict(2, &gid, dh))
+            .await
+            .unwrap();
         assert_eq!(host.audit_len().await, 1);
     }
 
@@ -832,8 +974,12 @@ mod tests {
         let host = GateHost::new(context.clone(), ws.clone());
 
         let (gid, dh) = open_a_gate(&host, &ws, &context).await;
-        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
-        host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
+        host.submit_verdict(&gid, go_verdict(2, &gid, dh))
+            .await
+            .unwrap();
 
         host.merge_session("m").await.unwrap();
         assert_eq!(ws.merged_message(), Some("m".to_string()));
@@ -848,8 +994,12 @@ mod tests {
         let host = GateHost::new(context.clone(), ws.clone());
 
         let (gid, dh) = open_a_gate(&host, &ws, &context).await;
-        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
-        host.submit_verdict(&gid, nogo_verdict(2, &gid, dh, "cache it")).await.unwrap();
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
+        host.submit_verdict(&gid, nogo_verdict(2, &gid, dh, "cache it"))
+            .await
+            .unwrap();
         assert_eq!(host.audit_len().await, 1);
 
         // Rework: new write, fresh gate, both go.
@@ -857,8 +1007,12 @@ mod tests {
         ws.apply_write(&task, "a.rs", b"reworked\n").unwrap();
         let (gid2, _rx) = host.begin_task_gate(task, 0).await.unwrap();
         let dh2 = host.pending_gates().await[0].diff_hash;
-        host.submit_verdict(&gid2, go_verdict(1, &gid2, dh2)).await.unwrap();
-        host.submit_verdict(&gid2, go_verdict(2, &gid2, dh2)).await.unwrap();
+        host.submit_verdict(&gid2, go_verdict(1, &gid2, dh2))
+            .await
+            .unwrap();
+        host.submit_verdict(&gid2, go_verdict(2, &gid2, dh2))
+            .await
+            .unwrap();
 
         assert_eq!(host.audit_len().await, 2);
         assert!(host.verify_audit().await.is_ok());
@@ -866,8 +1020,8 @@ mod tests {
 
     #[tokio::test]
     async fn abandon_session_discards_pending_and_emits_event() {
-        use tokio::sync::broadcast::error::TryRecvError;
         use std::time::Duration;
+        use tokio::sync::broadcast::error::TryRecvError;
 
         let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
         let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
@@ -879,7 +1033,10 @@ mod tests {
         let (gid, dh) = open_a_gate(&host, &ws, &context).await;
 
         // Cast one key → Partial state.
-        let p = host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
+        let p = host
+            .submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
         assert_eq!(p.state, HoldState::Partial);
 
         let mut ev_rx = host.subscribe_events();
@@ -899,10 +1056,15 @@ mod tests {
         let mut got_abandoned = false;
         loop {
             match ev_rx.try_recv() {
-                Ok(HostEvent::SessionAbandoned) => { got_abandoned = true; break; }
+                Ok(HostEvent::SessionAbandoned) => {
+                    got_abandoned = true;
+                    break;
+                }
                 Ok(_) => {}
                 Err(TryRecvError::Empty) => {
-                    if tokio::time::Instant::now() >= deadline { break; }
+                    if tokio::time::Instant::now() >= deadline {
+                        break;
+                    }
                     tokio::task::yield_now().await;
                 }
                 _ => break,
@@ -921,8 +1083,12 @@ mod tests {
 
         // Open and fully satisfy a gate (task becomes Satisfied/accepted).
         let (gid, dh) = open_a_gate(&host, &ws, &context).await;
-        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
-        host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
+        host.submit_verdict(&gid, go_verdict(2, &gid, dh))
+            .await
+            .unwrap();
 
         assert_eq!(ws.accepted_tasks(), vec![kontur_core::TaskId("t1".into())]);
         assert_eq!(host.audit_len().await, 1);
@@ -991,15 +1157,27 @@ mod tests {
         // Both receivers on the current channel observe Approved after approval.
         let _ = tokio::time::timeout(Duration::from_millis(100), rx.changed()).await;
         let _ = tokio::time::timeout(Duration::from_millis(100), rx2.changed()).await;
-        assert_eq!(*rx.borrow_and_update(), PlanDecision::Approved, "rx must see Approved after approve");
-        assert_eq!(*rx2.borrow_and_update(), PlanDecision::Approved, "rx2 (direct subscribe) must see Approved");
+        assert_eq!(
+            *rx.borrow_and_update(),
+            PlanDecision::Approved,
+            "rx must see Approved after approve"
+        );
+        assert_eq!(
+            *rx2.borrow_and_update(),
+            PlanDecision::Approved,
+            "rx2 (direct subscribe) must see Approved"
+        );
 
         // A receiver obtained AFTER approve on the same channel sees Approved immediately (send_replace property).
         let rx3 = {
             let st = host.state.lock().await;
             st.plan_decision_tx.subscribe()
         };
-        assert_eq!(*rx3.borrow(), PlanDecision::Approved, "subscriber after send_replace(Approved) must see Approved immediately");
+        assert_eq!(
+            *rx3.borrow(),
+            PlanDecision::Approved,
+            "subscriber after send_replace(Approved) must see Approved immediately"
+        );
     }
 
     #[tokio::test]
@@ -1010,7 +1188,9 @@ mod tests {
         let host = GateHost::new(ctx(vec![op1, op2]), ws);
 
         host.propose_plan(vec!["task-a".to_string()]).await.unwrap();
-        host.propose_plan(vec!["task-b".to_string(), "task-c".to_string()]).await.unwrap();
+        host.propose_plan(vec!["task-b".to_string(), "task-c".to_string()])
+            .await
+            .unwrap();
 
         // Re-proposal overwrites.
         assert_eq!(
@@ -1034,11 +1214,19 @@ mod tests {
 
         // The original receiver sees Approved.
         let _ = tokio::time::timeout(Duration::from_millis(100), rx1.changed()).await;
-        assert_eq!(*rx1.borrow_and_update(), PlanDecision::Approved, "original rx must see Approved after approve");
+        assert_eq!(
+            *rx1.borrow_and_update(),
+            PlanDecision::Approved,
+            "original rx must see Approved after approve"
+        );
 
         // Re-propose plan B: fresh watch channel, state reset to Pending.
         let mut rx2 = host.propose_plan(vec!["task-b".to_string()]).await.unwrap();
-        assert_eq!(*rx2.borrow(), PlanDecision::Pending, "re-proposal must reset approval to Pending");
+        assert_eq!(
+            *rx2.borrow(),
+            PlanDecision::Pending,
+            "re-proposal must reset approval to Pending"
+        );
 
         // The old receiver's changed() now errors (channel closed by the swap).
         let changed_result = tokio::time::timeout(Duration::from_millis(100), rx1.changed()).await;
@@ -1050,7 +1238,11 @@ mod tests {
         // Approve the new plan: fresh watch transitions to Approved.
         host.approve_plan().await;
         let _ = tokio::time::timeout(Duration::from_millis(100), rx2.changed()).await;
-        assert_eq!(*rx2.borrow_and_update(), PlanDecision::Approved, "new rx must see Approved after fresh approve");
+        assert_eq!(
+            *rx2.borrow_and_update(),
+            PlanDecision::Approved,
+            "new rx must see Approved after fresh approve"
+        );
     }
 
     #[tokio::test]
@@ -1065,7 +1257,10 @@ mod tests {
 
         let mut ev_rx = host.subscribe_events();
 
-        let mut rx = host.propose_plan(vec!["task-a".to_string(), "task-b".to_string()]).await.unwrap();
+        let mut rx = host
+            .propose_plan(vec!["task-a".to_string(), "task-b".to_string()])
+            .await
+            .unwrap();
         assert_eq!(*rx.borrow(), PlanDecision::Pending);
 
         // Steer routes a replan.
@@ -1114,16 +1309,27 @@ mod tests {
         let mut rx1 = host.propose_plan(vec!["task-a".to_string()]).await.unwrap();
         host.steer_plan("rethink".to_string()).await;
         let _ = tokio::time::timeout(Duration::from_millis(100), rx1.changed()).await;
-        assert_eq!(*rx1.borrow_and_update(), PlanDecision::Steered("rethink".to_string()));
+        assert_eq!(
+            *rx1.borrow_and_update(),
+            PlanDecision::Steered("rethink".to_string())
+        );
 
         // Re-propose plan B: fresh channel starts at Pending.
         let mut rx2 = host.propose_plan(vec!["task-b".to_string()]).await.unwrap();
-        assert_eq!(*rx2.borrow(), PlanDecision::Pending, "re-proposal must reset to Pending");
+        assert_eq!(
+            *rx2.borrow(),
+            PlanDecision::Pending,
+            "re-proposal must reset to Pending"
+        );
 
         // Approve the new plan: transitions to Approved.
         host.approve_plan().await;
         let _ = tokio::time::timeout(Duration::from_millis(100), rx2.changed()).await;
-        assert_eq!(*rx2.borrow_and_update(), PlanDecision::Approved, "new rx must see Approved after approve");
+        assert_eq!(
+            *rx2.borrow_and_update(),
+            PlanDecision::Approved,
+            "new rx must see Approved after approve"
+        );
     }
 
     #[tokio::test]
@@ -1148,8 +1354,12 @@ mod tests {
         let dh = host.pending_gates().await[0].diff_hash;
 
         // Cast two go verdicts → GateResolved{Satisfied} event.
-        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
-        host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
+        host.submit_verdict(&gid, go_verdict(2, &gid, dh))
+            .await
+            .unwrap();
 
         // Collect all events with a short timeout so we don't wait forever.
         let mut events: Vec<HostEvent> = Vec::new();
@@ -1169,20 +1379,58 @@ mod tests {
         }
 
         // Assert the sequence contains: Write → GateOpened → GateResolved{Satisfied}
-        let has_write = events.iter().any(|e| matches!(e, HostEvent::Write { path, .. } if path == "a.rs"));
-        let has_gate_opened = events.iter().any(|e| matches!(e, HostEvent::GateOpened { .. }));
-        let has_resolved = events.iter().any(|e| matches!(e, HostEvent::GateResolved { state: HoldState::Satisfied, .. }));
+        let has_write = events
+            .iter()
+            .any(|e| matches!(e, HostEvent::Write { path, .. } if path == "a.rs"));
+        let has_gate_opened = events
+            .iter()
+            .any(|e| matches!(e, HostEvent::GateOpened { .. }));
+        let has_resolved = events.iter().any(|e| {
+            matches!(
+                e,
+                HostEvent::GateResolved {
+                    state: HoldState::Satisfied,
+                    ..
+                }
+            )
+        });
 
         assert!(has_write, "expected Write event; got: {events:?}");
-        assert!(has_gate_opened, "expected GateOpened event; got: {events:?}");
-        assert!(has_resolved, "expected GateResolved(Satisfied) event; got: {events:?}");
+        assert!(
+            has_gate_opened,
+            "expected GateOpened event; got: {events:?}"
+        );
+        assert!(
+            has_resolved,
+            "expected GateResolved(Satisfied) event; got: {events:?}"
+        );
 
         // Verify ordering: Write before GateOpened before GateResolved.
-        let write_pos = events.iter().position(|e| matches!(e, HostEvent::Write { .. })).unwrap();
-        let opened_pos = events.iter().position(|e| matches!(e, HostEvent::GateOpened { .. })).unwrap();
-        let resolved_pos = events.iter().position(|e| matches!(e, HostEvent::GateResolved { state: HoldState::Satisfied, .. })).unwrap();
+        let write_pos = events
+            .iter()
+            .position(|e| matches!(e, HostEvent::Write { .. }))
+            .unwrap();
+        let opened_pos = events
+            .iter()
+            .position(|e| matches!(e, HostEvent::GateOpened { .. }))
+            .unwrap();
+        let resolved_pos = events
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    HostEvent::GateResolved {
+                        state: HoldState::Satisfied,
+                        ..
+                    }
+                )
+            })
+            .unwrap();
         assert!(write_pos < opened_pos, "Write must precede GateOpened");
-        assert!(opened_pos < resolved_pos, "GateOpened must precede GateResolved");
+        assert!(
+            opened_pos < resolved_pos,
+            "GateOpened must precede GateResolved"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1203,7 +1451,10 @@ mod tests {
         let (gid, dh) = open_a_gate(&host, &ws, &context).await;
 
         // First go cast — gate moves to Partial.
-        let p1 = host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
+        let p1 = host
+            .submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
         assert_eq!(p1.state, HoldState::Partial);
 
         let audit_before = host.audit_len().await;
@@ -1213,7 +1464,10 @@ mod tests {
         assert_eq!(ws.discarded_tasks(), vec![TaskId("t1".into())]);
 
         // Second go cast after abandon must fail.
-        let err = host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap_err();
+        let err = host
+            .submit_verdict(&gid, go_verdict(2, &gid, dh))
+            .await
+            .unwrap_err();
         assert_eq!(err, GateHostError::SessionAbandoned);
 
         // Audit chain must be unchanged (no records added after abandon).
@@ -1280,12 +1534,21 @@ mod tests {
         ws.apply_write(&task, "a.rs", b"x\n").unwrap();
         let (gid, _rx) = host.begin_task_gate(task, 0).await.unwrap();
         let dh = host.pending_gates().await[0].diff_hash;
-        host.submit_verdict(&gid, go_verdict(1, &gid, dh)).await.unwrap();
-        host.submit_verdict(&gid, go_verdict(2, &gid, dh)).await.unwrap();
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
+        host.submit_verdict(&gid, go_verdict(2, &gid, dh))
+            .await
+            .unwrap();
 
         // The satisfied gate's audit record must carry the updated prompt.
         let st = host.state.lock().await;
-        let record = st.chain.records().iter().find(|r| r.core.gate_id == gid).unwrap();
+        let record = st
+            .chain
+            .records()
+            .iter()
+            .find(|r| r.core.gate_id == gid)
+            .unwrap();
         assert_eq!(
             record.core.provenance.prompt, "updated in-console",
             "audit record must carry the in-console-edited prompt"
@@ -1301,7 +1564,10 @@ mod tests {
 
         host.abandon_session().await.unwrap();
 
-        let err = host.propose_plan(vec!["task-a".to_string()]).await.unwrap_err();
+        let err = host
+            .propose_plan(vec!["task-a".to_string()])
+            .await
+            .unwrap_err();
         assert_eq!(err, GateHostError::SessionAbandoned);
     }
 
@@ -1364,7 +1630,9 @@ mod tests {
         let (_orig_gid, mut orig_rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
 
         // Hand-edit supersedes: orig_rx becomes a carried watcher on the new entry.
-        host.hand_edit(task.clone(), "a.rs", b"human\n", op1).await.unwrap();
+        host.hand_edit(task.clone(), "a.rs", b"human\n", op1)
+            .await
+            .unwrap();
 
         // Abandon — must wake the carried watcher too.
         host.abandon_session().await.unwrap();
@@ -1414,8 +1682,14 @@ mod tests {
         // pending_gates shows ONLY the fresh gate; task_id is preserved.
         let pending = host.pending_gates().await;
         assert_eq!(pending.len(), 1, "only the fresh gate must remain pending");
-        assert_eq!(pending[0].gate_id, fresh_gate_id, "fresh gate must be the only pending gate");
-        assert_ne!(fresh_gate_id, original_gate_id, "fresh gate must have a new id");
+        assert_eq!(
+            pending[0].gate_id, fresh_gate_id,
+            "fresh gate must be the only pending gate"
+        );
+        assert_ne!(
+            fresh_gate_id, original_gate_id,
+            "fresh gate must have a new id"
+        );
         assert_eq!(pending[0].task_id, task, "task_id must be preserved");
     }
 
@@ -1434,12 +1708,17 @@ mod tests {
         let original_dh = host.pending_gates().await[0].diff_hash;
 
         // Supersede with a hand-edit.
-        host.hand_edit(task.clone(), "a.rs", b"human\n", op1).await.unwrap();
+        host.hand_edit(task.clone(), "a.rs", b"human\n", op1)
+            .await
+            .unwrap();
 
         // Cast on the now-superseded original gate → UnknownGate.
         // superseded by hand-edit; verdicts must bind the combined diff
         let err = host
-            .submit_verdict(&original_gate_id, go_verdict(2, &original_gate_id, original_dh))
+            .submit_verdict(
+                &original_gate_id,
+                go_verdict(2, &original_gate_id, original_dh),
+            )
             .await
             .unwrap_err();
         assert!(
@@ -1463,8 +1742,12 @@ mod tests {
         ws.apply_write(&task, "a.rs", b"v1\n").unwrap();
         let (gid1, _rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
         let dh1 = host.pending_gates().await[0].diff_hash;
-        host.submit_verdict(&gid1, go_verdict(1, &gid1, dh1)).await.unwrap();
-        host.submit_verdict(&gid1, go_verdict(2, &gid1, dh1)).await.unwrap();
+        host.submit_verdict(&gid1, go_verdict(1, &gid1, dh1))
+            .await
+            .unwrap();
+        host.submit_verdict(&gid1, go_verdict(2, &gid1, dh1))
+            .await
+            .unwrap();
 
         let audit_before = host.audit_len().await;
         assert_eq!(audit_before, 1, "one audit record for the satisfied gate");
@@ -1478,14 +1761,26 @@ mod tests {
         // Hand-edit supersedes the second (Open) gate. The first (Satisfied) gate
         // was already removed from holds at satisfaction time (it's in the chain,
         // not in holds). Audit chain must be unchanged.
-        host.hand_edit(task.clone(), "a.rs", b"v3\n", op1).await.unwrap();
+        host.hand_edit(task.clone(), "a.rs", b"v3\n", op1)
+            .await
+            .unwrap();
 
         // Audit chain still has only the original resolved record — not corrupted.
-        assert_eq!(host.audit_len().await, audit_before, "audit chain must not shrink");
-        assert!(host.verify_audit().await.is_ok(), "audit chain must still verify");
+        assert_eq!(
+            host.audit_len().await,
+            audit_before,
+            "audit chain must not shrink"
+        );
+        assert!(
+            host.verify_audit().await.is_ok(),
+            "audit chain must still verify"
+        );
 
         // The resolved gate is findable via reviewed_by (it's in the chain).
-        assert!(host.reviewed_by(&gid1).await.is_some(), "resolved gate must still be auditable");
+        assert!(
+            host.reviewed_by(&gid1).await.is_some(),
+            "resolved gate must still be auditable"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1538,8 +1833,12 @@ mod tests {
 
         // Now resolve the fresh gate with two go verdicts.
         let fresh_dh = host.pending_gates().await[0].diff_hash;
-        host.submit_verdict(&fresh_gid, go_verdict(1, &fresh_gid, fresh_dh)).await.unwrap();
-        host.submit_verdict(&fresh_gid, go_verdict(2, &fresh_gid, fresh_dh)).await.unwrap();
+        host.submit_verdict(&fresh_gid, go_verdict(1, &fresh_gid, fresh_dh))
+            .await
+            .unwrap();
+        host.submit_verdict(&fresh_gid, go_verdict(2, &fresh_gid, fresh_dh))
+            .await
+            .unwrap();
 
         // The original rx must now observe Satisfied (the real combined outcome).
         let _ = tokio::time::timeout(Duration::from_millis(100), original_rx.changed()).await;
@@ -1587,8 +1886,15 @@ mod tests {
 
         // Resolve fresh gate as no-go: op2 go, then op1 no-go.
         let fresh_dh = host.pending_gates().await[0].diff_hash;
-        host.submit_verdict(&fresh_gid, go_verdict(2, &fresh_gid, fresh_dh)).await.unwrap();
-        host.submit_verdict(&fresh_gid, nogo_verdict(1, &fresh_gid, fresh_dh, "rework needed")).await.unwrap();
+        host.submit_verdict(&fresh_gid, go_verdict(2, &fresh_gid, fresh_dh))
+            .await
+            .unwrap();
+        host.submit_verdict(
+            &fresh_gid,
+            nogo_verdict(1, &fresh_gid, fresh_dh, "rework needed"),
+        )
+        .await
+        .unwrap();
 
         // Original rx must observe Blocked.
         let _ = tokio::time::timeout(Duration::from_millis(100), original_rx.changed()).await;
@@ -1664,8 +1970,12 @@ mod tests {
 
         // Resolve the final gate.
         let final_dh = host.pending_gates().await[0].diff_hash;
-        host.submit_verdict(&gid_final, go_verdict(1, &gid_final, final_dh)).await.unwrap();
-        host.submit_verdict(&gid_final, go_verdict(2, &gid_final, final_dh)).await.unwrap();
+        host.submit_verdict(&gid_final, go_verdict(1, &gid_final, final_dh))
+            .await
+            .unwrap();
+        host.submit_verdict(&gid_final, go_verdict(2, &gid_final, final_dh))
+            .await
+            .unwrap();
 
         // Both rx_orig and rx_mid must observe Satisfied.
         let _ = tokio::time::timeout(Duration::from_millis(100), rx_orig.changed()).await;
@@ -1683,10 +1993,18 @@ mod tests {
 
         // gate_outcome follows the redirect chain transitively.
         let outcome_orig = host.gate_outcome(&gid_orig).await.unwrap();
-        assert_eq!(outcome_orig.state, HoldState::Satisfied, "gate_outcome(gid_orig) must redirect to final gate");
+        assert_eq!(
+            outcome_orig.state,
+            HoldState::Satisfied,
+            "gate_outcome(gid_orig) must redirect to final gate"
+        );
 
         let outcome_mid = host.gate_outcome(&gid_mid).await.unwrap();
-        assert_eq!(outcome_mid.state, HoldState::Satisfied, "gate_outcome(gid_mid) must redirect to final gate");
+        assert_eq!(
+            outcome_mid.state,
+            HoldState::Satisfied,
+            "gate_outcome(gid_mid) must redirect to final gate"
+        );
 
         // And the task was accepted exactly once.
         assert_eq!(ws.accepted_tasks(), vec![task]);

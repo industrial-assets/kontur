@@ -3,8 +3,8 @@ use kontur_mcp::{GateHost, GateView};
 
 use crate::fleet::FleetSource;
 use crate::view::{
-    ActiveRegion, AuditSummary, Banner, GateCard, KeyStatus, KeyView, LogLine, SessionView, Station,
-    StatusStrip,
+    ActiveRegion, AuditSummary, Banner, GateCard, KeyStatus, KeyView, LogLine, SessionView,
+    Station, StatusStrip,
 };
 
 /// Build the pure console snapshot. Pure w.r.t. the host + fleet at call time;
@@ -46,7 +46,16 @@ pub async fn build_session_view(
         ActiveRegion::Idle
     };
 
-    SessionView { banner, status, stations, fleet: agents, log, active, invite: None, notice: None }
+    SessionView {
+        banner,
+        status,
+        stations,
+        fleet: agents,
+        log,
+        active,
+        invite: None,
+        notice: None,
+    }
 }
 
 fn gate_card(gv: &GateView, stations: &[Station; 2], diff_preview: Option<String>) -> GateCard {
@@ -76,7 +85,11 @@ fn key_for(station: &Station, gv: &GateView) -> KeyView {
             VerdictStatus::Revealed(Verdict::NoGo(_)) => KeyStatus::NoGo,
         })
         .unwrap_or(KeyStatus::Awaiting);
-    KeyView { label: station.label.clone(), role: station.role, status }
+    KeyView {
+        label: station.label.clone(),
+        role: station.role,
+        status,
+    }
 }
 
 #[cfg(test)]
@@ -84,21 +97,32 @@ mod tests {
     use super::*;
     use crate::fleet::MockFleet;
     use crate::view::Role;
-    use kontur_core::{
-        CastVerdict, Ed25519Signer, FixedClock, ReviewDepth, Signer, TaskId,
-    };
+    use kontur_core::{CastVerdict, Ed25519Signer, FixedClock, ReviewDepth, Signer, TaskId};
     use kontur_mcp::{InMemoryWorkspace, SessionContext, Workspace};
     use std::sync::Arc;
 
     fn stations(a: kontur_core::OperatorId, b: kontur_core::OperatorId) -> [Station; 2] {
         [
-            Station { label: "A · YOU".into(), role: Role::Host, activity: "watching".into(), operator: a },
-            Station { label: "B · J.REED".into(), role: Role::Operator, activity: "reviewing".into(), operator: b },
+            Station {
+                label: "A · YOU".into(),
+                role: Role::Host,
+                activity: "watching".into(),
+                operator: a,
+            },
+            Station {
+                label: "B · J.REED".into(),
+                role: Role::Operator,
+                activity: "reviewing".into(),
+                operator: b,
+            },
         ]
     }
 
     fn banner() -> Banner {
-        Banner { session: "4417".into(), version: "0.1.0".into() }
+        Banner {
+            session: "4417".into(),
+            version: "0.1.0".into(),
+        }
     }
 
     #[tokio::test]
@@ -116,10 +140,26 @@ mod tests {
         let dh = host.pending_gates().await[0].diff_hash;
 
         // Station A casts (blind, sealed).
-        let cv = CastVerdict::create(&s1, &FixedClock(1000), &gid, dh, kontur_core::Verdict::Go, ReviewDepth::FullDiff, None);
+        let cv = CastVerdict::create(
+            &s1,
+            &FixedClock(1000),
+            &gid,
+            dh,
+            kontur_core::Verdict::Go,
+            ReviewDepth::FullDiff,
+            None,
+        );
         host.submit_verdict(&gid, cv).await.unwrap();
 
-        let view = build_session_view(&host, &MockFleet::demo(), stations(op1, op2), banner(), vec![], false).await;
+        let view = build_session_view(
+            &host,
+            &MockFleet::demo(),
+            stations(op1, op2),
+            banner(),
+            vec![],
+            false,
+        )
+        .await;
         match view.active {
             ActiveRegion::Gate(card) => {
                 assert_eq!(card.files, vec!["a.rs".to_string()]);
@@ -145,11 +185,27 @@ mod tests {
         let (gid, _rx) = host.begin_task_gate(task, 0).await.unwrap();
         let dh = host.pending_gates().await[0].diff_hash;
         for s in [&s1, &s2] {
-            let cv = CastVerdict::create(s, &FixedClock(1000), &gid, dh, kontur_core::Verdict::Go, ReviewDepth::FullDiff, None);
+            let cv = CastVerdict::create(
+                s,
+                &FixedClock(1000),
+                &gid,
+                dh,
+                kontur_core::Verdict::Go,
+                ReviewDepth::FullDiff,
+                None,
+            );
             host.submit_verdict(&gid, cv).await.unwrap();
         }
 
-        let view = build_session_view(&host, &MockFleet::demo(), stations(op1, op2), banner(), vec![], true).await;
+        let view = build_session_view(
+            &host,
+            &MockFleet::demo(),
+            stations(op1, op2),
+            banner(),
+            vec![],
+            true,
+        )
+        .await;
         match view.active {
             ActiveRegion::SessionClosed(summary) => {
                 assert_eq!(summary.gates, 1);

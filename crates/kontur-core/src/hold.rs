@@ -105,11 +105,19 @@ impl DualHold {
         } else {
             Authorship::HandEdited
         };
-        let mut h = DualHold::reopen(gate_id, task_id, diff_hash, policy, makers.clone(), authorship);
+        let mut h = DualHold::reopen(
+            gate_id,
+            task_id,
+            diff_hash,
+            policy,
+            makers.clone(),
+            authorship,
+        );
         h.eligible_pool = match policy.independence {
-            crate::policy::Independence::Strict => {
-                known_operators.iter().filter(|op| !makers.contains(op)).count()
-            }
+            crate::policy::Independence::Strict => known_operators
+                .iter()
+                .filter(|op| !makers.contains(op))
+                .count(),
             crate::policy::Independence::Pragmatic => known_operators.len(),
         };
         h
@@ -266,8 +274,8 @@ mod tests {
     use crate::ids::Hash;
     use crate::sign::{Ed25519Signer, FixedClock, Signer};
     use crate::verdict::CastVerdict;
-    use crate::{GatePolicy, ReviewDepth, Verdict, VerdictStatus};
     use crate::Remedy;
+    use crate::{GatePolicy, ReviewDepth, Verdict, VerdictStatus};
 
     fn hold() -> DualHold {
         DualHold::new(
@@ -356,7 +364,10 @@ mod tests {
         let err = h.cast(0, go(2, &h)).unwrap_err(); // expected 1, not 0
         assert_eq!(
             err,
-            CastRejected::StaleVersion { expected: 0, actual: 1 }
+            CastRejected::StaleVersion {
+                expected: 0,
+                actual: 1
+            }
         );
     }
 

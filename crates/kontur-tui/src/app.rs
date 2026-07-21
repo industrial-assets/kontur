@@ -2,10 +2,10 @@ use std::io::{self, Stdout};
 
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use ratatui::crossterm::execute;
 use ratatui::Terminal;
 use std::time::Duration;
 
@@ -50,7 +50,11 @@ impl Drop for TerminalGuard {
 /// Poll for the next operator action, or `None` on timeout (so the loop can
 /// refresh the view periodically). `composing_remedy` switches key semantics
 /// to text input; `plan_mode` switches j/k/e/d/</>  to plan-selection actions.
-pub fn poll_action(timeout: Duration, composing_remedy: bool, plan_mode: bool) -> io::Result<Option<Action>> {
+pub fn poll_action(
+    timeout: Duration,
+    composing_remedy: bool,
+    plan_mode: bool,
+) -> io::Result<Option<Action>> {
     if event::poll(timeout)? {
         if let Event::Key(key) = event::read()? {
             return Ok(Some(map_key(key.code, composing_remedy, plan_mode)));

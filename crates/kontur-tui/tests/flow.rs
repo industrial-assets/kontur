@@ -8,15 +8,37 @@ async fn full_flow_pending_to_accepted_audited() {
     let (gid, dh) = demo.open_demo_gate().await;
 
     // Before verdicts: a pending gate is the active region.
-    let view = build_session_view(demo.host(), &MockFleet::demo(), demo.stations(), demo.banner(), vec![], false).await;
+    let view = build_session_view(
+        demo.host(),
+        &MockFleet::demo(),
+        demo.stations(),
+        demo.banner(),
+        vec![],
+        false,
+    )
+    .await;
     assert!(matches!(view.active, ActiveRegion::Gate(_)));
 
     // Station A casts, then the scripted second key.
-    demo.host().submit_verdict(&gid, demo.go_a(&gid, dh)).await.unwrap();
-    demo.host().submit_verdict(&gid, demo.go_b(&gid, dh)).await.unwrap();
+    demo.host()
+        .submit_verdict(&gid, demo.go_a(&gid, dh))
+        .await
+        .unwrap();
+    demo.host()
+        .submit_verdict(&gid, demo.go_b(&gid, dh))
+        .await
+        .unwrap();
 
     // Closed: verified audit, two reviewers, one gate.
-    let view = build_session_view(demo.host(), &MockFleet::demo(), demo.stations(), demo.banner(), vec![], true).await;
+    let view = build_session_view(
+        demo.host(),
+        &MockFleet::demo(),
+        demo.stations(),
+        demo.banner(),
+        vec![],
+        true,
+    )
+    .await;
     match view.active {
         ActiveRegion::SessionClosed(summary) => {
             assert_eq!(summary.gates, 1);

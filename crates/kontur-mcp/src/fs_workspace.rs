@@ -18,7 +18,11 @@ pub struct FsWorkspace {
 
 impl FsWorkspace {
     pub fn new(root: PathBuf) -> Self {
-        FsWorkspace { root, tracked: Mutex::new(Vec::new()), merged: Mutex::new(None) }
+        FsWorkspace {
+            root,
+            tracked: Mutex::new(Vec::new()),
+            merged: Mutex::new(None),
+        }
     }
 
     pub fn merged_message(&self) -> Option<String> {
@@ -50,7 +54,12 @@ impl FsWorkspace {
 impl Workspace for FsWorkspace {
     /// Path containment enforced by `contained_join`: absolute paths and `..`
     /// components are rejected before any filesystem operation.
-    fn apply_write(&self, task_id: &TaskId, path: &str, contents: &[u8]) -> Result<(), WorkspaceError> {
+    fn apply_write(
+        &self,
+        task_id: &TaskId,
+        path: &str,
+        contents: &[u8],
+    ) -> Result<(), WorkspaceError> {
         let full = contained_join(&self.root, path)?;
         if let Some(parent) = full.parent() {
             std::fs::create_dir_all(parent).map_err(|e| WorkspaceError::Io(e.to_string()))?;
@@ -60,8 +69,17 @@ impl Workspace for FsWorkspace {
         Ok(())
     }
 
-    fn run_command(&self, _task_id: &TaskId, command: &str, cwd: &str) -> Result<CommandOutput, WorkspaceError> {
-        let dir = if cwd.is_empty() { self.root.clone() } else { self.root.join(cwd) };
+    fn run_command(
+        &self,
+        _task_id: &TaskId,
+        command: &str,
+        cwd: &str,
+    ) -> Result<CommandOutput, WorkspaceError> {
+        let dir = if cwd.is_empty() {
+            self.root.clone()
+        } else {
+            self.root.join(cwd)
+        };
         let output = Command::new("sh")
             .arg("-c")
             .arg(command)
@@ -82,14 +100,19 @@ impl Workspace for FsWorkspace {
         let mut bytes = Vec::new();
         let mut loc = 0u32;
         for path in &paths {
-            let contents = std::fs::read(self.root.join(path)).map_err(|e| WorkspaceError::Io(e.to_string()))?;
+            let contents = std::fs::read(self.root.join(path))
+                .map_err(|e| WorkspaceError::Io(e.to_string()))?;
             bytes.extend_from_slice(path.as_bytes());
             bytes.push(0);
             bytes.extend_from_slice(&contents);
             bytes.push(b'\n');
             loc += contents.iter().filter(|b| **b == b'\n').count() as u32;
         }
-        Ok(FrozenDiff { bytes, files: paths, loc })
+        Ok(FrozenDiff {
+            bytes,
+            files: paths,
+            loc,
+        })
     }
 
     fn accept_task(&self, _task_id: &TaskId) -> Result<(), WorkspaceError> {
@@ -171,8 +194,12 @@ mod tests {
     fn merge_session_records_message() {
         let ws = FsWorkspace::new(temp_root());
         assert!(ws.merged_message().is_none());
-        ws.merge_session("kontur session\n\nReviewed-by: A").unwrap();
-        assert_eq!(ws.merged_message(), Some("kontur session\n\nReviewed-by: A".to_string()));
+        ws.merge_session("kontur session\n\nReviewed-by: A")
+            .unwrap();
+        assert_eq!(
+            ws.merged_message(),
+            Some("kontur session\n\nReviewed-by: A".to_string())
+        );
     }
 
     #[test]
@@ -199,7 +226,10 @@ mod tests {
         let ws = FsWorkspace::new(temp_root());
         let task = TaskId("t1".into());
         let result = ws.apply_write(&task, "../escape.txt", b"x\n");
-        assert!(result.is_err(), "traversal path must be rejected by apply_write");
+        assert!(
+            result.is_err(),
+            "traversal path must be rejected by apply_write"
+        );
     }
 
     #[test]
@@ -207,7 +237,10 @@ mod tests {
         let ws = FsWorkspace::new(temp_root());
         let task = TaskId("t1".into());
         let result = ws.apply_write(&task, "/etc/passwd", b"x\n");
-        assert!(result.is_err(), "absolute path must be rejected by apply_write");
+        assert!(
+            result.is_err(),
+            "absolute path must be rejected by apply_write"
+        );
     }
 
     #[test]
@@ -215,6 +248,9 @@ mod tests {
         let ws = FsWorkspace::new(temp_root());
         let task = TaskId("t1".into());
         let result = ws.read_file(&task, "../.ssh/id_ed25519");
-        assert!(result.is_err(), "traversal path must be rejected by read_file");
+        assert!(
+            result.is_err(),
+            "traversal path must be rejected by read_file"
+        );
     }
 }
