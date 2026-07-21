@@ -93,6 +93,13 @@ At a high-risk gate, the two operators **do not see the same thing** — by desi
 
 A full session, phase by phase.
 
+### 6.0 Boot
+On entry (host, join, or demo) the console shows a brief identity card —
+the КОНТУР wordmark in block glyphs, the version, and one provenance line
+(© Industrial Assets · open source · no warranty · repo URL) — centred in
+the alternate screen for about a second before the session view takes over.
+No animation, no input; it is a nameplate, not a splash.
+
 ### 6.1 Session start — idle
 Both linked, no fleet, empty prompt buffer. The console invites an instruction.
 

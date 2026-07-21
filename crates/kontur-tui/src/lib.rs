@@ -1,6 +1,7 @@
 //! Kontur TUI: the brutalist two-seat operator console (first slice).
 
 pub mod app;
+pub mod boot;
 pub mod claude_agent;
 pub mod demo;
 pub mod diffview;

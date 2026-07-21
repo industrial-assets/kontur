@@ -135,6 +135,11 @@ pub async fn run(demo: Demo) -> std::io::Result<()> {
     let mut closed = false;
 
     let (_guard, mut terminal) = TerminalGuard::enter()?;
+
+    // Boot card: identity, version, provenance — then the console takes over.
+    terminal.draw(|f| crate::boot::render_boot(f, env!("CARGO_PKG_VERSION")))?;
+    tokio::time::sleep(std::time::Duration::from_millis(crate::boot::BOOT_HOLD_MS)).await;
+
     loop {
         let view = build_session_view(
             demo.host(),
