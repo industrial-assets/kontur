@@ -1,8 +1,8 @@
 use kontur_core::OperatorId;
 use kontur_tui::render::render;
 use kontur_tui::view::{
-    ActiveRegion, AuditSummary, Banner, GateCard, KeyStatus, KeyView, Role, SessionView, Station,
-    StatusStrip,
+    ActiveRegion, Attention, AuditSummary, Banner, GateCard, KeyStatus, KeyView, Role, SessionView,
+    Station, StatusStrip,
 };
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -52,6 +52,7 @@ fn base(active: ActiveRegion) -> SessionView {
         active,
         invite: None,
         notice: None,
+        attention: None,
     }
 }
 
@@ -242,6 +243,47 @@ fn gate_truncated_flag_shows_truncated_in_diff_title() {
     assert!(
         s.contains("TRUNCATED"),
         "truncated diff must show TRUNCATED in title; got:\n{s}"
+    );
+}
+
+/// Attention: loud text (BOLD+REVERSED) renders below the status strip.
+#[test]
+fn attention_loud_renders_text() {
+    let mut view = base(ActiveRegion::Idle);
+    view.attention = Some(Attention {
+        text: "▶ ACTION: confirm the prompt — [y] ready · [p] edit".into(),
+        loud: true,
+    });
+    let s = draw(&view);
+    assert!(
+        s.contains("▶ ACTION: confirm the prompt"),
+        "loud attention text must appear in rendered output; got:\n{s}"
+    );
+}
+
+/// Attention: calm text (DIM) renders below the status strip.
+#[test]
+fn attention_calm_renders_text() {
+    let mut view = base(ActiveRegion::Idle);
+    view.attention = Some(Attention {
+        text: "waiting on B · J.REED to confirm".into(),
+        loud: false,
+    });
+    let s = draw(&view);
+    assert!(
+        s.contains("waiting on B"),
+        "calm attention text must appear in rendered output; got:\n{s}"
+    );
+}
+
+/// Attention: None → no attention text appears.
+#[test]
+fn attention_none_renders_nothing() {
+    let s = draw(&base(ActiveRegion::Idle));
+    // No attention text should leak into the output (attention is None in base()).
+    assert!(
+        !s.contains("▶ ACTION"),
+        "no attention text when attention is None; got:\n{s}"
     );
 }
 

@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::diffview::styled_diff_lines;
-use crate::view::{ActiveRegion, KeyStatus, SessionView};
+use crate::view::{ActiveRegion, Attention, KeyStatus, SessionView};
 
 /// Draw the whole console. Pure: no I/O, no engine calls.
 ///
@@ -16,24 +16,41 @@ pub fn render(frame: &mut Frame, view: &SessionView, diff_scroll: u16, selected_
         Some(text) => (text.lines().count() as u16) + 3,
         None => 0,
     };
+    let attention_rows: u16 = if view.attention.is_some() { 1 } else { 0 };
     let rows = Layout::vertical([
-        Constraint::Length(1),           // banner
-        Constraint::Length(1),           // status strip
-        Constraint::Length(invite_rows), // invite (host, while unlinked)
-        Constraint::Length(3),           // stations
-        Constraint::Min(3),              // panes (left + right)
-        Constraint::Length(1),           // command line
+        Constraint::Length(1),              // banner
+        Constraint::Length(1),              // status strip
+        Constraint::Length(attention_rows), // attention line (below status strip)
+        Constraint::Length(invite_rows),    // invite (host, while unlinked)
+        Constraint::Length(3),              // stations
+        Constraint::Min(3),                 // panes (left + right)
+        Constraint::Length(1),              // command line
     ])
     .split(frame.area());
 
     banner(frame, rows[0], view);
     status(frame, rows[1], view);
-    if let Some(link) = &view.invite {
-        invite(frame, rows[2], link);
+    if let Some(att) = &view.attention {
+        attention_line(frame, rows[2], att);
     }
-    stations(frame, rows[3], view);
-    panes(frame, rows[4], view, diff_scroll, selected_file);
-    command(frame, rows[5], view);
+    if let Some(link) = &view.invite {
+        invite(frame, rows[3], link);
+    }
+    stations(frame, rows[4], view);
+    panes(frame, rows[5], view, diff_scroll, selected_file);
+    command(frame, rows[6], view);
+}
+
+fn attention_line(frame: &mut Frame, area: Rect, att: &Attention) {
+    let style = if att.loud {
+        Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
+    } else {
+        Style::default().add_modifier(Modifier::DIM)
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(format!(" {}", att.text), style))),
+        area,
+    );
 }
 
 fn invite(frame: &mut Frame, area: Rect, link: &str) {
@@ -444,6 +461,7 @@ mod tests {
             active,
             invite: None,
             notice: None,
+            attention: None,
         }
     }
 

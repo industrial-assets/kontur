@@ -121,6 +121,16 @@ pub enum ActiveRegion {
     SessionClosed(AuditSummary),
 }
 
+/// Operator-attention indicator: tells THIS seat what (if anything) it must do.
+///
+/// `loud=true`  → this seat must act NOW (BOLD + REVERSED).
+/// `loud=false` → informational wait, e.g. the other seat is the blocker (DIM).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Attention {
+    pub text: String,
+    pub loud: bool,
+}
+
 /// The full pure snapshot the console renders.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SessionView {
@@ -136,6 +146,10 @@ pub struct SessionView {
     /// Transient notice shown on the command row (bold) for a few frames —
     /// e.g. rejection hints or confirm prompts. None → plain " > " prompt.
     pub notice: Option<String>,
+    /// Per-seat attention line rendered directly below the status strip.
+    /// loud=true → this seat must act NOW; loud=false → informational wait.
+    /// None → no row (fleet/log already show activity; no line needed).
+    pub attention: Option<Attention>,
 }
 
 #[cfg(test)]

@@ -15,8 +15,8 @@ use crate::input::Action;
 use crate::planedit;
 use crate::render::render;
 use crate::view::{
-    ActiveRegion, AgentCard, AuditSummary, Banner, GateCard, KeyStatus, KeyView, LogLine, Role,
-    SessionView, Station, StatusStrip,
+    ActiveRegion, AgentCard, Attention, AuditSummary, Banner, GateCard, KeyStatus, KeyView,
+    LogLine, Role, SessionView, Station, StatusStrip,
 };
 
 // ---------------------------------------------------------------------------
@@ -198,6 +198,130 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
         active,
         invite: None,
         notice: None,
+        attention: None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// attention_for — pure, per-seat attention computation
+// ---------------------------------------------------------------------------
+
+/// Compute the attention line for the operator at `own` seat from the current
+/// wire state. Returns `Some(Attention { text, loud })` when a line should be
+/// shown, or `None` when the seat is calm (fleet/log already show activity).
+///
+/// Rules:
+/// - DispatchReady, own not ready  → loud "confirm the prompt"
+/// - DispatchReady, own ready, other not → calm "waiting on <other>"
+/// - PlanReview, tasks empty       → calm "waiting on agent's plan"
+/// - PlanReview, tasks present, own not ready → loud "review the plan"
+/// - PlanReview, own ready, other not → calm "waiting on <other>"
+/// - Executing with gate, own key absent → loud "review the diff and cast"
+/// - Executing with gate, own key present (sealed), other absent → calm "sealed — waiting on <other>"
+/// - Executing no gate             → None
+/// - Closed / AwaitOperators       → None
+pub fn attention_for(state: &WireState, own: OperatorId) -> Option<Attention> {
+    // Helpers: seat index for `own`, label of the other seat.
+    let own_seat_idx = state.seats.iter().position(|s| s.operator == own);
+    let other_label = |own_idx: usize| -> String {
+        state
+            .seats
+            .iter()
+            .enumerate()
+            .find(|(i, _)| *i != own_idx)
+            .map(|(_, s)| s.label.clone())
+            .unwrap_or_else(|| "other".into())
+    };
+
+    match &state.phase {
+        WirePhase::DispatchReady { .. } => {
+            let own_idx = own_seat_idx?;
+            let own_ready = state.seats.get(own_idx).map(|s| s.ready).unwrap_or(false);
+            if !own_ready {
+                Some(Attention {
+                    text: "▶ ACTION: confirm the prompt — [y] ready · [p] edit".into(),
+                    loud: true,
+                })
+            } else {
+                // Own is ready; check whether the other seat is also ready.
+                let other_ready = state
+                    .seats
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i != own_idx)
+                    .all(|(_, s)| s.ready);
+                if !other_ready {
+                    Some(Attention {
+                        text: format!("waiting on {} to confirm", other_label(own_idx)),
+                        loud: false,
+                    })
+                } else {
+                    // Both ready — dispatch is imminent; no extra line needed.
+                    None
+                }
+            }
+        }
+
+        WirePhase::PlanReview { tasks } => {
+            let own_idx = own_seat_idx?;
+            if tasks.is_empty() {
+                return Some(Attention {
+                    text: "waiting on the agent's plan".into(),
+                    loud: false,
+                });
+            }
+            let own_ready = state.seats.get(own_idx).map(|s| s.ready).unwrap_or(false);
+            if !own_ready {
+                Some(Attention {
+                    text: "▶ ACTION: review the plan — [y] approve · [r] steer".into(),
+                    loud: true,
+                })
+            } else {
+                let other_ready = state
+                    .seats
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i != own_idx)
+                    .all(|(_, s)| s.ready);
+                if !other_ready {
+                    Some(Attention {
+                        text: format!("waiting on {}", other_label(own_idx)),
+                        loud: false,
+                    })
+                } else {
+                    None
+                }
+            }
+        }
+
+        WirePhase::Executing => {
+            let gate = state.gate.as_ref()?;
+            // Is own key present in the gate's key list?
+            let own_key = gate.keys.iter().find(|k| k.operator == own);
+            if own_key.is_none() {
+                // Own has not cast yet — must act.
+                Some(Attention {
+                    text: "▶ ACTION: review the diff and cast — [g] go · [r] no-go".into(),
+                    loud: true,
+                })
+            } else {
+                // Own key is present (sealed or revealed). Check other seat.
+                let own_idx = own_seat_idx?;
+                let other_has_key = gate.keys.iter().any(|k| k.operator != own);
+                if !other_has_key {
+                    Some(Attention {
+                        text: format!("your key is sealed — waiting on {}", other_label(own_idx)),
+                        loud: false,
+                    })
+                } else {
+                    // Both keys present — resolution is imminent; no line needed.
+                    None
+                }
+            }
+        }
+
+        // No attention needed.
+        WirePhase::AwaitOperators | WirePhase::Closed { .. } => None,
     }
 }
 
@@ -365,6 +489,7 @@ pub async fn run_remote(
             plan_sel = planedit::clamp_sel(plan_sel, tasks.len());
         }
         let mut view = wire_to_view(&state, own, plan_sel);
+        view.attention = attention_for(&state, own);
         // The invite is decision-relevant only while the stations are not both
         // linked; the moment they are, it disappears (calm default).
         if !view.status.linked {
@@ -1131,5 +1256,161 @@ mod tests {
             ReviewDepth::FullDiff,
             "CastVerdict must carry FullDiff depth"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // attention_for pure helper tests
+    // -----------------------------------------------------------------------
+
+    // DispatchReady, own not ready → loud "confirm the prompt"
+    #[test]
+    fn attention_dispatch_own_not_ready_is_loud() {
+        let state = base_state(WirePhase::DispatchReady {
+            prompt: "do the thing".into(),
+        });
+        // seats[0] = op(1), not ready (default)
+        let att = super::attention_for(&state, op(1)).expect("should have attention");
+        assert!(att.loud, "must be loud when own not ready at dispatch");
+        assert!(att.text.contains("confirm the prompt"));
+    }
+
+    // DispatchReady, own ready, other not → calm "waiting on B"
+    #[test]
+    fn attention_dispatch_own_ready_other_not_is_calm() {
+        let mut state = base_state(WirePhase::DispatchReady {
+            prompt: "do the thing".into(),
+        });
+        state.seats[0].ready = true; // op(1) (A) is ready
+                                     // op(2) (B) stays not ready
+        let att = super::attention_for(&state, op(1)).expect("should have attention");
+        assert!(!att.loud, "must be calm when waiting on other");
+        assert!(att.text.contains("B"), "must name the other seat");
+    }
+
+    // DispatchReady, both ready → None
+    #[test]
+    fn attention_dispatch_both_ready_is_none() {
+        let mut state = base_state(WirePhase::DispatchReady {
+            prompt: "do the thing".into(),
+        });
+        state.seats[0].ready = true;
+        state.seats[1].ready = true;
+        assert!(
+            super::attention_for(&state, op(1)).is_none(),
+            "both ready → no attention line"
+        );
+    }
+
+    // PlanReview, tasks empty → calm "waiting on agent's plan"
+    #[test]
+    fn attention_plan_review_no_tasks_is_calm() {
+        let state = base_state(WirePhase::PlanReview { tasks: vec![] });
+        let att = super::attention_for(&state, op(1)).expect("should have attention");
+        assert!(!att.loud, "waiting for plan → calm");
+        assert!(att.text.contains("agent's plan"));
+    }
+
+    // PlanReview, tasks present, own not ready → loud "review the plan"
+    #[test]
+    fn attention_plan_review_own_not_ready_is_loud() {
+        let state = base_state(WirePhase::PlanReview {
+            tasks: vec!["t1".into()],
+        });
+        let att = super::attention_for(&state, op(1)).expect("should have attention");
+        assert!(att.loud, "must be loud when own not ready at plan review");
+        assert!(att.text.contains("review the plan"));
+    }
+
+    // PlanReview, own ready, other not → calm "waiting on B"
+    #[test]
+    fn attention_plan_review_own_ready_other_not_is_calm() {
+        let mut state = base_state(WirePhase::PlanReview {
+            tasks: vec!["t1".into()],
+        });
+        state.seats[0].ready = true; // A ready
+        let att = super::attention_for(&state, op(1)).expect("should have attention");
+        assert!(!att.loud, "waiting on other → calm");
+        assert!(att.text.contains("B"), "must name other seat");
+    }
+
+    // Executing, gate present, own key absent → loud "review the diff and cast"
+    #[test]
+    fn attention_executing_gate_own_absent_is_loud() {
+        // Gate has only B's key
+        let b_key = kontur_core::VerdictView {
+            operator: op(2),
+            status: VerdictStatus::Sealed,
+        };
+        let mut state = base_state(WirePhase::Executing);
+        state.gate = Some(dummy_gate(vec![b_key]));
+        let att = super::attention_for(&state, op(1)).expect("should have attention");
+        assert!(att.loud, "must be loud when own key absent from gate");
+        assert!(att.text.contains("review the diff"));
+    }
+
+    // Executing, gate present, own key present, other absent → calm sealed waiting
+    #[test]
+    fn attention_executing_gate_own_sealed_other_absent_is_calm() {
+        let a_key = kontur_core::VerdictView {
+            operator: op(1),
+            status: VerdictStatus::Sealed,
+        };
+        let mut state = base_state(WirePhase::Executing);
+        state.gate = Some(dummy_gate(vec![a_key]));
+        let att = super::attention_for(&state, op(1)).expect("should have attention");
+        assert!(!att.loud, "own key sealed, waiting on other → calm");
+        assert!(att.text.contains("sealed"), "must mention sealed");
+        assert!(att.text.contains("B"), "must name other seat");
+    }
+
+    // Executing, gate present, both keys present → None
+    #[test]
+    fn attention_executing_gate_both_keys_present_is_none() {
+        let keys = vec![
+            kontur_core::VerdictView {
+                operator: op(1),
+                status: VerdictStatus::Sealed,
+            },
+            kontur_core::VerdictView {
+                operator: op(2),
+                status: VerdictStatus::Sealed,
+            },
+        ];
+        let mut state = base_state(WirePhase::Executing);
+        state.gate = Some(dummy_gate(keys));
+        assert!(
+            super::attention_for(&state, op(1)).is_none(),
+            "both keys present → no attention line"
+        );
+    }
+
+    // Executing, no gate → None
+    #[test]
+    fn attention_executing_no_gate_is_none() {
+        let state = base_state(WirePhase::Executing);
+        assert!(
+            super::attention_for(&state, op(1)).is_none(),
+            "executing without gate → None"
+        );
+    }
+
+    // AwaitOperators → None
+    #[test]
+    fn attention_await_operators_is_none() {
+        let state = base_state(WirePhase::AwaitOperators);
+        assert!(super::attention_for(&state, op(1)).is_none());
+    }
+
+    // Closed → None
+    #[test]
+    fn attention_closed_is_none() {
+        let state = base_state(WirePhase::Closed {
+            gates: 1,
+            chain_verified: true,
+            reviewers: vec![],
+            merged: true,
+            abandoned: false,
+        });
+        assert!(super::attention_for(&state, op(1)).is_none());
     }
 }

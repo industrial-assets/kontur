@@ -60,6 +60,7 @@ Persistent chrome, top to bottom. Regions are fixed; only their contents change 
 
 - **Banner** — identity only. The one place the aesthetic flourish lives.
 - **Status strip** — only operationally-real state: are both stations linked, is four-eyes armed, how many agents need you, session token spend (the real runaway signal). Nothing decorative.
+- **Attention row** — one full-width line directly below the status strip, shown only when this seat has something to do or wait on. `loud` (BOLD + REVERSED) when THIS seat must act NOW; `dim` when waiting on the other seat. Absent when the fleet/log already convey the state (agent working, no gate). One row, never multiple lines — emphasis is spent once.
 - **Stations** — presence and role for both operators (PRD FR-2).
 - **Fleet** — the watch-floor. Agents that are just working stay calm; only an agent that needs a human is emphasised.
 - **Log** — real actions you might need to intervene on, not flavour.

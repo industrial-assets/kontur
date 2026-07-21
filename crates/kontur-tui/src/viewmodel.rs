@@ -55,6 +55,7 @@ pub async fn build_session_view(
         active,
         invite: None,
         notice: None,
+        attention: None,
     }
 }
 
