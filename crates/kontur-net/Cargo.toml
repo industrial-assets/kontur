@@ -21,4 +21,11 @@ sha2 = "0.10"
 rustls-pki-types = "1"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "net", "time"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "io-util",
+    "net",
+    "time",
+    "test-util",
+] }

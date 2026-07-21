@@ -478,6 +478,9 @@ pub async fn run_remote(
                 ServerMsg::FileContent { path, contents } => {
                     let _ = file_tx.send((path, contents)).await;
                 }
+                // Keepalive reply: liveness only, nothing to render. Its arrival
+                // already kept the reader task's stream alive.
+                ServerMsg::Pong => {}
             }
         }
     });

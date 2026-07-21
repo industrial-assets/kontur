@@ -40,6 +40,9 @@ pub enum ClientMsg {
     },
     Abandon,
     Bye,
+    /// Application-level keepalive. Sent periodically by the client; the server
+    /// treats its arrival as liveness and replies `Pong`. Never gated.
+    Ping,
     SetPrompt {
         prompt: String,
     },
@@ -85,6 +88,8 @@ pub enum ServerMsg {
         path: String,
         contents: Option<String>,
     },
+    /// Reply to a client `Ping`, so a client can detect a dead host too.
+    Pong,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

@@ -11,6 +11,14 @@ use kontur_core::{
 use crate::codec::{read_json, write_json};
 use crate::protocol::{ClientMsg, ServerMsg, WireGate};
 
+/// How often the client sends a keepalive Ping. The server's read timeout is
+/// several multiples of this, so a couple of missed pings won't false-park.
+const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// How long the client waits for any server traffic (State or Pong) before
+/// declaring the host gone. Matches the server's own read timeout.
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+
 // ---------------------------------------------------------------------------
 // SystemClock
 // ---------------------------------------------------------------------------
@@ -37,7 +45,7 @@ impl Clock for SystemClock {
 /// interior mutability without &mut self on public methods) and the operator's
 /// signing key.  The private key never leaves the client process.
 pub struct SessionClient {
-    writer: Mutex<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>,
+    writer: std::sync::Arc<Mutex<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>>,
     signer: Ed25519Signer,
 }
 
@@ -107,10 +115,27 @@ impl SessionClient {
         // Spawn reader task: forwards every subsequent ServerMsg until EOF.
         tokio::spawn(reader_task(buf_reader, tx));
 
-        let client = SessionClient {
-            writer: Mutex::new(write_half),
-            signer,
-        };
+        let writer = std::sync::Arc::new(Mutex::new(write_half));
+
+        // Heartbeat: send Ping every HEARTBEAT_INTERVAL so the server can tell
+        // a live-but-idle link from a half-open dead one. The task ends when
+        // the writer errors (connection gone) — no separate shutdown needed.
+        {
+            let writer = writer.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(HEARTBEAT_INTERVAL);
+                tick.tick().await; // consume the immediate first tick
+                loop {
+                    tick.tick().await;
+                    let mut w = writer.lock().await;
+                    if write_json(&mut *w, &ClientMsg::Ping).await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+
+        let client = SessionClient { writer, signer };
 
         Ok((client, rx))
     }
@@ -266,7 +291,13 @@ async fn reader_task<R>(mut reader: BufReader<R>, tx: mpsc::Sender<ServerMsg>)
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
-    while let Ok(Some(msg)) = read_json::<_, ServerMsg>(&mut reader).await {
+    // The server replies Pong to our heartbeat every HEARTBEAT_INTERVAL, so a
+    // read producing nothing within READ_TIMEOUT means the host is gone (a
+    // half-open link reads as silence). Ending the task drops `tx`, which the
+    // UI forwarder observes as the channel closing.
+    while let Ok(Ok(Some(msg))) =
+        tokio::time::timeout(READ_TIMEOUT, read_json::<_, ServerMsg>(&mut reader)).await
+    {
         if tx.send(msg).await.is_err() {
             break;
         }

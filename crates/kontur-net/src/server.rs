@@ -15,6 +15,11 @@ use crate::protocol::{
     WireSeat, WireState,
 };
 
+/// How long the server waits for any client traffic before treating the peer
+/// as gone. Set to 3× the client heartbeat so a couple of dropped pings don't
+/// falsely park a live session.
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+
 // ---------------------------------------------------------------------------
 // Public config
 // ---------------------------------------------------------------------------
@@ -556,17 +561,21 @@ async fn reader_task<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(
         return;
     }
 
-    // Main read loop
+    // Main read loop. A read that produces nothing within READ_TIMEOUT means
+    // the peer is gone (a half-open TCP connection reads as silence, not EOF);
+    // the client's Ping every HEARTBEAT_INTERVAL keeps a live link inside the
+    // window. Either way, falling out of the loop parks the seat's gates.
     loop {
-        let msg = match read_json::<_, ClientMsg>(&mut reader).await {
-            Ok(Some(m)) => m,
-            Ok(None) | Err(_) => break,
+        let read = tokio::time::timeout(READ_TIMEOUT, read_json::<_, ClientMsg>(&mut reader)).await;
+        let msg = match read {
+            Ok(Ok(Some(m))) => m,
+            // EOF, decode error, or no traffic within the timeout → gone.
+            Ok(Ok(None)) | Ok(Err(_)) | Err(_) => break,
         };
-
         handle_client_msg(&server, seat_idx, operator, msg, &conn_tx).await;
     }
 
-    // EOF / disconnected
+    // EOF / timeout / disconnected
     {
         let mut net = server.inner.net.lock().await;
         net.seats[seat_idx].linked = false;
@@ -873,6 +882,11 @@ async fn handle_client_msg(
                     }
                 }
             }
+        }
+        ClientMsg::Ping => {
+            // Liveness only: arrival already reset the read timeout; reply so a
+            // client can detect a dead host in turn. Never touches gate state.
+            let _ = conn_tx.send(ServerMsg::Pong).await;
         }
         ClientMsg::Bye => {
             // Reader task will handle disconnect naturally when the stream closes
@@ -1756,6 +1770,103 @@ mod tests {
             }
             _ => panic!("expected Closed phase"),
         }
+    }
+
+    /// A Ping is answered with a Pong and is never gated — pure liveness.
+    #[tokio::test]
+    async fn ping_is_answered_with_pong() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let (server, _ws) = make_server(op1, op2, vec!["t1".into()]);
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let mut ca_reader = BufReader::new(ca_read);
+
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(&mut ca_write, &ClientMsg::Ping).await.unwrap();
+
+        let mut got_pong = false;
+        for _ in 0..6 {
+            match read_json::<_, ServerMsg>(&mut ca_reader).await.unwrap() {
+                Some(ServerMsg::Pong) => {
+                    got_pong = true;
+                    break;
+                }
+                Some(_) => continue,
+                None => break,
+            }
+        }
+        assert!(got_pong, "server must answer Ping with Pong");
+    }
+
+    /// A silent peer (no traffic, no heartbeat) is parked once the read timeout
+    /// elapses — the half-open case. Uses paused virtual time so the 45s window
+    /// passes instantly.
+    #[tokio::test(start_paused = true)]
+    async fn silent_peer_times_out_and_parks() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let (server, _ws) = make_server(op1, op2, vec!["t1".into()]);
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        drain_client(BufReader::new(cb_read)).await;
+
+        // Both link (raw duplexes — no client heartbeat task), then go silent.
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
+            },
+        )
+        .await
+        .unwrap();
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.seats.iter().all(|seat| seat.linked)),
+        )
+        .await
+        .expect("both linked");
+
+        // Advance past the read timeout with no traffic: both seats park.
+        tokio::time::advance(READ_TIMEOUT + Duration::from_secs(1)).await;
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.seats.iter().all(|seat| !seat.linked)),
+        )
+        .await
+        .expect("silent peers must park after the read timeout");
     }
 
     // -----------------------------------------------------------------------
