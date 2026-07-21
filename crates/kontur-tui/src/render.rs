@@ -11,7 +11,13 @@ use crate::view::{ActiveRegion, Attention, KeyStatus, SessionView};
 ///
 /// `diff_scroll` and `selected_file` are used when a Gate is the active region
 /// (the diff is permanently on-screen in the right pane).
-pub fn render(frame: &mut Frame, view: &SessionView, diff_scroll: u16, selected_file: usize) {
+pub fn render(
+    frame: &mut Frame,
+    view: &SessionView,
+    diff_scroll: u16,
+    selected_file: usize,
+    log_scroll: usize,
+) {
     let invite_rows = match &view.invite {
         Some(text) => (text.lines().count() as u16) + 3,
         None => 0,
@@ -37,7 +43,7 @@ pub fn render(frame: &mut Frame, view: &SessionView, diff_scroll: u16, selected_
         invite(frame, rows[3], link);
     }
     stations(frame, rows[4], view);
-    panes(frame, rows[5], view, diff_scroll, selected_file);
+    panes(frame, rows[5], view, diff_scroll, selected_file, log_scroll);
     command(frame, rows[6], view);
 }
 
@@ -143,9 +149,25 @@ fn fleet(frame: &mut Frame, area: Rect, view: &SessionView) {
     );
 }
 
-fn log(frame: &mut Frame, area: Rect, view: &SessionView) {
-    let lines: Vec<Line> = view
-        .log
+/// Visible window into the log: the last `height` entries, shifted back by
+/// `scroll` (0 = stuck to the tail). Pure; tested.
+pub fn log_window(len: usize, height: usize, scroll: usize) -> std::ops::Range<usize> {
+    let scroll = scroll.min(len.saturating_sub(height));
+    let end = len.saturating_sub(scroll);
+    let start = end.saturating_sub(height);
+    start..end
+}
+
+fn log(frame: &mut Frame, area: Rect, view: &SessionView, log_scroll: usize) {
+    let height = area.height.saturating_sub(2) as usize; // borders
+    let window = log_window(view.log.len(), height, log_scroll);
+    let scrolled_back = window.end < view.log.len();
+    let title = if scrolled_back {
+        format!("LOG ↑{}", view.log.len() - window.end)
+    } else {
+        "LOG".to_owned()
+    };
+    let lines: Vec<Line> = view.log[window]
         .iter()
         .map(|l| {
             // Only pad columns that exist: server-formatted lines arrive with
@@ -163,7 +185,7 @@ fn log(frame: &mut Frame, area: Rect, view: &SessionView) {
         })
         .collect();
     frame.render_widget(
-        Paragraph::new(lines).block(Block::bordered().title("LOG")),
+        Paragraph::new(lines).block(Block::bordered().title(title)),
         area,
     );
 }
@@ -176,6 +198,7 @@ fn panes(
     view: &SessionView,
     diff_scroll: u16,
     selected_file: usize,
+    log_scroll: usize,
 ) {
     let cols =
         Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).split(area);
@@ -183,7 +206,7 @@ fn panes(
     // Left pane: fleet (5 rows compact) + log (rest).
     let left = Layout::vertical([Constraint::Length(5), Constraint::Min(3)]).split(cols[0]);
     fleet(frame, left[0], view);
-    log(frame, left[1], view);
+    log(frame, left[1], view, log_scroll);
 
     // Right pane: gate surface or phase card.
     match &view.active {
@@ -512,10 +535,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn log_window_math() {
+        // Tail-stuck: last `height` entries.
+        assert_eq!(log_window(10, 4, 0), 6..10);
+        // Scrolled back two: window shifts back, clamped at the top.
+        assert_eq!(log_window(10, 4, 2), 4..8);
+        assert_eq!(log_window(10, 4, 99), 0..4);
+        // Fewer entries than rows: everything shows.
+        assert_eq!(log_window(3, 10, 0), 0..3);
+        assert_eq!(log_window(3, 10, 5), 0..3);
+        assert_eq!(log_window(0, 5, 0), 0..0);
+    }
+
     fn draw(view: &SessionView) -> String {
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render(f, view, 0, 0)).unwrap();
+        terminal.draw(|f| render(f, view, 0, 0, 0)).unwrap();
         terminal.backend().to_string()
     }
 
@@ -733,7 +769,7 @@ mod tests {
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|f| render(f, &minimal_view(ActiveRegion::Gate(card)), 0, 1))
+            .draw(|f| render(f, &minimal_view(ActiveRegion::Gate(card)), 0, 1, 0))
             .unwrap();
         let rendered = terminal.backend().to_string();
         assert!(

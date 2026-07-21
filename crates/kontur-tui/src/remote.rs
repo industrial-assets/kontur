@@ -482,6 +482,7 @@ pub async fn run_remote(
     // stream live to the other seat, so cancel must undo what they saw).
     let mut prompt_before = String::new();
     let mut diff_scroll: u16 = 0;
+    let mut log_scroll: usize = 0;
     let mut selected_file: usize = 0;
     let mut last_gate_id: Option<String> = None;
     let mut rejected_msg: Option<String> = None;
@@ -565,7 +566,7 @@ pub async fn run_remote(
         }
 
         terminal.draw(|f| {
-            render(f, &view, diff_scroll, selected_file);
+            render(f, &view, diff_scroll, selected_file, log_scroll);
         })?;
 
         let composing = !matches!(compose, ComposeTarget::None);
@@ -781,6 +782,14 @@ pub async fn run_remote(
                     // Each file is its own scroll surface.
                     diff_scroll = 0;
                 }
+            }
+
+            // Log scrollback: ↑ back through history, ↓ toward the tail.
+            Some(Action::LogUp) => {
+                log_scroll = log_scroll.saturating_add(1).min(state.log.len());
+            }
+            Some(Action::LogDown) => {
+                log_scroll = log_scroll.saturating_sub(1);
             }
 
             Some(Action::ToggleLink) => {
