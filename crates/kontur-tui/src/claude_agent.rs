@@ -61,6 +61,9 @@ pub fn agent_prompt(session_prompt: &str) -> String {
 Use ONLY the kontur MCP tools — never use native file or shell tools. \
 FIRST call `propose_plan` with a task list of bounded, single-concern tasks and \
 wait for approval before writing any code. \
+The propose_plan response contains the APPROVED task list, which the operators \
+may have edited, deleted from, or reordered — execute exactly that list, in that \
+order, using its task numbering. \
 Then, for each task: write files with `write_file`, verify with `run_command` if \
 needed, then call `propose_task_complete` with the task_id and WAIT for the \
 verdict. \

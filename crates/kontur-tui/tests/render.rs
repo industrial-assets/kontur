@@ -101,9 +101,10 @@ fn plan_region_renders_plan_gate_and_approve_key() {
     let s = draw(&base(ActiveRegion::Plan {
         tasks: vec!["auth.rs".into(), "session.rs".into()],
         ready: [true, false],
+        selected: 0,
     }));
     assert!(s.contains("PLAN GATE"));
-    assert!(s.contains("[y] approve plan"));
+    assert!(s.contains("y approve"));
 }
 
 #[test]

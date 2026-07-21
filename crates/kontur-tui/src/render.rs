@@ -266,18 +266,24 @@ fn render_phase_card(frame: &mut Frame, area: Rect, active: &ActiveRegion) {
                 area,
             );
         }
-        ActiveRegion::Plan { tasks, ready } => {
+        ActiveRegion::Plan { tasks, ready, selected } => {
             let a_mark = if ready[0] { "■" } else { "□" };
             let b_mark = if ready[1] { "■" } else { "□" };
             let mut lines: Vec<Line> = tasks
                 .iter()
-                .map(|t| Line::from(format!(" t {}", t)))
+                .enumerate()
+                .map(|(i, t)| {
+                    let marker = if i == *selected { "▶" } else { " " };
+                    Line::from(format!(" {} t{} {}", marker, i + 1, t))
+                })
                 .collect();
             lines.push(Line::from(format!(
                 " PLAN GATE   A ⟨{}⟩ ready   B ⟨{}⟩ ready",
                 a_mark, b_mark
             )));
-            lines.push(Line::from(" [y] approve plan — needs both"));
+            lines.push(Line::from(
+                " j/k select · e edit · d delete · </> move · y approve — needs both",
+            ));
             frame.render_widget(
                 Paragraph::new(lines).block(Block::bordered().title("PLAN")),
                 area,

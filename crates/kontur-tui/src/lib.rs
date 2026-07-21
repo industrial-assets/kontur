@@ -3,6 +3,7 @@
 pub mod view;
 pub mod fleet;
 pub mod input;
+pub mod planedit;
 pub mod viewmodel;
 pub mod render;
 pub mod diffview;

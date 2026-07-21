@@ -753,6 +753,41 @@ async fn handle_client_msg(
         ClientMsg::Bye => {
             // Reader task will handle disconnect naturally when the stream closes
         }
+        ClientMsg::EditPlan { tasks } => {
+            let mut net = server.inner.net.lock().await;
+            // Plan edits are only valid during PlanReview. Once the agent is
+            // executing the plan is locked — the agent is working against the
+            // task list both seats consented to.
+            if net.phase != Phase::PlanReview {
+                let _ = conn_tx
+                    .send(ServerMsg::Rejected {
+                        reason: "plan is locked".into(),
+                    })
+                    .await;
+                return;
+            }
+            // Guard: the list must be non-empty and every task non-blank.
+            if tasks.is_empty() || tasks.iter().any(|t| t.trim().is_empty()) {
+                let _ = conn_tx
+                    .send(ServerMsg::Rejected {
+                        reason: "plan tasks cannot be empty".into(),
+                    })
+                    .await;
+                return;
+            }
+            let label = net.seats[seat_idx].label.clone();
+            let n = tasks.len();
+            net.agent_plan = Some(tasks.clone());
+            // Anchoring rule: any edit resets both ready flags so both seats
+            // must re-consent against the plan they actually see.
+            net.seats[0].ready = false;
+            net.seats[1].ready = false;
+            push_log(&mut net, &format!("{label} edited the plan ({n} tasks)"));
+            drop(net);
+            // Update the host's stored plan so propose_plan returns the edited list.
+            server.inner.host.set_plan(tasks).await;
+            server.refresh_locked().await;
+        }
         ClientMsg::SetPrompt { prompt } => {
             let mut net = server.inner.net.lock().await;
             // Prompt edits are only valid before dispatch. Once the agent is

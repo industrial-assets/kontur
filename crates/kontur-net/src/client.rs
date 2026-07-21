@@ -165,6 +165,12 @@ impl SessionClient {
         self.send(ClientMsg::SetPrompt { prompt: prompt.to_owned() }).await
     }
 
+    /// Replace the plan with an edited task list. Valid only during PlanReview;
+    /// the server will Reject it otherwise and reset both ready flags on acceptance.
+    pub async fn edit_plan(&self, tasks: &[String]) -> io::Result<()> {
+        self.send(ClientMsg::EditPlan { tasks: tasks.to_vec() }).await
+    }
+
     /// Request the current worktree contents of a file. The response arrives
     /// as `ServerMsg::FileContent` on the normal server-message stream; the
     /// TUI correlates by path. Fire-and-forget: the caller reads the response

@@ -61,6 +61,9 @@ pub struct ProposePlanInput {
 #[derive(Serialize, Deserialize, rmcp::schemars::JsonSchema)]
 pub struct ProposePlanOutput {
     pub approved: bool,
+    /// The APPROVED task list, which operators may have edited, deleted from,
+    /// or reordered from the original proposal. Execute exactly this list.
+    pub tasks: Vec<String>,
 }
 
 impl KonturServer {
@@ -115,7 +118,9 @@ impl KonturServer {
             }
         }
 
-        Ok(Json(ProposePlanOutput { approved: true }))
+        // Return the APPROVED task list — operators may have edited it.
+        let final_tasks = self.host.proposed_plan().await.unwrap_or_default();
+        Ok(Json(ProposePlanOutput { approved: true, tasks: final_tasks }))
     }
 
     #[tool(name = "propose_task_complete", description = "Submit the completed task for four-eyes review; blocks until both operators sign off.")]

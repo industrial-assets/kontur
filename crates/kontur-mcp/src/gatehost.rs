@@ -183,6 +183,17 @@ impl GateHost {
         self.state.lock().await.plan.clone()
     }
 
+    /// Operator face: replace the stored plan with an edited version.
+    /// Called when an operator edits the plan in-console during PlanReview.
+    /// No-op when the session has been abandoned — avoids races with abandon.
+    pub async fn set_plan(&self, tasks: Vec<String>) {
+        let mut st = self.state.lock().await;
+        if st.abandoned {
+            return;
+        }
+        st.plan = Some(tasks);
+    }
+
     /// The agent id for this session.
     pub async fn agent_id(&self) -> String {
         self.state.lock().await.ctx.agent_id.clone()

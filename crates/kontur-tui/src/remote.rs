@@ -12,6 +12,7 @@ use kontur_net::{ServerMsg, SessionClient, WireGate, WirePhase, WireRole, WireSt
 use crate::app::{poll_action, TerminalGuard};
 use crate::diffview::{clamp_scroll, diff_files, editor_command};
 use crate::input::Action;
+use crate::planedit;
 use crate::render::render;
 use crate::view::{
     ActiveRegion, AgentCard, AuditSummary, Banner, GateCard, KeyStatus, KeyView, LogLine, Role,
@@ -27,6 +28,8 @@ enum ComposeTarget {
     Remedy,
     ConfirmAbandon,
     Prompt,
+    /// Editing a plan task in-place. `idx` is the task's index in the list.
+    PlanEdit { idx: usize },
 }
 
 // ---------------------------------------------------------------------------
@@ -35,7 +38,9 @@ enum ComposeTarget {
 
 /// Map a WireState snapshot to a pure SessionView. The `own` id is used to
 /// compute `needs_you` and is not exposed in the rendered output.
-pub fn wire_to_view(state: &WireState, own: OperatorId) -> SessionView {
+/// `plan_sel` is the currently highlighted row in PlanReview — it is loop-local
+/// state (not from the wire) so it's passed in explicitly.
+pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> SessionView {
     // --- stations ---
     let stations: [Station; 2] = {
         let mut iter = state.seats.iter();
@@ -131,7 +136,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId) -> SessionView {
                 state.seats.first().map(|s| s.ready).unwrap_or(false),
                 state.seats.get(1).map(|s| s.ready).unwrap_or(false),
             ];
-            ActiveRegion::Plan { tasks: tasks.clone(), ready }
+            ActiveRegion::Plan { tasks: tasks.clone(), ready, selected: plan_sel }
         }
         WirePhase::Executing => {
             if let Some(wg) = &state.gate {
@@ -302,6 +307,8 @@ pub async fn run_remote(
     // Truncation acknowledgment: when the active gate's diff is truncated,
     // the first `g` press sets this to the gate id; the second `g` casts.
     let mut truncation_ack: Option<String> = None;
+    // Plan review: currently highlighted task row.
+    let mut plan_sel: usize = 0;
 
     loop {
         // Pick up any new rejection message.
@@ -316,7 +323,11 @@ pub async fn run_remote(
         }
 
         let state = state_rx.borrow().clone();
-        let mut view = wire_to_view(&state, own);
+        // Clamp plan_sel whenever the task list changes (remote edits can shrink it).
+        if let WirePhase::PlanReview { tasks } = &state.phase {
+            plan_sel = planedit::clamp_sel(plan_sel, tasks.len());
+        }
+        let mut view = wire_to_view(&state, own, plan_sel);
         // The invite is decision-relevant only while the stations are not both
         // linked; the moment they are, it disappears (calm default).
         if !view.status.linked {
@@ -360,6 +371,13 @@ pub async fn run_remote(
                 "prompt > {compose_buf}  [↵] submit · [esc] cancel{warn}"
             ));
         }
+        // Plan task edit compose: show the edit buffer in the notice row.
+        if let ComposeTarget::PlanEdit { idx } = &compose {
+            view.notice = Some(format!(
+                "edit t{} > {compose_buf}  [↵] submit · [esc] cancel",
+                idx + 1
+            ));
+        }
 
         // When a gate is pending with multiple files, show file-cycle hint in notice.
         if view.notice.is_none() {
@@ -379,13 +397,67 @@ pub async fn run_remote(
         })?;
 
         let composing = !matches!(compose, ComposeTarget::None);
-        match poll_action(Duration::from_millis(200), composing)? {
+        let in_plan_review = matches!(view.active, ActiveRegion::Plan { .. }) && !composing;
+        match poll_action(Duration::from_millis(200), composing, in_plan_review)? {
             None => {}
             Some(Action::Quit) => break,
 
             // Ready signal (dispatch / plan approval).
             Some(Action::Ready) => {
                 let _ = client.ready().await;
+            }
+
+            // Plan selection navigation.
+            Some(Action::PlanSelectDown) => {
+                if let ActiveRegion::Plan { tasks, .. } = &view.active {
+                    plan_sel = planedit::clamp_sel(plan_sel.saturating_add(1), tasks.len());
+                }
+            }
+            Some(Action::PlanSelectUp) => {
+                plan_sel = plan_sel.saturating_sub(1);
+            }
+
+            // Begin editing the selected plan task (seeded with current text).
+            Some(Action::PlanEditBegin) => {
+                if let ActiveRegion::Plan { tasks, .. } = &view.active {
+                    let seed = tasks.get(plan_sel).cloned().unwrap_or_default();
+                    compose = ComposeTarget::PlanEdit { idx: plan_sel };
+                    compose_buf = seed;
+                }
+            }
+
+            // Delete the selected task (refuse if it would empty the list).
+            Some(Action::PlanDeleteTask) => {
+                if let ActiveRegion::Plan { tasks, .. } = &view.active {
+                    match planedit::delete_task(tasks.clone(), plan_sel) {
+                        Ok(new_list) => {
+                            plan_sel = planedit::clamp_sel(plan_sel, new_list.len());
+                            let _ = client.edit_plan(&new_list).await;
+                        }
+                        Err(msg) => {
+                            rejected_msg = Some(msg.into());
+                            rejected_ttl = 30;
+                        }
+                    }
+                }
+            }
+
+            // Move selected task up.
+            Some(Action::PlanMoveUp) => {
+                if let ActiveRegion::Plan { tasks, .. } = &view.active {
+                    let (new_list, new_idx) = planedit::move_task(tasks.clone(), plan_sel, true);
+                    plan_sel = new_idx;
+                    let _ = client.edit_plan(&new_list).await;
+                }
+            }
+
+            // Move selected task down.
+            Some(Action::PlanMoveDown) => {
+                if let ActiveRegion::Plan { tasks, .. } = &view.active {
+                    let (new_list, new_idx) = planedit::move_task(tasks.clone(), plan_sel, false);
+                    plan_sel = new_idx;
+                    let _ = client.edit_plan(&new_list).await;
+                }
             }
 
             // Go verdict — truncation requires a second `g` to acknowledge.
@@ -584,6 +656,20 @@ pub async fn run_remote(
                             compose_buf.clear();
                         }
                     }
+                    ComposeTarget::PlanEdit { idx } => {
+                        if compose_buf.trim().is_empty() {
+                            // No blank tasks: keep composing
+                            rejected_msg = Some("task cannot be empty".into());
+                            rejected_ttl = 20;
+                        } else {
+                            if let ActiveRegion::Plan { tasks, .. } = &view.active {
+                                let new_list = planedit::edit_task(tasks.clone(), idx, compose_buf.clone());
+                                let _ = client.edit_plan(&new_list).await;
+                            }
+                            compose = ComposeTarget::None;
+                            compose_buf.clear();
+                        }
+                    }
                     ComposeTarget::None => {}
                 }
             }
@@ -748,7 +834,7 @@ mod tests {
         let mut state = base_state(WirePhase::Executing);
         state.gate = Some(dummy_gate(vec![sealed_key]));
 
-        let view = wire_to_view(&state, op(1));
+        let view = wire_to_view(&state, op(1), 0);
         if let ActiveRegion::Gate(card) = &view.active {
             // own key is present in gate (status Sealed) — it IS in keys
             // Sealed in WireGate → Sealed in KeyView
@@ -771,7 +857,7 @@ mod tests {
         let mut state = base_state(WirePhase::Executing);
         state.gate = Some(dummy_gate(vec![b_key]));
 
-        let view = wire_to_view(&state, op(1)); // own = A (op(1))
+        let view = wire_to_view(&state, op(1), 0); // own = A (op(1))
         assert_eq!(view.status.needs_you, 1);
     }
 
@@ -785,7 +871,7 @@ mod tests {
         let mut state = base_state(WirePhase::Executing);
         state.gate = Some(dummy_gate(vec![a_key]));
 
-        let view = wire_to_view(&state, op(1)); // own = A
+        let view = wire_to_view(&state, op(1), 0); // own = A
         assert_eq!(view.status.needs_you, 0);
     }
 
@@ -796,7 +882,7 @@ mod tests {
         // Set seat B as ready, A not ready.
         state.seats[1].ready = true;
 
-        let view = wire_to_view(&state, op(1));
+        let view = wire_to_view(&state, op(1), 0);
         match &view.active {
             ActiveRegion::Prompt { prompt, ready } => {
                 assert_eq!(prompt, "do the thing");
@@ -818,7 +904,7 @@ mod tests {
             abandoned: false,
         });
 
-        let view = wire_to_view(&state, op(1));
+        let view = wire_to_view(&state, op(1), 0);
         match &view.active {
             ActiveRegion::SessionClosed(summary) => {
                 assert_eq!(summary.gates, 3);
@@ -835,7 +921,7 @@ mod tests {
     #[test]
     fn wire_role_host_maps_to_host() {
         let state = base_state(WirePhase::AwaitOperators);
-        let view = wire_to_view(&state, op(1));
+        let view = wire_to_view(&state, op(1), 0);
         assert_eq!(view.stations[0].role, crate::view::Role::Host, "seat A should be Host");
         assert_eq!(view.stations[1].role, crate::view::Role::Operator, "seat B should be Operator");
     }
@@ -846,7 +932,7 @@ mod tests {
         let mut state = base_state(WirePhase::Executing);
         state.seats[1].linked = false;
 
-        let view = wire_to_view(&state, op(1));
+        let view = wire_to_view(&state, op(1), 0);
         assert!(!view.status.linked);
     }
 
@@ -855,7 +941,7 @@ mod tests {
         // Mirrors the run_remote gating: invite shows only while not both linked.
         let mut state = base_state(WirePhase::Executing);
         state.seats[1].linked = false;
-        let mut view = wire_to_view(&state, op(1));
+        let mut view = wire_to_view(&state, op(1), 0);
         let invite = Some("kontur join kontur://x:7777/aa".to_string());
         if !view.status.linked {
             view.invite = invite.clone();
@@ -863,7 +949,7 @@ mod tests {
         assert!(view.invite.is_some());
 
         let state2 = base_state(WirePhase::Executing);
-        let mut view2 = wire_to_view(&state2, op(1));
+        let mut view2 = wire_to_view(&state2, op(1), 0);
         if !view2.status.linked {
             view2.invite = invite.clone();
         }

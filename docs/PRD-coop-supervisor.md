@@ -90,7 +90,7 @@ Co-op Supervisor reintroduces the pair, one layer up. Instead of two people at o
 
 ### Planning
 - **FR-6** The agent returns a task list of bounded, single-concern tasks with explicit dependencies (a DAG).
-- **FR-7** Both operators can approve or edit the task list; edits re-enter plan review.
+- **FR-7** Both operators can approve or edit the task list; edits re-enter plan review. *(implemented 2026-07-21: `EditPlan` wire message; in-TUI j/k select, e edit, d delete, </> reorder; any edit resets both ready flags; approved/edited list returned to agent via `propose_plan` response)*
 
 ### Execution & lifecycle
 - **FR-8** Tasks execute sequentially against a per-agent isolated worktree.

@@ -106,7 +106,9 @@ pub struct AuditSummary {
 pub enum ActiveRegion {
     Idle,
     Prompt { prompt: String, ready: [bool; 2] },
-    Plan { tasks: Vec<String>, ready: [bool; 2] },
+    /// Plan review: operators approve, edit, reorder, or delete tasks before
+    /// execution begins. `selected` is the currently highlighted row.
+    Plan { tasks: Vec<String>, ready: [bool; 2], selected: usize },
     Gate(GateCard),
     Intervention(InterventionCard),
     SessionClosed(AuditSummary),

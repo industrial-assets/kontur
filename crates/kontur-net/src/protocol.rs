@@ -21,6 +21,9 @@ pub enum ClientMsg {
     /// Request the current on-disk contents of a worktree file.
     /// Response arrives as `ServerMsg::FileContent` on the same connection.
     FetchFile { path: String },
+    /// Replace the current plan with a new task list. Valid only during
+    /// `PlanReview`; resets both ready flags so both seats must re-consent.
+    EditPlan { tasks: Vec<String> },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
