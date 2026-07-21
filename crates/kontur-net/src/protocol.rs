@@ -29,6 +29,15 @@ pub enum ClientMsg {
     SetPrompt {
         prompt: String,
     },
+    /// Live draft of the prompt as a seat types, one message per keystroke.
+    /// Valid only during dispatch composition; updates the shared prompt and
+    /// resets both ready flags (same anchoring rule as `SetPrompt`) but is
+    /// never logged — the commit (`SetPrompt`) is the logged event. May be
+    /// empty (mid-edit); the dispatch gate refuses an empty prompt anyway.
+    /// Simultaneous drafts from both seats are last-write-wins.
+    PromptDraft {
+        prompt: String,
+    },
     /// Request the current on-disk contents of a worktree file.
     /// Response arrives as `ServerMsg::FileContent` on the same connection.
     FetchFile {

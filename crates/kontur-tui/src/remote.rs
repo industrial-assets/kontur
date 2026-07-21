@@ -472,6 +472,9 @@ pub async fn run_remote(
 
     let mut compose = ComposeTarget::None;
     let mut compose_buf = String::new();
+    // Prompt text as it was when [p] was pressed — Esc restores it (drafts
+    // stream live to the other seat, so cancel must undo what they saw).
+    let mut prompt_before = String::new();
     let mut diff_scroll: u16 = 0;
     let mut selected_file: usize = 0;
     let mut last_gate_id: Option<String> = None;
@@ -694,6 +697,7 @@ pub async fn run_remote(
                     // retyping the whole instruction (same idiom as task editing).
                     // Draft is shown via the notice row while composing.
                     compose_buf = prompt.clone();
+                    prompt_before = prompt.clone();
                 }
             }
 
@@ -815,10 +819,17 @@ pub async fn run_remote(
                     compose_buf.clear();
                 } else {
                     compose_buf.push(c);
+                    // Live sync: the other seat sees the draft as it is typed.
+                    if matches!(compose, ComposeTarget::Prompt) {
+                        let _ = client.prompt_draft(&compose_buf).await;
+                    }
                 }
             }
             Some(Action::RemedyBackspace) => {
                 compose_buf.pop();
+                if matches!(compose, ComposeTarget::Prompt) {
+                    let _ = client.prompt_draft(&compose_buf).await;
+                }
             }
             Some(Action::RemedySubmit) => {
                 match compose {
@@ -881,6 +892,11 @@ pub async fn run_remote(
                 }
             }
             Some(Action::RemedyCancel) => {
+                // Cancelling a prompt compose must undo the streamed draft on
+                // the other seat too — restore the pre-edit text.
+                if matches!(compose, ComposeTarget::Prompt) {
+                    let _ = client.prompt_draft(&prompt_before).await;
+                }
                 compose = ComposeTarget::None;
                 compose_buf.clear();
             }

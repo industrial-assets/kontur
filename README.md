@@ -24,7 +24,7 @@ Pair programming assumed a driver at the keyboard and a navigator watching the c
 
 ## How it works
 
-- **Compose the prompt.** Either seat drafts/edits it in-console ([p]); every edit resets both ready marks; both mark ready to dispatch.
+- **Compose the prompt.** Either seat drafts/edits it in-console ([p]); the other seat watches the draft live, keystroke by keystroke; every edit resets both ready marks; both mark ready to dispatch.
 - **Plan first.** The agent proposes its task list of bounded, single-concern changes and is blocked until both seats approve it — the plan gate is enforced, not advisory. Either seat can select (`j`/`k`), edit (`e`), delete (`d`), or reorder (`<`/`>`) tasks; any edit resets both ready flags. The approved list is returned to the agent verbatim; steer-first approach preferred — `[r]` routes a revision prompt to the agent.
 - **One task at a time.** Agents work sequentially; each finished change parks at a gate.
 - **Two keys, independent.** On high-risk gates the first verdict is sealed until the second is cast — no anchoring, no rubber-stamp. A no-go must carry its fix. A hand-edit applies instantly for emergencies but still needs both keys before it merges.
