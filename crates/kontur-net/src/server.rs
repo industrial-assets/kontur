@@ -730,6 +730,23 @@ async fn handle_client_msg(
             let gates = server.inner.host.audit_len().await;
             let chain_verified = server.inner.host.verify_audit().await.is_ok();
 
+            // Resolved gates are evidence even when nothing merges — persist
+            // the chain on abandon as well.
+            match server.inner.host.persist_audit().await {
+                Some(Ok(path)) => {
+                    let mut net = server.inner.net.lock().await;
+                    push_log(
+                        &mut net,
+                        &format!("audit chain written · {}", path.display()),
+                    );
+                }
+                Some(Err(e)) => {
+                    let mut net = server.inner.net.lock().await;
+                    push_log(&mut net, &format!("AUDIT WRITE FAILED: {e}"));
+                }
+                None => {}
+            }
+
             let new_phase = {
                 let net = server.inner.net.lock().await;
                 let reviewers = vec![net.seats[0].label.clone(), net.seats[1].label.clone()];
@@ -1012,6 +1029,27 @@ impl SessionServer {
                 hex16(&op1),
             )
         };
+
+        // Anchor the merge commit to the audit chain: persist the signed
+        // records, then carry the chain head in a trailer so the commit and
+        // the evidence reference each other.
+        let audit_head = inner.host.audit_head().await;
+        let head_hex: String = audit_head.0.iter().map(|b| format!("{b:02x}")).collect();
+        let merge_msg = format!("{merge_msg}\nAudit-chain: sha256:{head_hex}");
+        match inner.host.persist_audit().await {
+            Some(Ok(path)) => {
+                let mut net = inner.net.lock().await;
+                push_log(
+                    &mut net,
+                    &format!("audit chain written · {}", path.display()),
+                );
+            }
+            Some(Err(e)) => {
+                let mut net = inner.net.lock().await;
+                push_log(&mut net, &format!("AUDIT WRITE FAILED: {e}"));
+            }
+            None => {}
+        }
 
         let merged = match inner.host.merge_session(&merge_msg).await {
             Ok(()) => true,
@@ -1485,6 +1523,10 @@ mod tests {
         }
 
         let msg = ws.merged_message().expect("should have a merge message");
+        assert!(
+            msg.contains("Audit-chain: sha256:"),
+            "merge message must anchor the audit chain head; got:\n{msg}"
+        );
         assert!(
             msg.contains("Reviewed-by: A"),
             "merge message should contain A"

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+serde_json = "1"
 kontur-core = { path = "../kontur-core" }
 kontur-mcp = { path = "../kontur-mcp" }
 kontur-net = { path = "../kontur-net" }
@@ -12,7 +13,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 getrandom = "0.2"
 
 [dev-dependencies]
-serde_json = "1"
 
 [[bin]]
 name = "kontur"

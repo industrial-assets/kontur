@@ -24,6 +24,7 @@ async fn main() -> std::io::Result<()> {
         None => host_cmd(&[]).await,
 
         Some("demo") => run(Demo::new()).await,
+        Some("audit") => audit_cmd(&args[2..]),
         Some("host") => host_cmd(&args[2..]).await,
         Some("join") => join_cmd(&args[2..]).await,
         Some("help") | Some("--help") | Some("-h") => {
@@ -41,10 +42,52 @@ async fn main() -> std::io::Result<()> {
     }
 }
 
+/// Verify a persisted audit chain: every record hash, every link, every
+/// checker signature. Exit 0 with a summary on success; exit 1 naming the
+/// break otherwise.
+fn audit_cmd(args: &[String]) -> std::io::Result<()> {
+    let Some(path) = args.first() else {
+        eprintln!("usage: kontur audit <audit-file.json>");
+        std::process::exit(2);
+    };
+    let bytes = std::fs::read(path)?;
+    let records: Vec<kontur_core::GateRecord> = serde_json::from_slice(&bytes).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("not an audit file: {e}"),
+        )
+    })?;
+    match kontur_core::verify_chain(&records) {
+        Ok(()) => {
+            let head = records
+                .last()
+                .map(|r| {
+                    r.this_hash
+                        .0
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>()
+                })
+                .unwrap_or_else(|| "genesis".into());
+            println!(
+                "audit chain OK — {} gate{} · head sha256:{head}",
+                records.len(),
+                if records.len() == 1 { "" } else { "s" },
+            );
+            Ok(())
+        }
+        Err(brk) => {
+            eprintln!("AUDIT CHAIN BROKEN: {brk}");
+            std::process::exit(1);
+        }
+    }
+}
+
 fn print_usage() {
     eprintln!(
         "Usage:
   kontur                              # zero-config: host in current git repo
+  kontur audit <file.json>            # verify a persisted audit chain
   kontur host [--repo <path>] [--mem] [--operator-port 7777] [--agent-port 7778]
               [--prompt \"...\"] [--claude | --demo-agent] [--seeds <hex32a,hex32b>]
               [--session <name>] [--headless]

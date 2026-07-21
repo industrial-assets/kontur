@@ -165,6 +165,10 @@ impl Workspace for GitWorkspace {
         Ok(())
     }
 
+    fn audit_dir(&self) -> Option<PathBuf> {
+        Some(self.repo.join(".kontur"))
+    }
+
     fn read_file(&self, _task_id: &TaskId, path: &str) -> Result<Option<Vec<u8>>, WorkspaceError> {
         let full = contained_join(&self.worktree, path)?;
         match std::fs::read(&full) {
