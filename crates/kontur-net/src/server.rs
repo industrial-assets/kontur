@@ -937,6 +937,9 @@ async fn handle_client_msg(
         ClientMsg::Answer { question, choice } => {
             // Apply the answer to the clarify reducer; when every question is
             // resolved, hand the accepted answers back to the agent and move on.
+            // Phase/reducer are cleared inside the SAME lock as the resolution
+            // check so a concurrent Answer sees `phase != Clarify` and bails —
+            // no double resolve, no duplicate log line.
             let resolved: Option<Vec<Vec<String>>> = {
                 let mut net = server.inner.net.lock().await;
                 if net.phase != Phase::Clarify {
@@ -950,17 +953,17 @@ async fn handle_client_msg(
                     crate::protocol::WireChoice::Custom(s) => crate::clarify::Choice::Custom(s),
                 };
                 clarify.answer(seat_idx, question, choice);
-                clarify.resolved()
+                let resolved = clarify.resolved();
+                if resolved.is_some() {
+                    net.clarify = None;
+                    net.phase = Phase::PlanReview;
+                    push_log(&mut net, "clarification resolved · awaiting agent plan");
+                }
+                resolved
             };
             if let Some(answers) = resolved {
-                // Resolved: unblock the agent, clear the exchange, return to
-                // plan review (the agent now proposes its plan).
+                // Unblock the parked ask_clarification MCP call.
                 server.inner.host.resolve_clarification(answers).await;
-                let mut net = server.inner.net.lock().await;
-                net.clarify = None;
-                net.phase = Phase::PlanReview;
-                push_log(&mut net, "clarification resolved · awaiting agent plan");
-                drop(net);
             }
             server.refresh_locked().await;
         }
