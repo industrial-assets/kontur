@@ -550,11 +550,12 @@ pub async fn run_remote(
 
             // Prompt edit → start composing (valid only in DispatchReady region).
             Some(Action::PromptBegin) => {
-                if matches!(view.active, ActiveRegion::Prompt { .. }) {
+                if let ActiveRegion::Prompt { prompt, .. } = &view.active {
                     compose = ComposeTarget::Prompt;
-                    compose_buf.clear();
-                    // Seed empty so the operator types the full new prompt.
+                    // Seed with the current prompt so small edits don't require
+                    // retyping the whole instruction (same idiom as task editing).
                     // Draft is shown via the notice row while composing.
+                    compose_buf = prompt.clone();
                 }
             }
 
