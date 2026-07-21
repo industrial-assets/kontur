@@ -10,7 +10,7 @@ use kontur_core::{OperatorId, ReviewDepth, Verdict, VerdictStatus};
 use kontur_net::{ServerMsg, SessionClient, WireGate, WirePhase, WireRole, WireState};
 
 use crate::app::{poll_action, TerminalGuard};
-use crate::diffview::{clamp_scroll, diff_files, editor_command};
+use crate::diffview::{clamp_scroll, editor_command};
 use crate::input::Action;
 use crate::planedit;
 use crate::render::render;
@@ -354,7 +354,15 @@ fn wire_gate_to_card(wg: &WireGate, stations: &[Station; 2]) -> GateCard {
         loc: wg.loc,
         keys,
         escalation_required: wg.escalation_required,
-        diff_preview: wg.diff_preview.clone(),
+        file_diffs: wg
+            .file_diffs
+            .iter()
+            .map(|fd| crate::view::FileDiffView {
+                path: fd.path.clone(),
+                diff: fd.diff.clone(),
+                truncated: fd.truncated,
+            })
+            .collect(),
         diff_truncated: wg.diff_truncated,
     }
 }
@@ -560,12 +568,13 @@ pub async fn run_remote(
         // When a gate is pending with multiple files, show file-cycle hint in notice.
         if view.notice.is_none() {
             if let ActiveRegion::Gate(ref card) = view.active {
-                if let Some(ref preview) = card.diff_preview {
-                    let files = diff_files(preview);
-                    if files.len() > 1 {
-                        let path = files.get(selected_file).map(String::as_str).unwrap_or("");
-                        view.notice = Some(format!("[tab] file: {path}"));
-                    }
+                if card.file_diffs.len() > 1 {
+                    let path = card
+                        .file_diffs
+                        .get(selected_file)
+                        .map(|fd| fd.path.as_str())
+                        .unwrap_or("");
+                    view.notice = Some(format!("[tab] file: {path}"));
                 }
             }
         }
@@ -658,7 +667,7 @@ pub async fn run_remote(
                         GoDecision::NeedAck => {
                             truncation_ack = Some(wg.gate_id.0.clone());
                             rejected_msg = Some(
-                                "diff was truncated at 64 KB — press [g] again to sign anyway"
+                                "a file diff was truncated at 64 KB — press [g] again to sign anyway"
                                     .into(),
                             );
                             rejected_ttl = 60;
@@ -698,12 +707,11 @@ pub async fn run_remote(
 
             // Hand-edit: $EDITOR round-trip when a gate is present.
             Some(Action::HandEdit) => {
-                let diff_text = if let ActiveRegion::Gate(ref card) = view.active {
-                    card.diff_preview.clone()
+                let files: Vec<String> = if let ActiveRegion::Gate(ref card) = view.active {
+                    card.file_diffs.iter().map(|fd| fd.path.clone()).collect()
                 } else {
-                    None
+                    Vec::new()
                 };
-                let files = diff_text.as_deref().map(diff_files).unwrap_or_default();
                 if files.is_empty() {
                     rejected_msg = Some("no files in diff — cannot hand-edit".into());
                     rejected_ttl = 30;
@@ -757,14 +765,14 @@ pub async fn run_remote(
 
             // Scroll actions (always active in the split layout).
             Some(Action::ScrollDown) => {
-                let total = diff_line_count(&view.active);
+                let total = diff_line_count(&view.active, selected_file);
                 diff_scroll = clamp_scroll(diff_scroll as i32 + 1, total, PAGE_LINES);
             }
             Some(Action::ScrollUp) => {
                 diff_scroll = clamp_scroll(diff_scroll as i32 - 1, 0, PAGE_LINES);
             }
             Some(Action::PageDown) => {
-                let total = diff_line_count(&view.active);
+                let total = diff_line_count(&view.active, selected_file);
                 diff_scroll =
                     clamp_scroll(diff_scroll as i32 + PAGE_LINES as i32, total, PAGE_LINES);
             }
@@ -775,16 +783,14 @@ pub async fn run_remote(
             // Cycle selected file.
             Some(Action::CycleFile) => {
                 let files_len = if let ActiveRegion::Gate(ref card) = view.active {
-                    card.diff_preview
-                        .as_deref()
-                        .map(diff_files)
-                        .unwrap_or_default()
-                        .len()
+                    card.file_diffs.len()
                 } else {
                     0
                 };
                 if files_len > 1 {
                     selected_file = (selected_file + 1) % files_len;
+                    // Each file is its own scroll surface.
+                    diff_scroll = 0;
                 }
             }
 
@@ -886,10 +892,13 @@ pub async fn run_remote(
 // Helper: count diff lines for scroll clamping
 // ---------------------------------------------------------------------------
 
-fn diff_line_count(active: &ActiveRegion) -> u16 {
+fn diff_line_count(active: &ActiveRegion, selected_file: usize) -> u16 {
     if let ActiveRegion::Gate(card) = active {
-        if let Some(ref preview) = card.diff_preview {
-            return preview.lines().count() as u16;
+        if let Some(fd) = card
+            .file_diffs
+            .get(selected_file % card.file_diffs.len().max(1))
+        {
+            return fd.diff.lines().count() as u16;
         }
     }
     0
@@ -1030,7 +1039,11 @@ mod tests {
             diff_hash: Hash([0; 32]),
             keys,
             escalation_required: false,
-            diff_preview: Some("diff --git a/a.rs b/a.rs\n+fn foo() {}".into()),
+            file_diffs: vec![kontur_net::protocol::WireFileDiff {
+                path: "a.rs".into(),
+                diff: "diff --git a/a.rs b/a.rs\n+fn foo() {}".into(),
+                truncated: false,
+            }],
             diff_truncated: false,
         }
     }

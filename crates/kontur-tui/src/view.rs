@@ -80,10 +80,19 @@ pub struct GateCard {
     pub loc: u32,
     pub keys: Vec<KeyView>,
     pub escalation_required: bool,
-    pub diff_preview: Option<String>,
-    /// True when `diff_preview` was truncated at 64 KiB on the server. A `go`
-    /// on a truncated diff requires a second `g` press to acknowledge.
+    /// Per-file diff sections; the DIFF pane shows the tab-selected one.
+    pub file_diffs: Vec<FileDiffView>,
+    /// True when any file's section was truncated at 64 KiB on the server. A
+    /// `go` on a truncated diff requires a second `g` press to acknowledge.
     pub diff_truncated: bool,
+}
+
+/// One file's diff section at a gate.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FileDiffView {
+    pub path: String,
+    pub diff: String,
+    pub truncated: bool,
 }
 
 /// A no-go remedy being composed at a gate.

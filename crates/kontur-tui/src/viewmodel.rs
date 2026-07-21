@@ -3,8 +3,8 @@ use kontur_mcp::{GateHost, GateView};
 
 use crate::fleet::FleetSource;
 use crate::view::{
-    ActiveRegion, AuditSummary, Banner, GateCard, KeyStatus, KeyView, LogLine, SessionView,
-    Station, StatusStrip,
+    ActiveRegion, AuditSummary, Banner, FileDiffView, GateCard, KeyStatus, KeyView, LogLine,
+    SessionView, Station, StatusStrip,
 };
 
 /// Build the pure console snapshot. Pure w.r.t. the host + fleet at call time;
@@ -37,11 +37,28 @@ pub async fn build_session_view(
             abandoned: false,
         })
     } else if let Some(gv) = pending.first() {
-        let diff_preview = host
+        let file_diffs = host
             .gate_diff(&gv.gate_id)
             .await
-            .map(|b| String::from_utf8_lossy(&b).into_owned());
-        ActiveRegion::Gate(gate_card(gv, &stations, diff_preview))
+            .map(|b| {
+                let fallback = match gv.files.as_slice() {
+                    [only] => only.clone(),
+                    _ => "(all files)".to_owned(),
+                };
+                kontur_net::difftext::split_file_diffs_or_whole(
+                    &String::from_utf8_lossy(&b),
+                    &fallback,
+                )
+                .into_iter()
+                .map(|fd| FileDiffView {
+                    path: fd.path,
+                    diff: fd.diff,
+                    truncated: false,
+                })
+                .collect()
+            })
+            .unwrap_or_default();
+        ActiveRegion::Gate(gate_card(gv, &stations, file_diffs))
     } else {
         ActiveRegion::Idle
     };
@@ -59,7 +76,7 @@ pub async fn build_session_view(
     }
 }
 
-fn gate_card(gv: &GateView, stations: &[Station; 2], diff_preview: Option<String>) -> GateCard {
+fn gate_card(gv: &GateView, stations: &[Station; 2], file_diffs: Vec<FileDiffView>) -> GateCard {
     let keys = stations.iter().map(|s| key_for(s, gv)).collect();
     GateCard {
         gate_id: gv.gate_id.0.clone(),
@@ -68,8 +85,8 @@ fn gate_card(gv: &GateView, stations: &[Station; 2], diff_preview: Option<String
         loc: gv.loc,
         keys,
         escalation_required: gv.escalation_required,
-        diff_preview,
-        // viewmodel path has no wire diff, so truncation is not applicable.
+        file_diffs,
+        // viewmodel path has no wire cap, so truncation is not applicable.
         diff_truncated: false,
     }
 }

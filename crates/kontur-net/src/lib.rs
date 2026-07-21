@@ -2,6 +2,7 @@ pub mod agent;
 pub mod agent_endpoint;
 pub mod client;
 pub mod codec;
+pub mod difftext;
 pub mod protocol;
 pub mod server;
 pub mod tls;

@@ -113,10 +113,21 @@ pub struct WireGate {
     pub diff_hash: Hash,
     pub keys: Vec<VerdictView>,
     pub escalation_required: bool,
-    pub diff_preview: Option<String>,
-    /// True when `diff_preview` was capped at 64 KiB. Operators who approve
-    /// a truncated diff must explicitly acknowledge before their `go` is cast.
+    /// The gate diff, split per file, each section independently capped at
+    /// 64 KiB — one huge generated file cannot starve the others' diffs.
+    pub file_diffs: Vec<WireFileDiff>,
+    /// True when any file's section was capped. Operators who approve a
+    /// truncated diff must explicitly acknowledge before their `go` is cast.
     pub diff_truncated: bool,
+}
+
+/// One file's diff section at a gate.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct WireFileDiff {
+    pub path: String,
+    pub diff: String,
+    /// True when this section was capped at 64 KiB on the server.
+    pub truncated: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
