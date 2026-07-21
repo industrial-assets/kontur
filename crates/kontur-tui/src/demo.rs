@@ -53,14 +53,14 @@ impl Demo {
     pub fn stations(&self) -> [Station; 2] {
         [
             Station {
-                label: "HOST".into(),
+                label: "Operator A [Host]".into(),
                 role: Role::Host,
                 activity: "reviewing".into(),
                 operator: self.signer_a.operator_id(),
                 afk: false,
             },
             Station {
-                label: "OPERATOR".into(),
+                label: "Operator B".into(),
                 role: Role::Operator,
                 activity: "reviewing".into(),
                 operator: self.signer_b.operator_id(),
