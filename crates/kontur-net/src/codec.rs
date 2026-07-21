@@ -60,6 +60,7 @@ mod tests {
         let original = ClientMsg::Hello {
             seat: "A".to_string(),
             operator: OperatorId([1; 32]),
+            protocol: crate::protocol::PROTOCOL_VERSION,
         };
 
         let recovered: ClientMsg = roundtrip(&original).await;

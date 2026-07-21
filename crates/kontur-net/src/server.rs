@@ -487,7 +487,22 @@ async fn reader_task<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(
         ClientMsg::Hello {
             seat: client_label,
             operator,
+            protocol,
         } => {
+            // Version gate first: a build mismatch must fail here with a clear
+            // message, not later with an opaque deserialization error.
+            if *protocol != crate::protocol::PROTOCOL_VERSION {
+                let _ = conn_tx
+                    .send(ServerMsg::Rejected {
+                        reason: format!(
+                            "protocol mismatch — update kontur (server v{}, client v{})",
+                            crate::protocol::PROTOCOL_VERSION,
+                            protocol
+                        ),
+                    })
+                    .await;
+                return;
+            }
             // Seat claim is keyed on OperatorId alone; the configured label
             // for that seat is used everywhere (client-sent label is ignored
             // beyond optional diagnostics).
@@ -1436,6 +1451,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -1445,6 +1461,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -1605,6 +1622,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -1614,6 +1632,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -1781,6 +1800,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -1790,6 +1810,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -1903,6 +1924,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -1973,6 +1995,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -1982,6 +2005,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2100,6 +2124,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2109,6 +2134,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2240,6 +2266,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2249,6 +2276,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2395,6 +2423,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2483,6 +2512,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2492,6 +2522,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2631,6 +2662,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2640,6 +2672,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2723,6 +2756,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2732,6 +2766,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2826,6 +2861,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2835,6 +2871,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2889,6 +2926,60 @@ mod tests {
         );
     }
 
+    /// A client on a different protocol version is rejected at Hello with a
+    /// clear message naming both versions — not an opaque serde error later.
+    #[tokio::test]
+    async fn protocol_mismatch_rejected_at_hello() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let (server, _ws) = make_server(op1, op2, vec!["t1".into()]);
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let mut ca_reader = BufReader::new(ca_read);
+
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION + 99,
+            },
+        )
+        .await
+        .unwrap();
+
+        // The server may emit an initial State snapshot before the rejection;
+        // read until the Rejected arrives.
+        let mut rejected = None;
+        for _ in 0..4 {
+            match read_json::<_, ServerMsg>(&mut ca_reader).await.unwrap() {
+                Some(ServerMsg::Rejected { reason }) => {
+                    rejected = Some(reason);
+                    break;
+                }
+                Some(_) => continue,
+                None => break,
+            }
+        }
+        let reason = rejected.expect("expected a Rejected message");
+        assert!(reason.contains("protocol mismatch"), "got: {reason}");
+        assert!(reason.contains("update kontur"), "got: {reason}");
+    }
+
+    /// A pre-versioning client (Hello without the field) deserializes to
+    /// protocol 0 and is likewise rejected — no panic, no serde error.
+    #[test]
+    fn hello_without_protocol_defaults_to_zero() {
+        let json = r#"{"Hello":{"seat":"A","operator":[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]}}"#;
+        let msg: ClientMsg = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMsg::Hello { protocol, .. } => assert_eq!(protocol, 0),
+            _ => panic!("expected Hello"),
+        }
+    }
+
     /// Live prompt sync: a draft keystroke from one seat is visible in the
     /// broadcast state (the other seat sees typing as it happens), resets
     /// both ready flags, and produces no log line — only the SetPrompt
@@ -2916,6 +3007,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -2925,6 +3017,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3043,6 +3136,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3052,6 +3146,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3157,6 +3252,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3166,6 +3262,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3327,6 +3424,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3433,6 +3531,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3442,6 +3541,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3543,6 +3643,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3552,6 +3653,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3641,6 +3743,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3650,6 +3753,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3774,6 +3878,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3783,6 +3888,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3889,6 +3995,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3898,6 +4005,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3980,6 +4088,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "A".into(),
                 operator: op1,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await
@@ -3989,6 +4098,7 @@ mod tests {
             &ClientMsg::Hello {
                 seat: "B".into(),
                 operator: op2,
+                protocol: crate::protocol::PROTOCOL_VERSION,
             },
         )
         .await

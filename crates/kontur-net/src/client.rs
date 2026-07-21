@@ -67,7 +67,15 @@ impl SessionClient {
         let mut write_half: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(write_half);
 
         // Send Hello.
-        write_json(&mut write_half, &ClientMsg::Hello { seat, operator }).await?;
+        write_json(
+            &mut write_half,
+            &ClientMsg::Hello {
+                seat,
+                operator,
+                protocol: crate::protocol::PROTOCOL_VERSION,
+            },
+        )
+        .await?;
 
         // Create the mpsc channel before the reader task is spawned.
         let (tx, rx) = mpsc::channel::<ServerMsg>(32);

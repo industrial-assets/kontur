@@ -1,6 +1,16 @@
 use kontur_core::{CastVerdict, GateId, Hash, OperatorId, VerdictView};
 use serde::{Deserialize, Serialize};
 
+/// Wire protocol version. Bump on any incompatible change to the message
+/// types below. A client that omits the field (pre-versioning build) is read
+/// as version 0, which mismatches any real version and is rejected cleanly.
+pub const PROTOCOL_VERSION: u32 = 1;
+
+/// Serde default for `Hello.protocol` — pre-versioning clients deserialize to 0.
+fn protocol_v0() -> u32 {
+    0
+}
+
 /// Operator role transmitted on the wire. An enum prevents the casing-mismatch
 /// bug where the server emits `"Host"` but the client compared `== "HOST"`.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,6 +24,10 @@ pub enum ClientMsg {
     Hello {
         seat: String,
         operator: OperatorId,
+        /// The client's wire protocol version. Defaults to 0 when absent so an
+        /// old build is rejected with a clear message rather than a serde error.
+        #[serde(default = "protocol_v0")]
+        protocol: u32,
     },
     Ready,
     Cast {
