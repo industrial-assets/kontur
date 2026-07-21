@@ -556,6 +556,17 @@ async fn handle_client_msg(
             if both_ready {
                 match net.phase.clone() {
                     Phase::DispatchReady => {
+                        // A blank instruction cannot be dispatched. Same
+                        // anchoring rule as the empty-plan refusal: consent
+                        // must be re-signalled once a prompt actually exists.
+                        if net.prompt.trim().is_empty() {
+                            net.seats[0].ready = false;
+                            net.seats[1].ready = false;
+                            push_log(&mut net, "prompt is empty — compose with [p]");
+                            drop(net);
+                            server.refresh_locked().await;
+                            return;
+                        }
                         net.phase = Phase::PlanReview;
                         net.seats[0].ready = false;
                         net.seats[1].ready = false;
@@ -1234,18 +1245,20 @@ mod tests {
         op2: OperatorId,
         tasks: Vec<String>,
     ) -> (SessionServer, Arc<InMemoryWorkspace>) {
+        make_server_with_prompt(op1, op2, tasks, "fix the thing")
+    }
+
+    fn make_server_with_prompt(
+        op1: OperatorId,
+        op2: OperatorId,
+        tasks: Vec<String>,
+        prompt: &str,
+    ) -> (SessionServer, Arc<InMemoryWorkspace>) {
         let ws = Arc::new(InMemoryWorkspace::new());
-        let ctx = SessionContext::new(
-            "fix the thing",
-            op1,
-            "agent-01",
-            "claude",
-            "1.0",
-            vec![op1, op2],
-        );
+        let ctx = SessionContext::new(prompt, op1, "agent-01", "claude", "1.0", vec![op1, op2]);
         let host = Arc::new(GateHost::new(ctx, ws.clone()));
         let cfg = SessionConfig {
-            prompt: "fix the thing".into(),
+            prompt: prompt.into(),
             plan: tasks,
             seats: [("A".into(), op1), ("B".into(), op2)],
         };
@@ -2774,6 +2787,100 @@ mod tests {
             got_empty_rejected,
             "empty SetPrompt must produce Rejected with 'empty' in reason"
         );
+    }
+
+    /// A blank session prompt must not dispatch: both-ready in DispatchReady
+    /// is refused (readies reset, reason logged) until a prompt is composed,
+    /// after which both-ready advances to PlanReview as normal.
+    #[tokio::test]
+    async fn dispatch_refused_while_prompt_empty() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+
+        let (server, _ws) = make_server_with_prompt(op1, op2, vec!["t1".into()], "");
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        drain_client(BufReader::new(cb_read)).await;
+
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
+
+        // Both seats mark ready against the blank prompt.
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+
+        // Refusal is observable: readies reset and the reason is logged,
+        // while the phase stays DispatchReady.
+        let refused = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.log.iter().any(|l| l.contains("prompt is empty"))
+            }),
+        )
+        .await
+        .expect("empty-prompt refusal logged");
+        assert!(
+            matches!(refused.phase, WirePhase::DispatchReady { .. }),
+            "phase must stay DispatchReady on blank prompt"
+        );
+        assert!(
+            refused.seats.iter().all(|seat| !seat.ready),
+            "both ready flags must reset on refusal"
+        );
+
+        // Compose a prompt, re-signal consent → dispatch proceeds.
+        write_json(
+            &mut ca_write,
+            &ClientMsg::SetPrompt {
+                prompt: "fix the thing".into(),
+            },
+        )
+        .await
+        .unwrap();
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("dispatch proceeds once a prompt exists");
     }
 
     // -----------------------------------------------------------------------

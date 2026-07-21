@@ -169,10 +169,10 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         SeedMode::Derived { secret_a, secret_b } => (derive_seed(secret_a), derive_seed(secret_b)),
     };
 
-    let (effective_repo, use_cwd) = if mem {
-        (None, false)
+    let effective_repo = if mem {
+        None
     } else if let Some(r) = repo.clone() {
-        (Some(r), false)
+        Some(r)
     } else {
         // Zero-config: use cwd. Validate it's a git repo.
         let cwd = std::env::current_dir()?;
@@ -181,7 +181,7 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
             .current_dir(&cwd)
             .output();
         match git_check {
-            Ok(out) if out.status.success() => (Some(cwd.to_string_lossy().into_owned()), true),
+            Ok(out) if out.status.success() => Some(cwd.to_string_lossy().into_owned()),
             _ => {
                 eprintln!(
                     "error: current directory is not a git repository.\n\
@@ -202,22 +202,10 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         }
     };
 
-    // Default prompt: "supervise agent tasks in <repo dir name>".
-    let effective_prompt = match prompt {
-        Some(p) => p,
-        None => {
-            if use_cwd || effective_repo.is_some() && !mem {
-                let dir_name = effective_repo
-                    .as_deref()
-                    .and_then(|p| std::path::Path::new(p).file_name())
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("project");
-                format!("supervise agent tasks in {dir_name}")
-            } else {
-                "kontur session".to_string()
-            }
-        }
-    };
+    // The prompt starts blank unless --prompt pre-seeds it: it is the
+    // operators' instruction, composed in-console at the dispatch gate.
+    // The server refuses dispatch while it is empty.
+    let effective_prompt = prompt.unwrap_or_default();
 
     // Derive operators from seeds.
     let op_a = Ed25519Signer::from_seed(seed_a).operator_id();
