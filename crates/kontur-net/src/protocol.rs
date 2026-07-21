@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Wire protocol version. Bump on any incompatible change to the message
 /// types below. A client that omits the field (pre-versioning build) is read
 /// as version 0, which mismatches any real version and is rejected cleanly.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// Serde default for `Hello.protocol` — pre-versioning clients deserialize to 0.
 fn protocol_v0() -> u32 {
@@ -63,6 +63,12 @@ pub enum ClientMsg {
     SetAfk {
         afk: bool,
     },
+    /// Host-only: approve or reject a pending BYO operator's key after checking
+    /// its fingerprint out-of-band. Only honoured from the host seat.
+    ResolveJoin {
+        operator: OperatorId,
+        approve: bool,
+    },
     /// Application-level keepalive. Sent periodically by the client; the server
     /// treats its arrival as liveness and replies `Pong`. Never gated.
     Ping,
@@ -113,6 +119,12 @@ pub enum ServerMsg {
     },
     /// Reply to a client `Ping`, so a client can detect a dead host too.
     Pong,
+    /// Sent to a BYO operator whose key the host has not yet approved. The
+    /// operator waits, showing their own fingerprint so it can be read out to
+    /// the host over a trusted channel for the fingerprint check.
+    AwaitingApproval {
+        fingerprint: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -241,6 +253,16 @@ pub struct WireState {
     /// after dispatch (during plan review and execution), not only while it
     /// is being composed at the dispatch gate.
     pub prompt: String,
+    /// A BYO operator awaiting the host's approval: (operator, fingerprint).
+    /// Shown to the host so they can verify the fingerprint and approve.
+    pub pending_join: Option<WirePendingJoin>,
+}
+
+/// A BYO operator's key awaiting host approval.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct WirePendingJoin {
+    pub operator: OperatorId,
+    pub fingerprint: String,
 }
 
 #[cfg(test)]

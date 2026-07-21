@@ -538,6 +538,7 @@ pub async fn run_remote(
         log: vec![],
         gate: None,
         prompt: String::new(),
+        pending_join: None,
     };
     let (state_tx, state_rx) = watch::channel(initial);
 
@@ -568,6 +569,10 @@ pub async fn run_remote(
                 // Keepalive reply: liveness only, nothing to render. Its arrival
                 // already kept the reader task's stream alive.
                 ServerMsg::Pong => {}
+                // BYO operator: the host is reviewing our key. The dedicated
+                // awaiting-approval screen is wired in the next part; for now
+                // this is inert (no live path reaches it yet).
+                ServerMsg::AwaitingApproval { .. } => {}
             }
         }
         // The reader task closed its side: the host is gone.
@@ -1367,6 +1372,7 @@ mod tests {
             log: vec![],
             gate: None,
             prompt: String::new(),
+            pending_join: None,
         }
     }
 

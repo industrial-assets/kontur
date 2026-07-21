@@ -11,8 +11,8 @@ use kontur_mcp::{GateHost, HostEvent};
 
 use crate::codec::{read_json, write_json};
 use crate::protocol::{
-    ClientMsg, ServerMsg, WireCmd, WireComment, WireFileDiff, WireFleetCard, WireGate, WirePhase,
-    WireQuestion, WireRole, WireSeat, WireState,
+    ClientMsg, ServerMsg, WireCmd, WireComment, WireFileDiff, WireFleetCard, WireGate,
+    WirePendingJoin, WirePhase, WireQuestion, WireRole, WireSeat, WireState,
 };
 
 /// How long the server waits for any client traffic before treating the peer
@@ -67,6 +67,14 @@ impl ScriptedAgent {
 // Internal state
 // ---------------------------------------------------------------------------
 
+/// Outcome of a host's decision on a pending BYO operator's key.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum JoinDecision {
+    Pending,
+    Approved(OperatorId),
+    Rejected(OperatorId),
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Phase {
     AwaitOperators,
@@ -114,6 +122,11 @@ struct Net {
     discuss: std::collections::HashMap<String, Vec<(usize, String)>>,
     /// Active clarification exchange, while the agent is awaiting answers.
     clarify: Option<crate::clarify::Clarify>,
+    /// BYO seat B: the operator key bound at approval (None until approved).
+    /// Only meaningful when seat B is configured as BYO (zero sentinel op).
+    seat_b_bound: Option<OperatorId>,
+    /// A BYO operator's key currently awaiting the host's approval.
+    pending_join: Option<OperatorId>,
 }
 
 struct Inner {
@@ -122,6 +135,8 @@ struct Inner {
     net: Mutex<Net>,
     state_tx: watch::Sender<WireState>,
     plan_tx: watch::Sender<bool>,
+    /// Resolves a pending BYO join once the host approves or rejects it.
+    join_tx: watch::Sender<JoinDecision>,
 }
 
 // ---------------------------------------------------------------------------
@@ -178,10 +193,12 @@ impl SessionServer {
             log: vec![],
             gate: None,
             prompt: String::new(),
+            pending_join: None,
         };
 
         let (state_tx, _) = watch::channel(initial_state);
         let (plan_tx, _) = watch::channel(false);
+        let (join_tx, _) = watch::channel(JoinDecision::Pending);
 
         let net = Net {
             phase: Phase::AwaitOperators,
@@ -197,6 +214,8 @@ impl SessionServer {
             claim: None,
             discuss: std::collections::HashMap::new(),
             clarify: None,
+            seat_b_bound: None,
+            pending_join: None,
         };
 
         let server = SessionServer {
@@ -206,6 +225,7 @@ impl SessionServer {
                 net: Mutex::new(net),
                 state_tx,
                 plan_tx,
+                join_tx,
             }),
         };
 
@@ -514,6 +534,115 @@ async fn writer_task<W: AsyncWrite + Unpin>(
 // Reader task
 // ---------------------------------------------------------------------------
 
+/// Resolve a BYO seat-B join: reconnect if already bound to this key, reject if
+/// bound to a different key, otherwise hold pending until the host approves the
+/// fingerprint. Returns `Some(1)` once seated, or `None` if rejected/closed.
+/// How long a BYO join may wait for host approval before the slot is freed —
+/// generous enough to read a fingerprint out-of-band, bounded so a pending
+/// operator that quietly disconnects cannot block seat B forever.
+const BYO_APPROVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+async fn resolve_byo_join(
+    server: &SessionServer,
+    operator: OperatorId,
+    conn_tx: &mpsc::Sender<ServerMsg>,
+) -> Option<usize> {
+    let mut rx = server.inner.join_tx.subscribe();
+    {
+        let mut net = server.inner.net.lock().await;
+        match net.seat_b_bound {
+            Some(bound) if bound == operator => return Some(1), // approved reconnect
+            Some(_) => {
+                drop(net);
+                let _ = conn_tx
+                    .send(ServerMsg::Rejected {
+                        reason: "seat B is already bound to a different key".into(),
+                    })
+                    .await;
+                return None;
+            }
+            None => {}
+        }
+        // Serialize admission: at most one *distinct* key awaits approval at a
+        // time. "First approval wins the seat" is then unambiguous — the host is
+        // never shown one fingerprint while a different key is parked behind it,
+        // so an approval cannot bind the wrong key.
+        if let Some(other) = net.pending_join {
+            if other != operator {
+                drop(net);
+                let _ = conn_tx
+                    .send(ServerMsg::Rejected {
+                        reason: "another operator is already awaiting approval — try again shortly"
+                            .into(),
+                    })
+                    .await;
+                return None;
+            }
+        }
+        net.pending_join = Some(operator);
+        push_log(
+            &mut net,
+            &format!(
+                "Operator B requests approval · fingerprint {}",
+                operator.fingerprint()
+            ),
+        );
+    }
+    server.refresh_locked().await;
+    let _ = conn_tx
+        .send(ServerMsg::AwaitingApproval {
+            fingerprint: operator.fingerprint(),
+        })
+        .await;
+
+    // Bounded wait for the host's decision about THIS key.
+    let outcome = tokio::time::timeout(BYO_APPROVAL_TIMEOUT, async {
+        loop {
+            match rx.borrow_and_update().clone() {
+                JoinDecision::Approved(op) if op == operator => return Some(true),
+                JoinDecision::Rejected(op) if op == operator => return Some(false),
+                _ => {}
+            }
+            if rx.changed().await.is_err() {
+                return None;
+            }
+        }
+    })
+    .await;
+
+    let mut net = server.inner.net.lock().await;
+    if net.pending_join == Some(operator) {
+        net.pending_join = None;
+    }
+    let result = match outcome {
+        // First approval wins the seat, re-checked under the lock.
+        Ok(Some(true)) => match net.seat_b_bound {
+            Some(bound) if bound == operator => Some(1),
+            Some(_) => None,
+            None => {
+                net.seat_b_bound = Some(operator);
+                Some(1)
+            }
+        },
+        _ => None,
+    };
+    drop(net);
+    server.refresh_locked().await;
+    if result.is_none() {
+        let reason = match outcome {
+            Ok(Some(false)) => "join rejected by host",
+            Ok(Some(true)) => "seat B is already bound to a different key",
+            _ => "approval timed out",
+        };
+        let _ = conn_tx
+            .send(ServerMsg::Rejected {
+                reason: reason.into(),
+            })
+            .await;
+    }
+    result
+}
+
 async fn reader_task<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(
     server: SessionServer,
     mut reader: R,
@@ -525,48 +654,12 @@ async fn reader_task<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(
         _ => return,
     };
 
-    let (seat_idx, operator) = match &hello {
+    let (operator, protocol, client_label) = match &hello {
         ClientMsg::Hello {
-            seat: client_label,
+            seat,
             operator,
             protocol,
-        } => {
-            // Version gate first: a build mismatch must fail here with a clear
-            // message, not later with an opaque deserialization error.
-            if *protocol != crate::protocol::PROTOCOL_VERSION {
-                let _ = conn_tx
-                    .send(ServerMsg::Rejected {
-                        reason: format!(
-                            "protocol mismatch — update kontur (server v{}, client v{})",
-                            crate::protocol::PROTOCOL_VERSION,
-                            protocol
-                        ),
-                    })
-                    .await;
-                return;
-            }
-            // Seat claim is keyed on OperatorId alone; the configured label
-            // for that seat is used everywhere (client-sent label is ignored
-            // beyond optional diagnostics).
-            let mut found = None;
-            let inner = &server.inner;
-            for (i, (_label, op)) in inner.cfg.seats.iter().enumerate() {
-                if op == operator {
-                    found = Some((i, *op));
-                    break;
-                }
-            }
-            if found.is_none() {
-                // Log the client-sent label for diagnostics only.
-                let _ = conn_tx
-                    .send(ServerMsg::Rejected {
-                        reason: format!("unknown operator (client seat: {client_label})"),
-                    })
-                    .await;
-                return;
-            }
-            found.unwrap()
-        }
+        } => (*operator, *protocol, seat.clone()),
         _ => {
             let _ = conn_tx
                 .send(ServerMsg::Rejected {
@@ -575,6 +668,52 @@ async fn reader_task<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(
                 .await;
             return;
         }
+    };
+
+    // Version gate first: a build mismatch must fail here with a clear
+    // message, not later with an opaque deserialization error.
+    if protocol != crate::protocol::PROTOCOL_VERSION {
+        let _ = conn_tx
+            .send(ServerMsg::Rejected {
+                reason: format!(
+                    "protocol mismatch — update kontur (server v{}, client v{})",
+                    crate::protocol::PROTOCOL_VERSION,
+                    protocol
+                ),
+            })
+            .await;
+        return;
+    }
+
+    // Seat claim is keyed on OperatorId. A key matching a configured seat is
+    // seated directly. An unmatched key is accepted only for a BYO seat B
+    // (configured with the zero sentinel), and only after the host approves it.
+    let direct = server
+        .inner
+        .cfg
+        .seats
+        .iter()
+        .position(|(_, op)| *op == operator);
+    let seat_idx = if let Some(i) = direct {
+        i
+    } else if server.inner.cfg.seats[1].1 == OperatorId([0u8; 32]) {
+        // BYO seat B (zero sentinel). NOTE (must close before BYO ships): host
+        // approval here gates *attachment*, not verdict acceptance. Before the
+        // binary ever sets this sentinel, gate acceptance must be constrained to
+        // the approved operator set (register the approved key with the GateHost
+        // and reject verdicts from keys outside it) — otherwise an approved
+        // fingerprint has no effect at the merge boundary.
+        match resolve_byo_join(&server, operator, &conn_tx).await {
+            Some(i) => i,
+            None => return,
+        }
+    } else {
+        let _ = conn_tx
+            .send(ServerMsg::Rejected {
+                reason: format!("unknown operator (client seat: {client_label})"),
+            })
+            .await;
+        return;
     };
 
     // Mark linked
@@ -989,6 +1128,28 @@ async fn handle_client_msg(
                 server.refresh_locked().await;
             }
         }
+        ClientMsg::ResolveJoin { operator, approve } => {
+            // Only the host seat may approve or reject a BYO join.
+            if seat_idx != 0 {
+                return;
+            }
+            server.inner.join_tx.send_replace(if approve {
+                JoinDecision::Approved(operator)
+            } else {
+                JoinDecision::Rejected(operator)
+            });
+            let mut net = server.inner.net.lock().await;
+            push_log(
+                &mut net,
+                &format!(
+                    "host {} Operator B ({})",
+                    if approve { "approved" } else { "rejected" },
+                    operator.fingerprint()
+                ),
+            );
+            drop(net);
+            server.refresh_locked().await;
+        }
         ClientMsg::SetAfk { afk } => {
             let mut net = server.inner.net.lock().await;
             if net.seats[seat_idx].afk != afk {
@@ -1324,6 +1485,7 @@ impl SessionServer {
         let prompt_snapshot = net.prompt.clone();
         let claim_snapshot = net.claim.clone();
         let discuss_snapshot = net.discuss.clone();
+        let pending_join_snapshot = net.pending_join;
         let seat_labels = [net.seats[0].label.clone(), net.seats[1].label.clone()];
 
         drop(net);
@@ -1397,6 +1559,10 @@ impl SessionServer {
             log,
             gate,
             prompt: prompt_snapshot,
+            pending_join: pending_join_snapshot.map(|operator| WirePendingJoin {
+                operator,
+                fingerprint: operator.fingerprint(),
+            }),
         }
     }
 }
@@ -1544,6 +1710,277 @@ mod tests {
         };
         let server = SessionServer::new(host, cfg);
         (server, ws)
+    }
+
+    /// A server in BYO mode: seat B's configured operator is the zero
+    /// sentinel, so an unknown key must be host-approved to seat.
+    fn make_byo_server(op_host: OperatorId) -> (SessionServer, Arc<InMemoryWorkspace>) {
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let ctx = SessionContext::new("byo", op_host, "agent-01", "claude", "1.0", vec![op_host]);
+        let host = Arc::new(GateHost::new(ctx, ws.clone()));
+        let cfg = SessionConfig {
+            prompt: "byo".into(),
+            plan: vec!["t1".into()],
+            seats: [
+                ("Operator A [Host]".into(), op_host),
+                ("Operator B".into(), OperatorId([0u8; 32])),
+            ],
+        };
+        (SessionServer::new(host, cfg), ws)
+    }
+
+    /// BYO join: an unknown key is held pending (fingerprint surfaced to the
+    /// host), and the host's approval seats it; a reconnect skips re-approval.
+    #[tokio::test]
+    async fn byo_join_pends_then_host_approval_seats() {
+        let op_host = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let byo = Ed25519Signer::from_seed([9; 32]).operator_id();
+        let (server, _ws) = make_byo_server(op_host);
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        let mut cb_reader = BufReader::new(cb_read);
+
+        // Host connects normally.
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op_host,
+                protocol: crate::protocol::PROTOCOL_VERSION,
+            },
+        )
+        .await
+        .unwrap();
+
+        // BYO operator connects with its OWN (unknown) key.
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: byo,
+                protocol: crate::protocol::PROTOCOL_VERSION,
+            },
+        )
+        .await
+        .unwrap();
+
+        // The operator receives AwaitingApproval with its fingerprint.
+        let mut got_awaiting = false;
+        for _ in 0..8 {
+            match read_json::<_, ServerMsg>(&mut cb_reader).await.unwrap() {
+                Some(ServerMsg::AwaitingApproval { fingerprint }) => {
+                    assert_eq!(fingerprint, byo.fingerprint());
+                    got_awaiting = true;
+                    break;
+                }
+                Some(_) => continue,
+                None => break,
+            }
+        }
+        assert!(got_awaiting, "operator must be told it awaits approval");
+
+        // The host sees the pending join on the wire, and B is NOT yet linked.
+        let pend = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.pending_join.is_some()),
+        )
+        .await
+        .expect("pending join surfaced");
+        assert_eq!(pend.pending_join.as_ref().unwrap().operator, byo);
+        assert!(!pend.seats.get(1).map(|x| x.linked).unwrap_or(false));
+
+        // Host approves.
+        write_json(
+            &mut ca_write,
+            &ClientMsg::ResolveJoin {
+                operator: byo,
+                approve: true,
+            },
+        )
+        .await
+        .unwrap();
+
+        // B links, pending clears, and both linked → DispatchReady.
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.pending_join.is_none()
+                    && s.seats.get(1).map(|x| x.linked).unwrap_or(false)
+                    && matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("approved BYO operator seats and dispatch opens");
+    }
+
+    /// Admission is serialized: while one BYO key awaits approval, a second
+    /// distinct key is rejected (so an approval can never bind the wrong key).
+    #[tokio::test]
+    async fn byo_second_pending_key_is_rejected() {
+        let op_host = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let byo_x = Ed25519Signer::from_seed([9; 32]).operator_id();
+        let byo_y = Ed25519Signer::from_seed([8; 32]).operator_id();
+        let (server, _ws) = make_byo_server(op_host);
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_x, server_x) = tokio::io::duplex(65536);
+        let (client_y, server_y) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_x).await;
+        server.attach(server_y).await;
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cx_read, mut cx_write) = tokio::io::split(client_x);
+        let (cy_read, mut cy_write) = tokio::io::split(client_y);
+        drain_client(BufReader::new(ca_read)).await;
+        drain_client(BufReader::new(cx_read)).await;
+        let mut cy_reader = BufReader::new(cy_read);
+
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op_host,
+                protocol: crate::protocol::PROTOCOL_VERSION,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cx_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: byo_x,
+                protocol: crate::protocol::PROTOCOL_VERSION,
+            },
+        )
+        .await
+        .unwrap();
+
+        // X becomes the pending join.
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.pending_join
+                    .as_ref()
+                    .map(|p| p.operator == byo_x)
+                    .unwrap_or(false)
+            }),
+        )
+        .await
+        .expect("X pending");
+
+        // Y arrives while X is pending → Y is rejected, X stays pending.
+        write_json(
+            &mut cy_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: byo_y,
+                protocol: crate::protocol::PROTOCOL_VERSION,
+            },
+        )
+        .await
+        .unwrap();
+        let mut y_rejected = false;
+        for _ in 0..12 {
+            match read_json::<_, ServerMsg>(&mut cy_reader).await.unwrap() {
+                Some(ServerMsg::Rejected { reason }) => {
+                    assert!(
+                        reason.contains("already awaiting approval"),
+                        "got: {reason}"
+                    );
+                    y_rejected = true;
+                    break;
+                }
+                Some(_) => continue,
+                None => break,
+            }
+        }
+        assert!(y_rejected, "second distinct pending key must be rejected");
+        // X is still the (only) pending join.
+        let s = state_rx.borrow().clone();
+        assert_eq!(s.pending_join.as_ref().unwrap().operator, byo_x);
+    }
+
+    /// A rejected BYO key is closed, not seated.
+    #[tokio::test]
+    async fn byo_join_rejected_is_closed() {
+        let op_host = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let byo = Ed25519Signer::from_seed([9; 32]).operator_id();
+        let (server, _ws) = make_byo_server(op_host);
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        let mut cb_reader = BufReader::new(cb_read);
+
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op_host,
+                protocol: crate::protocol::PROTOCOL_VERSION,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: byo,
+                protocol: crate::protocol::PROTOCOL_VERSION,
+            },
+        )
+        .await
+        .unwrap();
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.pending_join.is_some()),
+        )
+        .await
+        .expect("pending");
+
+        write_json(
+            &mut ca_write,
+            &ClientMsg::ResolveJoin {
+                operator: byo,
+                approve: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Operator receives a Rejected and B never links.
+        let mut got_reject = false;
+        for _ in 0..12 {
+            match read_json::<_, ServerMsg>(&mut cb_reader).await.unwrap() {
+                Some(ServerMsg::Rejected { reason }) => {
+                    assert!(reason.contains("rejected"), "got: {reason}");
+                    got_reject = true;
+                    break;
+                }
+                Some(_) => continue,
+                None => break,
+            }
+        }
+        assert!(got_reject, "rejected operator must be told");
+        let s = state_rx.borrow().clone();
+        assert!(s.pending_join.is_none());
+        assert!(!s.seats.get(1).map(|x| x.linked).unwrap_or(false));
     }
 
     /// Wait until the watch receiver's current-or-next state satisfies the predicate.

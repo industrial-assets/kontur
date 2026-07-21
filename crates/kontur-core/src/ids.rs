@@ -5,6 +5,20 @@ use serde_big_array::BigArray;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct OperatorId(pub [u8; 32]);
 
+impl OperatorId {
+    /// A short, human-verifiable fingerprint of the key: the first 8 bytes of
+    /// its SHA-256, hex, colon-grouped (e.g. `a1:b2:c3:d4:e5:f6:07:18`). Read
+    /// aloud over a trusted channel to confirm a BYO operator's identity.
+    pub fn fingerprint(&self) -> String {
+        let h = crate::canonical::sha256(&self.0);
+        h.0[..8]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(":")
+    }
+}
+
 /// Identifier for a gate (one per gated action).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct GateId(pub String);
