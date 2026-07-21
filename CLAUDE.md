@@ -149,4 +149,8 @@ cargo run -p kontur-tui --bin kontur -- join --addr 127.0.0.1:7777 --seed 2
 
 - **No embedded video, no in-app comms** — operators use their existing chat (e.g. Slack) out-of-band.
 - **No rich GUI / IDE** — text TUI only.
-- **No centralised SaaS** running agents on someone else's machine — code stays where the team already trusts it.
+- **No centralised SaaS** running agents on someone else's machine — code stays where the team already trusts it. (No relay/hole-punching either; cross-network pairing goes over a mesh VPN — Tailscale/WireGuard — using the LAN-style invite.)
+
+## Platform scope
+
+Developed/tested on macOS and Linux. Windows is untested (path handling and the `$EDITOR` hand-edit unvalidated) — treat a Windows host as unsupported until a compatibility pass lands. No external-tool dependencies (`nc` replaced by the built-in `kontur mcp-bridge`).
