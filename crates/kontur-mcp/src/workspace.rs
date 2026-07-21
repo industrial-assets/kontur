@@ -47,6 +47,12 @@ pub trait Workspace: Send + Sync {
     /// Returns `Ok(None)` when the path does not exist (new file that the agent
     /// has not yet written, or a path outside the task's writes).
     fn read_file(&self, task_id: &TaskId, path: &str) -> Result<Option<Vec<u8>>, WorkspaceError>;
+    /// Where session audit chains should be persisted, if this workspace has a
+    /// durable home for them (`<repo>/.kontur` for git workspaces). `None`
+    /// (the default) means the chain is not written to disk.
+    fn audit_dir(&self) -> Option<std::path::PathBuf> {
+        None
+    }
 }
 
 /// The single source of a diff's hash — used at open, sign, and record time so

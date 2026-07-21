@@ -638,6 +638,38 @@ impl GateHost {
         self.state.lock().await.chain.records().len()
     }
 
+    /// The chain head hash (GENESIS when no gate has resolved).
+    pub async fn audit_head(&self) -> kontur_core::Hash {
+        self.state.lock().await.chain.head()
+    }
+
+    /// Persist the audit chain to the workspace's audit dir as JSON.
+    ///
+    /// Returns `None` when the workspace has no durable home (in-memory
+    /// sessions) or the chain is empty; otherwise the write result. The file
+    /// is named after the chain head, so it is content-addressed and a
+    /// re-write of the same chain is idempotent.
+    pub async fn persist_audit(&self) -> Option<std::io::Result<std::path::PathBuf>> {
+        let dir = self.workspace.audit_dir()?;
+        let (records, head) = {
+            let st = self.state.lock().await;
+            (st.chain.records().to_vec(), st.chain.head())
+        };
+        if records.is_empty() {
+            return None;
+        }
+        let head_hex: String = head.0[..8].iter().map(|b| format!("{b:02x}")).collect();
+        let path = dir.join(format!("audit-{head_hex}.json"));
+        let result = (|| {
+            std::fs::create_dir_all(&dir)?;
+            let json = serde_json::to_vec_pretty(&records)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            std::fs::write(&path, json)?;
+            Ok(path)
+        })();
+        Some(result)
+    }
+
     /// Read the current on-disk contents of a file in the task's worktree.
     /// Returns `Ok(None)` when the path does not exist (new file).
     /// Refused when the session has been abandoned — same guard as other
@@ -715,6 +747,136 @@ mod tests {
 
     fn ctx(ops: Vec<OperatorId>) -> SessionContext {
         SessionContext::new("do the thing", ops[0], "agent-01", "claude", "1.0", ops)
+    }
+
+    /// Test double: an in-memory workspace that claims a durable audit home.
+    struct AuditableWs {
+        inner: InMemoryWorkspace,
+        dir: std::path::PathBuf,
+    }
+
+    impl Workspace for AuditableWs {
+        fn apply_write(
+            &self,
+            t: &TaskId,
+            p: &str,
+            c: &[u8],
+        ) -> Result<(), crate::error::WorkspaceError> {
+            self.inner.apply_write(t, p, c)
+        }
+        fn run_command(
+            &self,
+            t: &TaskId,
+            c: &str,
+            w: &str,
+        ) -> Result<CommandOutput, crate::error::WorkspaceError> {
+            self.inner.run_command(t, c, w)
+        }
+        fn freeze_task_diff(
+            &self,
+            t: &TaskId,
+        ) -> Result<crate::workspace::FrozenDiff, crate::error::WorkspaceError> {
+            self.inner.freeze_task_diff(t)
+        }
+        fn accept_task(&self, t: &TaskId) -> Result<(), crate::error::WorkspaceError> {
+            self.inner.accept_task(t)
+        }
+        fn discard_task(&self, t: &TaskId) -> Result<(), crate::error::WorkspaceError> {
+            self.inner.discard_task(t)
+        }
+        fn merge_session(&self, m: &str) -> Result<(), crate::error::WorkspaceError> {
+            self.inner.merge_session(m)
+        }
+        fn read_file(
+            &self,
+            t: &TaskId,
+            p: &str,
+        ) -> Result<Option<Vec<u8>>, crate::error::WorkspaceError> {
+            self.inner.read_file(t, p)
+        }
+        fn audit_dir(&self) -> Option<std::path::PathBuf> {
+            Some(self.dir.clone())
+        }
+    }
+
+    /// persist_audit: a resolved gate round-trips through the JSON file and
+    /// the reloaded chain verifies; the filename is content-addressed by the
+    /// chain head. In-memory workspaces (no audit_dir) persist nothing.
+    #[tokio::test]
+    async fn persist_audit_roundtrip_and_verify() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("kontur-audit-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let ws = Arc::new(AuditableWs {
+            inner: InMemoryWorkspace::new(),
+            dir: dir.clone(),
+        });
+        let context = ctx(vec![op1, op2]);
+        let host = GateHost::new(context.clone(), ws.clone());
+
+        // Empty chain → nothing to persist.
+        assert!(host.persist_audit().await.is_none());
+
+        // Resolve one gate with two goes.
+        let task = TaskId("t1".into());
+        ws.apply_write(&task, "a.rs", b"x\n").unwrap();
+        let frozen = ws.freeze_task_diff(&task).unwrap();
+        let dh = diff_hash(&frozen);
+        let prov = build_provenance(&context, &task, dh, &frozen, 100);
+        let (gid, _rx) = host.open_gate(task, prov).await;
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
+        host.submit_verdict(&gid, go_verdict(2, &gid, dh))
+            .await
+            .unwrap();
+
+        let path = host
+            .persist_audit()
+            .await
+            .expect("workspace has an audit dir")
+            .expect("write succeeds");
+        let head = host.audit_head().await;
+        let head_hex: String = head.0[..8].iter().map(|b| format!("{b:02x}")).collect();
+        assert!(
+            path.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains(&head_hex),
+            "filename must be content-addressed by the chain head"
+        );
+
+        let bytes = std::fs::read(&path).unwrap();
+        let records: Vec<kontur_core::GateRecord> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(records.len(), 1);
+        kontur_core::verify_chain(&records).expect("reloaded chain must verify");
+        // Tamper-evidence survives the round-trip: flip a byte, break the chain.
+        let mut tampered = records.clone();
+        tampered[0].core.provenance.loc += 1;
+        assert!(kontur_core::verify_chain(&tampered).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// In-memory workspace has no audit home: persist is a clean no-op.
+    #[tokio::test]
+    async fn persist_audit_none_for_memory_workspace() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let context = ctx(vec![op1, op2]);
+        let host = GateHost::new(context.clone(), ws.clone());
+        let (gid, dh) = open_a_gate(&host, &ws, &context).await;
+        host.submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
+        host.submit_verdict(&gid, go_verdict(2, &gid, dh))
+            .await
+            .unwrap();
+        assert!(host.persist_audit().await.is_none());
     }
 
     fn go_verdict(seed: u8, gate_id: &GateId, dh: Hash) -> CastVerdict {

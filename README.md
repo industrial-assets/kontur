@@ -28,7 +28,7 @@ Pair programming assumed a driver at the keyboard and a navigator watching the c
 - **Plan first.** The agent proposes its task list of bounded, single-concern changes and is blocked until both seats approve it — the plan gate is enforced, not advisory. Either seat can select (`j`/`k`), edit (`e`), delete (`d`), or reorder (`<`/`>`) tasks; any edit resets both ready flags. The approved list is returned to the agent verbatim; steer-first approach preferred — `[r]` routes a revision prompt to the agent.
 - **One task at a time.** Agents work sequentially; each finished change parks at a gate.
 - **Two keys, independent.** On high-risk gates the first verdict is sealed until the second is cast — no anchoring, no rubber-stamp. A no-go must carry its fix. A hand-edit applies instantly for emergencies but still needs both keys before it merges.
-- **Merge with a trail.** The approved set lands as one reviewed commit carrying `Reviewed-by` trailers and a link to a hash-chained audit record.
+- **Merge with a trail.** The approved set lands as one reviewed commit carrying `Reviewed-by` trailers and an `Audit-chain:` trailer naming the chain head; the signed, hash-chained gate records are written to `.kontur/audit-<head>.json` in the repo at session close (merged or abandoned) and verify offline with `kontur audit <file>`.
 
 ## The console
 
