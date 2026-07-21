@@ -332,9 +332,9 @@ Terse, operational, lower-case for machine chatter, plain English for anything f
 
 ## 9. Open UX questions
 
-1. **Diff review surface.** Where and how the full diff renders for review — inline expand under the gate, a dedicated pane, or handoff to the operator's pager/editor. (The gate shows the summary; the deep read is TBD.)
+1. ~~Diff review surface.~~ **Resolved (21 Jul 2026): a dedicated right pane.** The active gate's full diff renders permanently in the right pane, split per file with `[tab]` cycling and `[j]`/`[k]` scroll; `[e]` hands a file to `$EDITOR` for a hand-edit. Verdicts are cast on that surface.
 2. ~~Availability policy default & escalation UX.~~ **Resolved (21 Jul 2026): park always, no third signatory.** A stalled gate waits indefinitely for its second key; disagreement is for the two operators to resolve (discuss, then no-go+remedy), never escalated to a third human.
 3. **Blind vs live sign-off by tier.** Which risk tiers seal the first verdict and which reveal live — and how the operator knows which mode a gate is in.
-4. **Dispatch-gate depth.** The prompt-review interaction is sketched (§6.2) but the "ready" bar and how the reviewing seat's suggestions are tracked need their own pass (mirrors PRD open question #3).
+4. ~~Dispatch-gate depth.~~ **Largely resolved (21 Jul 2026):** the prompt is co-composed in-console with live keystroke draft sync (both seats see typing); the "ready" bar is both seats marking ready against a non-empty prompt, and any edit resets both marks. A richer suggestion-tracking model remains possible future work.
 5. **Fleet scale.** Layout behaviour when the fleet is larger than the panels comfortably fit — scroll, collapse-calm-agents, or a density mode.
 6. **Onboarding.** First-run experience for operators who haven't used a TUI of this density.
