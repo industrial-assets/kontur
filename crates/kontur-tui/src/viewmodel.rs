@@ -92,6 +92,7 @@ fn gate_card(gv: &GateView, stations: &[Station; 2], file_diffs: Vec<FileDiffVie
         // viewmodel path has no wire cap, so truncation is not applicable.
         diff_truncated: false,
         last_cmd: None,
+        claimed_by: None,
     }
 }
 

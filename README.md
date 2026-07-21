@@ -79,7 +79,7 @@ kontur host --mem --prompt "initial text (editable in-console)"
 kontur join --addr host:7777 --seed 2
 ```
 
-**Console keys:** `?` help · `y` ready · `p` edit prompt · `j`/`k` scroll diff · `↑`/`↓` scroll log · `tab` select file · `g` go (2× if truncated) · `r` no-go+steer · `e` edit file · `l` invite LAN/WAN · `K` abandon (confirm) · `q` quit.  Press `?` any time for a phase-aware keymap.
+**Console keys:** `?` help · `y` ready · `p` edit prompt · `j`/`k` scroll diff · `↑`/`↓` scroll log · `tab` select file · `c` claim gate · `g` go (2× if truncated) · `r` no-go+steer · `e` edit file · `l` invite LAN/WAN · `K` abandon (confirm) · `q` quit.  Press `?` any time for a phase-aware keymap.
 
 Invite codes carry the secret the operator's key is derived from — send privately; operator-supplied keys with host-side approval are future work.
 

@@ -85,6 +85,8 @@ pub struct GateCard {
     pub diff_truncated: bool,
     /// The task's most recent command and exit code, shown on the verdict bar.
     pub last_cmd: Option<(String, i32)>,
+    /// Seat label of the operator reviewing this gate (soft presence), if any.
+    pub claimed_by: Option<String>,
 }
 
 /// One file's diff section at a gate.

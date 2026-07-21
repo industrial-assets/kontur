@@ -52,6 +52,8 @@ pub enum Action {
     PlanMoveDown,
     /// Begin composing a plan steer (PlanReview phase only).
     PlanSteerBegin,
+    /// Toggle a soft presence claim on the active gate.
+    ClaimGate,
     /// Scroll the activity log back one line (↑).
     LogUp,
     /// Scroll the activity log toward the tail one line (↓).
@@ -106,6 +108,7 @@ pub fn map_key(
         KeyCode::Char('r') => Action::NoGoBegin,
         KeyCode::Char('e') => Action::HandEdit,
         KeyCode::Char('d') => Action::Discuss,
+        KeyCode::Char('c') => Action::ClaimGate,
         KeyCode::Char('l') => Action::ToggleLink,
         KeyCode::Tab => Action::CycleFile,
         KeyCode::Char('y') => Action::Ready,

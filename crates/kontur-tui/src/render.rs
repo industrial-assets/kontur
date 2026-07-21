@@ -89,7 +89,7 @@ pub fn help_lines(active: &ActiveRegion, host_unlinked: bool) -> Vec<String> {
         ActiveRegion::Gate(_) => {
             out.push("MERGE GATE".into());
             out.push("  g    go            r   no-go + steer".into());
-            out.push("  e    hand-edit a file".into());
+            out.push("  e    hand-edit a file  c   claim gate".into());
             out.push("  j/k  scroll diff   tab cycle file".into());
         }
         _ => {}
@@ -399,9 +399,13 @@ fn render_files_bar(
         })
         .collect::<Vec<_>>()
         .join("  ");
+    let claim = match &card.claimed_by {
+        Some(who) => format!(" · ▸ {who} reviewing"),
+        None => String::new(),
+    };
     let lines = vec![
-        Line::from(format!(" {} · +{} loc", files_str, card.loc)),
-        Line::from(" [tab] select · [e] edit"),
+        Line::from(format!(" {} · +{} loc{}", files_str, card.loc, claim)),
+        Line::from(" [tab] select · [e] edit · [c] claim"),
     ];
     frame.render_widget(
         Paragraph::new(lines).block(Block::bordered().title(format!("FILES — {}", card.gate_id))),
@@ -900,6 +904,7 @@ mod tests {
             }],
             diff_truncated: false,
             last_cmd: None,
+            claimed_by: None,
         };
         let rendered = draw(&minimal_view(ActiveRegion::Gate(card)));
         // Left LOG title visible simultaneously with right DIFF title.
@@ -945,6 +950,7 @@ mod tests {
             file_diffs: vec![],
             diff_truncated: false,
             last_cmd: None,
+            claimed_by: None,
         };
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -979,6 +985,7 @@ mod tests {
             }],
             diff_truncated: true,
             last_cmd: None,
+            claimed_by: None,
         };
         let rendered = draw(&minimal_view(ActiveRegion::Gate(card)));
         assert!(

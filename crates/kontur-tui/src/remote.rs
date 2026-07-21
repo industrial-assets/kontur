@@ -382,6 +382,7 @@ fn wire_gate_to_card(wg: &WireGate, stations: &[Station; 2]) -> GateCard {
             .last_cmd
             .as_ref()
             .map(|c| (c.command.clone(), c.exit_code)),
+        claimed_by: wg.claimed_by.clone(),
     }
 }
 
@@ -716,6 +717,13 @@ pub async fn run_remote(
             }
 
             // Abandon → request confirmation.
+            // Toggle a soft presence claim on the active gate.
+            Some(Action::ClaimGate) => {
+                if let Some(wg) = &state.gate {
+                    let _ = client.claim(&wg.gate_id).await;
+                }
+            }
+
             Some(Action::AbandonBegin) => {
                 compose = ComposeTarget::ConfirmAbandon;
                 compose_buf.clear();
@@ -1157,6 +1165,7 @@ mod tests {
             }],
             diff_truncated: false,
             last_cmd: None,
+            claimed_by: None,
         }
     }
 

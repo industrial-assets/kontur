@@ -187,6 +187,13 @@ impl SessionClient {
         .await
     }
 
+    pub async fn claim(&self, gate_id: &kontur_core::GateId) -> io::Result<()> {
+        self.send(ClientMsg::Claim {
+            gate_id: gate_id.clone(),
+        })
+        .await
+    }
+
     pub async fn abandon(&self) -> io::Result<()> {
         self.send(ClientMsg::Abandon).await
     }

@@ -82,7 +82,7 @@ Co-op Supervisor reintroduces the pair, one layer up. Instead of two people at o
 ### Multiplayer session & presence
 - **FR-1** Two operators attach to one shared session (authoritative fleet + state live in one place; operators are thin clients).
 - **FR-2** Live presence: each operator can see what the other is viewing/claiming (e.g. "Alice reviewing task 4").
-- **FR-3** A shared review/"needs-you" queue either operator can pull from, with **claiming** to prevent redundant double-supervision.
+- **FR-3** A shared review/"needs-you" queue either operator can pull from, with **claiming** to prevent redundant double-supervision. *(gate claiming implemented 2026-07-21: `[c]` toggles a soft presence claim on the active gate — "reviewing" shown to the other seat, released on toggle/gate-resolution/disconnect; presence only, never affects verdict eligibility. A shared multi-item queue awaits multi-agent fleets.)*
 
 ### Prompt co-construction (dispatch gate)
 - **FR-4** Collaborative prompt editing; default driver-types / navigator-suggests, with optional simultaneous two-cursor editing (opt-in, per session). *(simplified in-console prompt entry with edit-resets-consent implemented 2026-07-20; live draft sync implemented 2026-07-21 — each keystroke streams to both seats via `PromptDraft`, resets both ready flags, and is unlogged until the commit; Esc restores the pre-edit text; simultaneous drafts are last-write-wins. Two-cursor co-editing still future work)*

@@ -105,6 +105,9 @@ struct Net {
     prompt: String,
     /// Most recent command + exit code per task id, for the gate card.
     last_cmd: std::collections::HashMap<String, WireCmd>,
+    /// Soft presence claim on the active gate: (gate_id, seat_idx). Cleared
+    /// when the gate resolves (id no longer matches) or the claimer drops.
+    claim: Option<(String, usize)>,
 }
 
 struct Inner {
@@ -181,6 +184,7 @@ impl SessionServer {
             agent_plan: None,
             prompt: cfg.prompt.clone(),
             last_cmd: std::collections::HashMap::new(),
+            claim: None,
         };
 
         let server = SessionServer {
@@ -575,6 +579,10 @@ async fn reader_task<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(
     {
         let mut net = server.inner.net.lock().await;
         net.seats[seat_idx].linked = false;
+        // Drop this seat's claim so a stale "reviewing" marker doesn't linger.
+        if matches!(&net.claim, Some((_, idx)) if *idx == seat_idx) {
+            net.claim = None;
+        }
         let label = net.seats[seat_idx].label.clone();
         push_log(&mut net, &format!("{label} disconnected · gates park"));
     }
@@ -879,6 +887,21 @@ async fn handle_client_msg(
                 }
             }
         }
+        ClientMsg::Claim { gate_id } => {
+            let mut net = server.inner.net.lock().await;
+            // Toggle: same seat releases; otherwise this seat takes it.
+            net.claim = match &net.claim {
+                Some((gid, idx)) if gid == &gate_id.0 && *idx == seat_idx => None,
+                _ => Some((gate_id.0.clone(), seat_idx)),
+            };
+            let label = net.seats[seat_idx].label.clone();
+            match &net.claim {
+                Some(_) => push_log(&mut net, &format!("{label} is reviewing {}", gate_id.0)),
+                None => push_log(&mut net, &format!("{label} released {}", gate_id.0)),
+            }
+            drop(net);
+            server.refresh_locked().await;
+        }
         ClientMsg::Ping => {
             // Liveness only: arrival already reset the read timeout; reply so a
             // client can detect a dead host in turn. Never touches gate state.
@@ -1181,6 +1204,8 @@ impl SessionServer {
         let log: Vec<String> = net.log.iter().cloned().collect();
         let last_cmds = net.last_cmd.clone();
         let prompt_snapshot = net.prompt.clone();
+        let claim_snapshot = net.claim.clone();
+        let seat_labels = [net.seats[0].label.clone(), net.seats[1].label.clone()];
 
         drop(net);
 
@@ -1225,6 +1250,9 @@ impl SessionServer {
                     file_diffs,
                     diff_truncated,
                     last_cmd: last_cmds.get(&gv.task_id.0).cloned(),
+                    claimed_by: claim_snapshot.as_ref().and_then(|(gid, idx)| {
+                        (gid == &gv.gate_id.0).then(|| seat_labels[*idx].clone())
+                    }),
                 })
             } else {
                 None
@@ -3031,6 +3059,112 @@ mod tests {
             got_empty_rejected,
             "empty SetPrompt must produce Rejected with 'empty' in reason"
         );
+    }
+
+    /// A [c] claim marks the active gate with the claimer's label on the wire,
+    /// and a second claim from the same seat releases it.
+    #[tokio::test]
+    async fn claim_marks_gate_and_toggles_off() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let (server, _ws) = make_server(op1, op2, vec!["guard.rs".into()]);
+        let mut state_rx = server.state_rx();
+
+        let agent = ScriptedAgent {
+            tasks: vec![ScriptedTask {
+                id: "t1".into(),
+                path: "src/guard.rs".into(),
+                contents: "// guard\n".into(),
+            }],
+        };
+        tokio::spawn(crate::agent::run_agent(agent, server.clone()));
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        drain_client(BufReader::new(cb_read)).await;
+
+        for (w, seat, op) in [(&mut ca_write, "A", op1), (&mut cb_write, "B", op2)] {
+            write_json(
+                w,
+                &ClientMsg::Hello {
+                    seat: seat.into(),
+                    operator: op,
+                    protocol: crate::protocol::PROTOCOL_VERSION,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        // Dispatch through to the gate.
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("PlanReview");
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+
+        let gate = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.gate.is_some()),
+        )
+        .await
+        .expect("gate opened");
+        let gid = gate.gate.unwrap().gate_id;
+
+        // A claims → wire shows A's label.
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Claim {
+                gate_id: gid.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        let claimed = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.gate.as_ref().and_then(|g| g.claimed_by.as_deref()) == Some("A")
+            }),
+        )
+        .await
+        .expect("A's claim visible");
+        assert_eq!(claimed.gate.unwrap().claimed_by.as_deref(), Some("A"));
+
+        // A claims again → released.
+        write_json(&mut ca_write, &ClientMsg::Claim { gate_id: gid })
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                s.gate
+                    .as_ref()
+                    .map(|g| g.claimed_by.is_none())
+                    .unwrap_or(false)
+            }),
+        )
+        .await
+        .expect("claim released on second press");
     }
 
     /// A client on a different protocol version is rejected at Hello with a

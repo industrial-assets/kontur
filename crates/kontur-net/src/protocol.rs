@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Wire protocol version. Bump on any incompatible change to the message
 /// types below. A client that omits the field (pre-versioning build) is read
 /// as version 0, which mismatches any real version and is rejected cleanly.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Serde default for `Hello.protocol` — pre-versioning clients deserialize to 0.
 fn protocol_v0() -> u32 {
@@ -40,6 +40,12 @@ pub enum ClientMsg {
     },
     Abandon,
     Bye,
+    /// Toggle a soft presence claim on a gate: "I'm reviewing this one".
+    /// Sets the claim to this seat, or clears it if this seat already holds it.
+    /// Presence only — never affects verdict eligibility or the four-eyes hold.
+    Claim {
+        gate_id: GateId,
+    },
     /// Application-level keepalive. Sent periodically by the client; the server
     /// treats its arrival as liveness and replies `Pong`. Never gated.
     Ping,
@@ -149,6 +155,9 @@ pub struct WireGate {
     /// The task's most recent command and its exit code — the closest thing
     /// to a test result the review surface can show truthfully.
     pub last_cmd: Option<WireCmd>,
+    /// Seat label of the operator currently reviewing this gate, if claimed.
+    /// A soft presence signal (PRD FR-3), not a lock.
+    pub claimed_by: Option<String>,
 }
 
 /// A completed command and its outcome.
