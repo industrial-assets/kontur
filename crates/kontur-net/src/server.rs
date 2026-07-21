@@ -566,6 +566,11 @@ async fn handle_client_msg(
                         let plan_tx = server.inner.plan_tx.clone();
                         let host = server.inner.host.clone();
                         drop(net);
+                        // Authoritative re-push — the agent must receive exactly the
+                        // list the wire gated on. EditPlan's own set_plan is advisory/
+                        // display-path only; this both-ready arm is the single sync point
+                        // that guarantees the stored plan matches what both seats approved.
+                        host.set_plan(effective_plan).await;
                         // Approve the real-agent's propose_plan (releases the parked
                         // MCP call). A no-op when no real agent has called propose_plan.
                         host.approve_plan().await;
@@ -790,8 +795,13 @@ async fn handle_client_msg(
             net.seats[1].ready = false;
             push_log(&mut net, &format!("{label} edited the plan ({n} tasks)"));
             drop(net);
-            // Update the host's stored plan so propose_plan returns the edited list.
-            server.inner.host.set_plan(tasks).await;
+            // NOTE: set_plan is intentionally NOT called here. The authoritative
+            // sync point is the Phase::PlanReview both-ready arm, which calls
+            // set_plan(effective_plan) immediately before approve_plan(). That
+            // guarantees the agent receives exactly the list both seats signed —
+            // no race between this advisory update and the approval path.
+            // The wire update (net.agent_plan) and ready-flag reset above are
+            // the only effects EditPlan needs.
             server.refresh_locked().await;
         }
         ClientMsg::SteerPlan { steer } => {
@@ -2669,5 +2679,219 @@ mod tests {
         // The steer was routed to the host: proposed_plan is unchanged (steer does
         // not overwrite the stored plan), but the decision channel is Steered.
         assert!(server.inner.host.proposed_plan().await.is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // Consent-integrity regression tests (fix: both-ready arm is the single
+    // sync point for set_plan; EditPlan's set_plan was removed).
+    // -----------------------------------------------------------------------
+
+    /// loopback: propose via host, EditPlan to a modified list, both ready →
+    /// host.proposed_plan() equals the EDITED list right after the Executing
+    /// transition. Proves the both-ready arm calls set_plan(effective_plan)
+    /// before approve_plan, so the agent receives what both seats signed.
+    #[tokio::test]
+    async fn consent_integrity_editplan_host_proposed_plan_matches_edited_list() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+
+        // Start with a config plan that will be overridden by the agent proposal.
+        let (server, _ws) = make_server(op1, op2, vec!["config-only".into()]);
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        drain_client(BufReader::new(cb_read)).await;
+
+        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(s.phase, WirePhase::DispatchReady { .. })
+        })).await.expect("DispatchReady");
+
+        // Both ready → PlanReview.
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(s.phase, WirePhase::PlanReview { .. })
+        })).await.expect("PlanReview");
+
+        // Agent proposes a plan via the host (simulates propose_plan MCP call).
+        server.inner.host.propose_plan(vec!["task-alpha".into(), "task-beta".into()]).await.unwrap();
+
+        // Wait for the agent plan to appear on the wire.
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(&s.phase, WirePhase::PlanReview { tasks } if tasks.contains(&"task-alpha".to_string()))
+        })).await.expect("agent plan on wire");
+
+        // Seat A edits: replaces the list with a modified version.
+        let edited = vec!["task-beta".into(), "task-alpha-modified".into()];
+        write_json(&mut ca_write, &ClientMsg::EditPlan { tasks: edited.clone() }).await.unwrap();
+
+        // Wait for the edit to propagate (both seats reset to not-ready).
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(&s.phase, WirePhase::PlanReview { tasks } if tasks.contains(&"task-alpha-modified".to_string()))
+                && s.seats.iter().all(|st| !st.ready)
+        })).await.expect("edited plan on wire");
+
+        // Both seats approve the edited plan.
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(s.phase, WirePhase::Executing)
+        })).await.expect("Executing");
+
+        // KEY ASSERTION: host.proposed_plan() must equal the EDITED list, not the
+        // original agent proposal. The both-ready arm called set_plan(effective_plan)
+        // under the net lock before approve_plan.
+        let stored = server.inner.host.proposed_plan().await;
+        assert_eq!(
+            stored,
+            Some(edited),
+            "host.proposed_plan() must equal the edited list that both seats signed; got {stored:?}"
+        );
+    }
+
+    /// fallback path: no propose_plan (scripted-style cfg.plan), both ready →
+    /// host.proposed_plan() == cfg.plan (not None/empty). Proves the both-ready
+    /// arm calls set_plan even when agent_plan is None (the cfg.plan fallback).
+    #[tokio::test]
+    async fn consent_integrity_fallback_cfg_plan_stored_in_host() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+
+        let cfg_plan = vec!["scripted-task-1".into(), "scripted-task-2".into()];
+        let (server, _ws) = make_server(op1, op2, cfg_plan.clone());
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        drain_client(BufReader::new(cb_read)).await;
+
+        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(s.phase, WirePhase::DispatchReady { .. })
+        })).await.expect("DispatchReady");
+
+        // Both ready → PlanReview (no propose_plan call — using cfg.plan fallback).
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(s.phase, WirePhase::PlanReview { .. })
+        })).await.expect("PlanReview");
+
+        // Confirm no agent plan was proposed (host.proposed_plan is None at this point).
+        assert_eq!(server.inner.host.proposed_plan().await, None, "no agent proposal expected before approval");
+
+        // Both ready → Executing (cfg.plan is non-empty, so this transitions).
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(s.phase, WirePhase::Executing)
+        })).await.expect("Executing");
+
+        // KEY ASSERTION: the both-ready arm must have pushed cfg.plan into the host
+        // so the agent always sees a non-None, non-empty plan — never a surprise [].
+        let stored = server.inner.host.proposed_plan().await;
+        assert_eq!(
+            stored,
+            Some(cfg_plan.clone()),
+            "host.proposed_plan() must equal cfg.plan after fallback approval; got {stored:?}"
+        );
+    }
+
+    /// consent-integrity wire alignment: agent proposes [a, b]; a seat EditPlans
+    /// to [b, a-modified]; both approve; the wire's PlanReview tasks immediately
+    /// before the Executing transition contain the edited list [b, a-modified].
+    /// This is the wire-level confirmation that the wire and host are in sync.
+    #[tokio::test]
+    async fn consent_integrity_wire_tasks_match_editplan_before_executing() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+
+        let (server, _ws) = make_server(op1, op2, vec!["config-fallback".into()]);
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        drain_client(BufReader::new(cb_read)).await;
+
+        write_json(&mut ca_write, &ClientMsg::Hello { seat: "A".into(), operator: op1 }).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Hello { seat: "B".into(), operator: op2 }).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(s.phase, WirePhase::DispatchReady { .. })
+        })).await.expect("DispatchReady");
+
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(s.phase, WirePhase::PlanReview { .. })
+        })).await.expect("PlanReview");
+
+        // Agent proposes [a, b].
+        server.inner.host.propose_plan(vec!["a".into(), "b".into()]).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(&s.phase, WirePhase::PlanReview { tasks } if tasks.contains(&"a".to_string()))
+        })).await.expect("agent plan [a, b] on wire");
+
+        // Seat A edits to [b, a-modified].
+        let edited = vec!["b".into(), "a-modified".into()];
+        write_json(&mut ca_write, &ClientMsg::EditPlan { tasks: edited.clone() }).await.unwrap();
+
+        // Wait for edit to land on the wire.
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(&s.phase, WirePhase::PlanReview { tasks } if tasks == &edited)
+        })).await.expect("edited list on wire");
+
+        // Capture the last PlanReview state before approval.
+        let pre_approval = state_rx.borrow().clone();
+        let pre_tasks = match &pre_approval.phase {
+            WirePhase::PlanReview { tasks } => tasks.clone(),
+            other => panic!("expected PlanReview, got {other:?}"),
+        };
+        assert_eq!(pre_tasks, edited, "wire tasks before approval must be the edited list");
+
+        // Both approve.
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {
+            matches!(s.phase, WirePhase::Executing)
+        })).await.expect("Executing");
+
+        // Wire-level + host-level both agree on the edited list.
+        let stored = server.inner.host.proposed_plan().await;
+        assert_eq!(
+            stored,
+            Some(edited.clone()),
+            "host.proposed_plan() must equal edited list; got {stored:?}"
+        );
     }
 }
