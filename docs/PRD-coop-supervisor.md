@@ -50,7 +50,7 @@ Co-op Supervisor reintroduces the pair, one layer up. Instead of two people at o
 
 ## 5. Core concepts
 
-- **Maker-checker / four-eyes.** The agent is the maker. Two humans are independent checkers. The prompt author is recorded as the *instructing party*; a policy toggle controls whether the author may also be a checker (strict mode: no; pragmatic mode: yes, but a second checker who did not instruct is always required). (policy — TBD default)
+- **Maker-checker / four-eyes.** The agent is the maker. Two humans are independent checkers. The prompt author is recorded as the *instructing party*; a policy toggle controls whether the author may also be a checker (strict mode: no; pragmatic mode: yes, but a second checker who did not instruct is always required). *(implemented — default is strict: the prompt author/hand-editor cannot cast a counting verdict)*
 - **Driver / navigator, rotating.** The driver constructs the prompt; the navigator reviews it live as it's written. Both review worker output. Roles rotate per task or session so the second set of eyes stays genuinely open and so the person reviewing output didn't co-author the spec. Rotation is the primary lever for keeping the two reviews *independent* — two correlated reviews (both rubber-stamping) are one review counted twice.
 
   > **Superseded (20 Jul 2026):** driver/navigator rotation is replaced by structural **Host/Operator** seats (the Host provides the agent backend; both seats are co-equal checkers; no rotation). Independence now rests on the two-distinct-keys requirement alone.
@@ -80,47 +80,47 @@ Co-op Supervisor reintroduces the pair, one layer up. Instead of two people at o
 ## 7. Functional requirements
 
 ### Multiplayer session & presence
-- **FR-1** Two operators attach to one shared session (authoritative fleet + state live in one place; operators are thin clients).
-- **FR-2** Live presence: each operator can see what the other is viewing/claiming (e.g. "Alice reviewing task 4").
+- **FR-1** Two operators attach to one shared session (authoritative fleet + state live in one place; operators are thin clients). *(implemented: two-seat networked session, one authoritative host, thin TUI clients over pinned TLS)*
+- **FR-2** Live presence: each operator can see what the other is viewing/claiming (e.g. "Alice reviewing task 4"). *(implemented: live linked/AFK presence, gate claiming, and gate-anchored discuss notes; per-item "what the other is viewing" beyond the active gate awaits multi-agent fleets)*
 - **FR-3** A shared review/"needs-you" queue either operator can pull from, with **claiming** to prevent redundant double-supervision. *(gate claiming implemented 2026-07-21: `[c]` toggles a soft presence claim on the active gate — "reviewing" shown to the other seat, released on toggle/gate-resolution/disconnect; presence only, never affects verdict eligibility. A shared multi-item queue awaits multi-agent fleets.)*
 
 ### Prompt co-construction (dispatch gate)
 - **FR-4** Collaborative prompt editing; default driver-types / navigator-suggests, with optional simultaneous two-cursor editing (opt-in, per session). *(simplified in-console prompt entry with edit-resets-consent implemented 2026-07-20; live draft sync implemented 2026-07-21 — each keystroke streams to both seats via `PromptDraft`, resets both ready flags, and is unlogged until the commit; Esc restores the pre-edit text; simultaneous drafts are last-write-wins. **Two-cursor co-editing deferred indefinitely (21 Jul 2026): the live draft sync is sufficient; revisit only if simultaneous editing becomes a real pain point.**)*
-- **FR-5** A prompt cannot be dispatched without the dispatch gate being satisfied (both operators have seen/accepted the instruction). (exact bar — TBD)
+- **FR-5** A prompt cannot be dispatched without the dispatch gate being satisfied (both operators have seen/accepted the instruction). *(implemented 2026-07-21: the bar is both seats marking ready against a non-empty prompt; any prompt edit resets both ready marks; a blank prompt is refused at dispatch)*
 
 ### Planning
-- **FR-6** The agent returns a task list of bounded, single-concern tasks with explicit dependencies (a DAG).
+- **FR-6** The agent returns a task list of bounded, single-concern tasks with explicit dependencies (a DAG). *(implemented: the agent proposes a task list via `propose_plan`, gated and executed in order; tasks are an ordered list today — explicit dependency DAGs are not yet modelled)*
 - **FR-7** Both operators can approve or edit the task list; edits re-enter plan review. *(implemented 2026-07-21: `EditPlan` wire message; in-TUI j/k select, e edit, d delete, </> reorder; any edit resets both ready flags; approved/edited list returned to agent via `propose_plan` response)*; prompt-based replan steers supported and preferred — a steer withdraws the proposal and routes the remedy to the agent, which re-proposes
 
 ### Execution & lifecycle
-- **FR-8** Tasks execute sequentially against a per-agent isolated worktree.
-- **FR-9** On completion, a task parks at the merge gate with its diff frozen and enters the shared review queue.
+- **FR-8** Tasks execute sequentially against a per-agent isolated worktree. *(implemented: each agent runs in its own git worktree; one agent per session today — concurrent multi-agent fleets are future work)*
+- **FR-9** On completion, a task parks at the merge gate with its diff frozen and enters the shared review queue. *(implemented: `propose_task_complete` parks the frozen diff at the dual-hold merge gate)*
 - **FR-10** The system implements the full task lifecycle in §8, including exception states (blocked / failed / abandoned).
 
 ### Review & dual approval (merge gate)
-- **FR-11** A task is **APPROVED** only on **both** operators' go (unanimity required).
-- **FR-12** For high-risk gates, present the change to the second reviewer **before** revealing the first's verdict ("blind second review") to reduce anchoring. (proposed; ties to risk-tiering §7 last item)
-- **FR-13** A no-go must be accompanied by a steer prompt or a hand-edit describing the fix. Bare rejection is not a valid terminal action.
-- **FR-14** Split decisions (one go, one no-go) route to the intervention path and are **recorded as splits**; outcome is at least `{unanimous, resolved-after-disagreement}`.
+- **FR-11** A task is **APPROVED** only on **both** operators' go (unanimity required). *(implemented in the four-eyes engine: a hold satisfies only on two distinct go verdicts)*
+- **FR-12** For high-risk gates, present the change to the second reviewer **before** revealing the first's verdict ("blind second review") to reduce anchoring. *(implemented: the first verdict is sealed until the second is cast — applied to every gate today, stricter than tiered; per-tier blind/live selection awaits risk tiers)*
+- **FR-13** A no-go must be accompanied by a steer prompt or a hand-edit describing the fix. Bare rejection is not a valid terminal action. *(implemented: a no-go is unconstructible without a remedy)*
+- **FR-14** Split decisions (one go, one no-go) route to the intervention path and are **recorded as splits**; outcome is at least `{unanimous, resolved-after-disagreement}`. *(implemented: outcomes are `unanimous` / `resolved-after-disagreement` / `blocked`, recorded in the signed audit record)*
 
 ### Hand-edit / emergency override
-- **FR-15** Hand-editing is **always available** and **never gated** — an experienced supervisor must be able to step in to avert a catastrophe. (Reserve for extreme cases by convention, but never remove.)
-- **FR-16** A hand-edit takes effect in the working tree **immediately** (instant effect), is fed back to the agent so it's aware, but **cannot enter the merge set until both operators sign off** the combined diff (deferred acceptance).
-- **FR-17** Authorship is recorded per task as a flag set (`agent` / `hand-edited` / `both`) so mixed provenance is never misrepresented. The approval bar is identical regardless of authorship.
+- **FR-15** Hand-editing is **always available** and **never gated** — an experienced supervisor must be able to step in to avert a catastrophe. (Reserve for extreme cases by convention, but never remove.) *(implemented: `[e]` hand-edit is always available, never gated)*
+- **FR-16** A hand-edit takes effect in the working tree **immediately** (instant effect), is fed back to the agent so it's aware, but **cannot enter the merge set until both operators sign off** the combined diff (deferred acceptance). *(implemented: hand-edit applies to the worktree immediately and opens a fresh dual-sign-off gate; never folded into the agent's diff)*
+- **FR-17** Authorship is recorded per task as a flag set (`agent` / `hand-edited` / `both`) so mixed provenance is never misrepresented. The approval bar is identical regardless of authorship. *(implemented: authorship flag recorded per gate record)*
 
 ### Intervention & downstream replan
 - **FR-18** Rejection, hand-edit, or a supervisor task-edit triggers agent re-planning of downstream tasks; changed downstream tasks require fresh approval before execution continues.
 - **FR-19** Bounded up-front planning is the primary defence against earlier approved tasks being invalidated. There is **no agent-driven backward invalidation**; an already-approved task reopens **only** when supervisors deliberately edit it mid-session, which then re-ripples forward through re-approval.
 
 ### Audit & provenance
-- **FR-20** Every gate emits a signed, immutable audit record at gate time (see §9), hash-chained to the previous record so the sequence is tamper-evident.
-- **FR-21** The final merge commit carries maker-checker **git trailers** (`Reviewed-by: …` per operator) plus a content-addressed link to the full record. An inline session transcript in the commit message is **optional**; capturing the record itself is not.
+- **FR-20** Every gate emits a signed, immutable audit record at gate time (see §9), hash-chained to the previous record so the sequence is tamper-evident. *(implemented: signed SHA-256 hash-chained records; persisted to `.kontur/audit-<head>.json` at close and verifiable with `kontur audit`)*
+- **FR-21** The final merge commit carries maker-checker **git trailers** (`Reviewed-by: …` per operator) plus a content-addressed link to the full record. An inline session transcript in the commit message is **optional**; capturing the record itself is not. *(implemented: `Reviewed-by:` trailers per operator plus an `Audit-chain: sha256:<head>` trailer linking the persisted, content-addressed record)*
 
 ### Exception handling
 - **FR-22** Blocked (dependency unresolved), Failed (agent error/stuck → human decision: retry / re-prompt / abandon), and Abandoned (supervisor kill-switch, terminal) states are first-class. *(kill-switch/ABANDONED implemented 20 Jul 2026; FAILED surfaced on agent exit)*
 
 ### Independence & rotation
-- **FR-23** Role rotation (driver ↔ navigator) supported per task or session; by default the operator who navigated the prompt leads the merge review.
+- **FR-23** Role rotation (driver ↔ navigator) supported per task or session; by default the operator who navigated the prompt leads the merge review. *(superseded 2026-07-21: roles are structural Host/Operator, not rotating driver/navigator — either seat can review, sign, steer, or hand-edit; see UX §5.3)*
 
   > **Superseded (20 Jul 2026):** driver/navigator rotation is replaced by structural **Host/Operator** seats (the Host provides the agent backend; both seats are co-equal checkers; no rotation). Independence now rests on the two-distinct-keys requirement alone.
 - **FR-24** Approvals require genuine engagement — an operator cannot approve from a summary alone; the actual diff must be opened. (proposed) *(implemented: go requires the opened diff; review depth recorded truthfully in the signed verdict — 20 Jul 2026)* — superseded by the split layout (20 Jul 2026): the active gate's diff is permanently on-screen; acceptance happens on the diff surface by construction; truncated diffs still require explicit acknowledgment.
@@ -174,9 +174,9 @@ Precedent: the Linux kernel already does maker-checker in git via `Signed-off-by
 
 ---
 
-## 10. Technical architecture (high-level, TBD)
+## 10. Technical architecture (high-level — now implemented)
 
-- **Shared host model.** One machine holds the repo and runs the fleet; both operators attach over the network as TUI clients. This sidesteps replicating/merging a live filesystem across two remote humans — there is one authoritative state, two viewers. (Remote-pair topology — TBD.)
+- **Shared host model.** One machine holds the repo and runs the fleet; both operators attach over the network as TUI clients. This sidesteps replicating/merging a live filesystem across two remote humans — there is one authoritative state, two viewers. *(implemented; cross-network pairing goes over a mesh VPN — Tailscale/WireGuard — as there is no relay, by design)*
 - **Isolation.** Git worktree per agent so parallel edits don't collide; approved tasks accumulate on a session branch; single reviewed merge at the end.
 - **Build-on.** Prospective foundation is Claude Code's hook system (PreToolUse and Task lifecycle hooks give the event stream and the approval interception) plus Agent Teams (fleet + shared task list). Prior art proves the single-operator hook-to-TUI approval loop (e.g. `iris`); the **novel layer to build** is multi-client attach + presence + claim + dual-approval arbitration, and the two-seat TUI.
 - **MCP as the enforcement / audit chokepoint.** Route the agents' consequential actions (file writes, shell, merge) through MCP servers the tool hosts, and use MCP's invocation-level approval (`require_approval` / queue-then-execute) as the gate. This makes the gate and its audit record **backend-agnostic**, and lets MCP's `blocking` vs `audit` gate types express the dual-approval vs instant-hand-edit split directly. Two extensions on top: a standard MCP approval gate is *single-approver*, so the two-signatory (four-eyes) requirement is layered over it; and native harness tools bypass MCP unless actions are forced through the hosted servers. Lifecycle / stream / steer remains a per-harness adapter concern, not something MCP abstracts.
@@ -215,7 +215,7 @@ The interface is a **terminal-native, ASCII-windowed operational console** — t
 
 This is more than styling — it reinforces the thesis. A nuclear control room is the canonical two-person-rule, high-assurance, continuously-monitored environment, so the metaphor carries the product's identity: each agent reads as a monitored channel, the fleet as a panel of gauges, the go/no-go poll as a console action weighty enough to deserve ceremony. The look signals *assurance-first* the moment an operator sees it — and it aligns with the mission-control / dual-key analogies the whole design grew out of.
 
-Practical implications: each agent gets a bordered ASCII panel (status, current task, token/cost, pending-approval indicator); the shared review queue and the dual-hold render as console alerts an operator claims and acts on; the two-operator go/no-go presents as a paired console poll with the second key sealed until cast. (Detailed layouts — TBD.)
+Practical implications: each agent gets a bordered ASCII panel (status, current task, and a needs-sign-off indicator); the shared review queue and the dual-hold render as console alerts an operator claims and acts on; the two-operator go/no-go presents as a paired console poll with the second key sealed until cast. *(implemented — see the UX doc for the shipped console)*
 
 **Practical, not cheesy.** The discipline that keeps this from tipping into costume: every element on screen must be something an operator reads to decide or acts on — no decorative telemetry (host CPU, fake link sweeps), no false-precision confidence scores, no blanket "CRITICAL" banners. Emphasis is spent once, on the single thing that needs a human; a calm default *is* the authentic control-room principle (post-Three-Mile-Island HMI design is about reducing alarm noise, not manufacturing it). Benchmark against tools an SRE leaves open all day — k9s, lazygit, btop — not a hacker-movie prop. The Cyrillic / version-banner identity flourish stays confined to the header.
 
