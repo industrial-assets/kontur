@@ -40,14 +40,18 @@ pub fn build_claude_command(mcp_config_path: &str, prompt: &str) -> ClaudeCmd {
     }
 }
 
-/// Return the JSON content for the MCP config file that bridges stdio→TCP
-/// to the agent port via `nc`.
+/// Return the JSON content for the MCP config file that bridges Claude Code's
+/// stdio to the agent port. `bridge_program` is the command Claude spawns —
+/// the kontur executable itself, invoked as `kontur mcp-bridge <port>` — so
+/// there is no external `nc` dependency.
 ///
-/// The resulting string is valid JSON: `{"mcpServers":{"kontur":{"command":"nc","args":["127.0.0.1","<port>"]}}}`.
-pub fn mcp_config_json(agent_port: u16) -> String {
+/// The resulting string is valid JSON:
+/// `{"mcpServers":{"kontur":{"command":"<bridge>","args":["mcp-bridge","<port>"]}}}`.
+pub fn mcp_config_json(bridge_program: &str, agent_port: u16) -> String {
+    // JSON-escape the program path (Windows paths contain backslashes).
+    let prog = bridge_program.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
-        r#"{{"mcpServers":{{"kontur":{{"command":"nc","args":["127.0.0.1","{}"]}}}}}}"#,
-        agent_port
+        r#"{{"mcpServers":{{"kontur":{{"command":"{prog}","args":["mcp-bridge","{agent_port}"]}}}}}}"#
     )
 }
 
@@ -140,32 +144,36 @@ mod tests {
 
     #[test]
     fn mcp_config_json_is_valid_and_contains_port() {
-        let json = mcp_config_json(7778);
+        let json = mcp_config_json("/usr/local/bin/kontur", 7778);
 
         // Must be valid JSON.
         let v: serde_json::Value =
             serde_json::from_str(&json).expect("mcp_config_json is not valid JSON");
 
-        // Must contain the port as a string in the args array.
-        let args = &v["mcpServers"]["kontur"]["args"];
-        let args_arr = args.as_array().expect("args should be an array");
-        let port_str: Vec<&str> = args_arr.iter().filter_map(|a| a.as_str()).collect();
-        assert!(
-            port_str.contains(&"7778"),
-            "port 7778 not found in args: {args_arr:?}"
+        // Must invoke the kontur bridge, not nc.
+        assert_eq!(
+            v["mcpServers"]["kontur"]["command"].as_str(),
+            Some("/usr/local/bin/kontur")
         );
-
-        // Command must be "nc".
-        assert_eq!(v["mcpServers"]["kontur"]["command"].as_str(), Some("nc"));
+        let args_arr = v["mcpServers"]["kontur"]["args"]
+            .as_array()
+            .expect("args should be an array");
+        let args: Vec<&str> = args_arr.iter().filter_map(|a| a.as_str()).collect();
+        assert_eq!(args, vec!["mcp-bridge", "7778"]);
     }
 
     #[test]
-    fn mcp_config_json_different_port() {
-        let json = mcp_config_json(9999);
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    fn mcp_config_json_escapes_windows_paths() {
+        let json = mcp_config_json(r"C:\Program Files\kontur.exe", 9999);
+        // Still valid JSON despite backslashes in the path.
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("windows path must produce valid JSON");
+        assert_eq!(
+            v["mcpServers"]["kontur"]["command"].as_str(),
+            Some(r"C:\Program Files\kontur.exe")
+        );
         let args = v["mcpServers"]["kontur"]["args"].as_array().unwrap();
-        let has_port = args.iter().any(|a| a.as_str() == Some("9999"));
-        assert!(has_port, "port 9999 not found in mcp config");
+        assert!(args.iter().any(|a| a.as_str() == Some("9999")));
     }
 
     #[test]

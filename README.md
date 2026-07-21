@@ -100,8 +100,8 @@ kontur --claude
 Alternatively, attach Claude Code manually (advanced / alternative):
 
 ```sh
-# 1. Save as kontur-mcp.json:
-{"mcpServers":{"kontur":{"command":"nc","args":["127.0.0.1","7778"]}}}
+# 1. Save as kontur-mcp.json (the bridge is kontur itself — no nc needed):
+{"mcpServers":{"kontur":{"command":"kontur","args":["mcp-bridge","7778"]}}}
 
 # 2. Run:
 claude --mcp-config kontur-mcp.json \
