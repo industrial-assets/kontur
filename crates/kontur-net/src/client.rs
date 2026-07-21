@@ -160,6 +160,13 @@ impl SessionClient {
 
     /// Send a prompt edit. Valid only during DispatchReady; the server will
     /// Reject it otherwise and reset both ready flags on acceptance.
+    pub async fn prompt_draft(&self, prompt: &str) -> io::Result<()> {
+        self.send(ClientMsg::PromptDraft {
+            prompt: prompt.to_owned(),
+        })
+        .await
+    }
+
     pub async fn set_prompt(&self, prompt: &str) -> io::Result<()> {
         self.send(ClientMsg::SetPrompt {
             prompt: prompt.to_owned(),

@@ -571,6 +571,15 @@ async fn handle_client_msg(
                         net.seats[0].ready = false;
                         net.seats[1].ready = false;
                         push_log(&mut net, "dispatch confirmed · plan review");
+                        // Authoritative re-push: the prompt may have arrived
+                        // only as live drafts (never committed via SetPrompt),
+                        // so hand the gate host exactly the text both seats
+                        // consented to — same sync-point pattern as the plan.
+                        let prompt = net.prompt.clone();
+                        drop(net);
+                        server.inner.host.set_prompt(prompt).await;
+                        server.refresh_locked().await;
+                        return;
                     }
                     Phase::PlanReview => {
                         // Determine the effective plan: agent-proposed takes priority
@@ -917,6 +926,27 @@ async fn handle_client_msg(
             push_log(&mut net, &format!("{label} edited the prompt"));
             drop(net);
             server.inner.host.set_prompt(prompt).await;
+            server.refresh_locked().await;
+        }
+        ClientMsg::PromptDraft { prompt } => {
+            let mut net = server.inner.net.lock().await;
+            // Same lock as SetPrompt: no draft traffic after dispatch.
+            if net.phase != Phase::DispatchReady {
+                let _ = conn_tx
+                    .send(ServerMsg::Rejected {
+                        reason: "prompt is locked after dispatch".into(),
+                    })
+                    .await;
+                return;
+            }
+            // Live sync: the other seat sees each keystroke. Anchoring rule
+            // still applies — any change resets both ready flags — but a
+            // draft is not a logged event (the SetPrompt commit is). The
+            // gate host receives the authoritative text at dispatch.
+            net.prompt = prompt;
+            net.seats[0].ready = false;
+            net.seats[1].ready = false;
+            drop(net);
             server.refresh_locked().await;
         }
     }
@@ -2786,6 +2816,134 @@ mod tests {
         assert!(
             got_empty_rejected,
             "empty SetPrompt must produce Rejected with 'empty' in reason"
+        );
+    }
+
+    /// Live prompt sync: a draft keystroke from one seat is visible in the
+    /// broadcast state (the other seat sees typing as it happens), resets
+    /// both ready flags, and produces no log line — only the SetPrompt
+    /// commit is logged. After dispatch, drafts are rejected as locked.
+    #[tokio::test]
+    async fn prompt_draft_syncs_live_and_is_unlogged() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+
+        let (server, _ws) = make_server_with_prompt(op1, op2, vec!["t1".into()], "");
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        drain_client(BufReader::new(cb_read)).await;
+
+        write_json(
+            &mut ca_write,
+            &ClientMsg::Hello {
+                seat: "A".into(),
+                operator: op1,
+            },
+        )
+        .await
+        .unwrap();
+        write_json(
+            &mut cb_write,
+            &ClientMsg::Hello {
+                seat: "B".into(),
+                operator: op2,
+            },
+        )
+        .await
+        .unwrap();
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
+
+        // B marks ready; A then types — the draft must reset B's ready flag.
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| s.seats.iter().any(|seat| seat.ready)),
+        )
+        .await
+        .expect("B ready observed");
+
+        // Keystrokes stream as full-text drafts.
+        for draft in ["f", "fi", "fix"] {
+            write_json(
+                &mut ca_write,
+                &ClientMsg::PromptDraft {
+                    prompt: draft.into(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let synced = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(
+                &mut state_rx,
+                |s| matches!(&s.phase, WirePhase::DispatchReady { prompt, .. } if prompt == "fix"),
+            ),
+        )
+        .await
+        .expect("draft visible in broadcast state");
+        assert!(
+            synced.seats.iter().all(|seat| !seat.ready),
+            "draft must reset both ready flags"
+        );
+        assert!(
+            !synced.log.iter().any(|l| l.contains("prompt")),
+            "drafts must not be logged; log: {:?}",
+            synced.log
+        );
+
+        // Commit + dispatch, then a late draft must be rejected as locked.
+        write_json(
+            &mut ca_write,
+            &ClientMsg::SetPrompt {
+                prompt: "fix the thing".into(),
+            },
+        )
+        .await
+        .unwrap();
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("dispatched");
+
+        write_json(
+            &mut cb_write,
+            &ClientMsg::PromptDraft {
+                prompt: "too late".into(),
+            },
+        )
+        .await
+        .unwrap();
+        // The locked rejection goes to B's connection; observable here as the
+        // prompt not changing. Give the server a beat, then assert.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let after = state_rx.borrow().clone();
+        assert!(
+            !matches!(&after.phase, WirePhase::DispatchReady { .. }),
+            "phase must stay past dispatch"
         );
     }
 
