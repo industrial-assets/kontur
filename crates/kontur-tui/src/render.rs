@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -10,13 +12,17 @@ use crate::view::{ActiveRegion, Attention, CursorTarget, KeyStatus, SessionView}
 /// Draw the whole console. Pure: no I/O, no engine calls.
 ///
 /// `diff_scroll` and `selected_file` are used when a Gate is the active region
-/// (the diff is permanently on-screen in the right pane).
+/// (the diff is permanently on-screen in the right pane). `diff_viewport` is an
+/// out-parameter: the diff pane writes its real content height (rows minus
+/// borders) into it so the caller can clamp scrolling to the actual pane size
+/// rather than a fixed guess. Left unchanged on frames with no diff pane.
 pub fn render(
     frame: &mut Frame,
     view: &SessionView,
     diff_scroll: u16,
     selected_file: usize,
     log_scroll: usize,
+    diff_viewport: &Cell<u16>,
 ) {
     let invite_rows = match &view.invite {
         Some(text) => (text.lines().count() as u16) + 3,
@@ -67,7 +73,15 @@ pub fn render(
         invite(frame, rows[3], link);
     }
     stations(frame, rows[4], view);
-    panes(frame, rows[5], view, diff_scroll, selected_file, log_scroll);
+    panes(
+        frame,
+        rows[5],
+        view,
+        diff_scroll,
+        selected_file,
+        log_scroll,
+        diff_viewport,
+    );
     if let Some(path) = &view.agent_log {
         agent_log_footer(frame, rows[6], path);
     }
@@ -440,6 +454,7 @@ fn panes(
     diff_scroll: u16,
     selected_file: usize,
     log_scroll: usize,
+    diff_viewport: &Cell<u16>,
 ) {
     let cols =
         Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).split(area);
@@ -505,7 +520,14 @@ fn panes(
                 render_files_bar(frame, right[i], card, selected_file);
                 i += 1;
             }
-            render_diff_pane(frame, right[i], card, diff_scroll, selected_file);
+            render_diff_pane(
+                frame,
+                right[i],
+                card,
+                diff_scroll,
+                selected_file,
+                diff_viewport,
+            );
             i += 1;
             if discuss_height > 0 {
                 render_discuss(frame, right[i], card);
@@ -570,7 +592,11 @@ fn render_diff_pane(
     card: &crate::view::GateCard,
     scroll: u16,
     selected_file: usize,
+    diff_viewport: &Cell<u16>,
 ) {
+    // Report the real content height (rows minus the block's borders) so the
+    // caller clamps scrolling to the actual pane, not a fixed guess.
+    diff_viewport.set(area.height.saturating_sub(2));
     // Show only the tab-selected file's section; each file is truncated
     // independently, so the marker names the file it applies to.
     let selected = card
@@ -1024,7 +1050,9 @@ mod tests {
     fn draw(view: &SessionView) -> String {
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render(f, view, 0, 0, 0)).unwrap();
+        terminal
+            .draw(|f| render(f, view, 0, 0, 0, &std::cell::Cell::new(0)))
+            .unwrap();
         terminal.backend().to_string()
     }
 
@@ -1246,7 +1274,16 @@ mod tests {
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|f| render(f, &minimal_view(ActiveRegion::Gate(card)), 0, 1, 0))
+            .draw(|f| {
+                render(
+                    f,
+                    &minimal_view(ActiveRegion::Gate(card)),
+                    0,
+                    1,
+                    0,
+                    &std::cell::Cell::new(0),
+                )
+            })
             .unwrap();
         let rendered = terminal.backend().to_string();
         assert!(

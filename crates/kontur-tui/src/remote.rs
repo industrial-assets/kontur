@@ -655,6 +655,10 @@ pub async fn run_remote(
     // stream live to the other seat, so cancel must undo what they saw).
     let mut prompt_before = String::new();
     let mut diff_scroll: u16 = 0;
+    // The diff pane reports its real content height here each frame, so scroll
+    // clamping uses the actual visible size (not a fixed guess). Seeded with the
+    // page fallback until the first render.
+    let diff_vp = std::cell::Cell::new(PAGE_LINES);
     let mut log_scroll: usize = 0;
     let mut show_help = false;
     let mut selected_file: usize = 0;
@@ -777,7 +781,7 @@ pub async fn run_remote(
         }
 
         terminal.draw(|f| {
-            render(f, &view, diff_scroll, selected_file, log_scroll);
+            render(f, &view, diff_scroll, selected_file, log_scroll, &diff_vp);
         })?;
 
         let composing = !matches!(compose, ComposeTarget::None);
@@ -1031,21 +1035,25 @@ pub async fn run_remote(
                 }
             }
 
-            // Scroll actions (always active in the split layout).
+            // Scroll actions (always active in the split layout). Clamp against
+            // the diff pane's real height (reported by the last render), so the
+            // last lines are always reachable regardless of terminal size.
             Some(Action::ScrollDown) => {
                 let total = diff_line_count(&view.active, selected_file);
-                diff_scroll = clamp_scroll(diff_scroll as i32 + 1, total, PAGE_LINES);
+                let vp = diff_vp.get().max(1);
+                diff_scroll = clamp_scroll(diff_scroll as i32 + 1, total, vp);
             }
             Some(Action::ScrollUp) => {
-                diff_scroll = clamp_scroll(diff_scroll as i32 - 1, 0, PAGE_LINES);
+                diff_scroll = clamp_scroll(diff_scroll as i32 - 1, 0, diff_vp.get().max(1));
             }
             Some(Action::PageDown) => {
                 let total = diff_line_count(&view.active, selected_file);
-                diff_scroll =
-                    clamp_scroll(diff_scroll as i32 + PAGE_LINES as i32, total, PAGE_LINES);
+                let vp = diff_vp.get().max(1);
+                diff_scroll = clamp_scroll(diff_scroll as i32 + vp as i32, total, vp);
             }
             Some(Action::PageUp) => {
-                diff_scroll = clamp_scroll(diff_scroll as i32 - PAGE_LINES as i32, 0, PAGE_LINES);
+                let vp = diff_vp.get().max(1);
+                diff_scroll = clamp_scroll(diff_scroll as i32 - vp as i32, 0, vp);
             }
 
             // Cycle selected file.
