@@ -841,7 +841,10 @@ impl GateHost {
         let path = dir.join(format!("audit-{head_hex}.json"));
         let result = (|| {
             std::fs::create_dir_all(&dir)?;
-            let json = serde_json::to_vec_pretty(&records)
+            // Compact (no pretty-print whitespace): the file is machine-read by
+            // `kontur audit` and content-addressed by the chain head, so the
+            // indentation only bloated the size.
+            let json = serde_json::to_vec(&records)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             std::fs::write(&path, json)?;
             Ok(path)
@@ -1061,6 +1064,11 @@ mod tests {
         );
 
         let bytes = std::fs::read(&path).unwrap();
+        // Compact: no pretty-print whitespace (no newlines) to keep the file small.
+        assert!(
+            !bytes.contains(&b'\n'),
+            "persisted audit json must be compact"
+        );
         let records: Vec<kontur_core::GateRecord> = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(records.len(), 1);
         kontur_core::verify_chain(&records).expect("reloaded chain must verify");
