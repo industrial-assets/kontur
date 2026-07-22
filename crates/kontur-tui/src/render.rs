@@ -338,19 +338,26 @@ fn task_bar(frame: &mut Frame, area: Rect, view: &SessionView) {
     );
 }
 
+/// Start index of a `vis`-row window over `total` items that keeps `active` and
+/// the item after it (the "next") in view, with one row of lookback when there
+/// is room. Used by both plan panes so the list auto-scrolls to follow the
+/// active/selected task.
+fn follow_window(active: usize, total: usize, vis: usize) -> usize {
+    if vis == 0 || total <= vis {
+        0
+    } else {
+        active.saturating_sub(1).min(total - vis)
+    }
+}
+
 /// Persistent progress pane: the approved plan with per-task markers
 /// (`✓` done · `▶` current · `·` pending) and a done/total count in the title.
-/// Windows around the current task when the list is taller than the pane.
+/// Auto-scrolls to keep the current task and the next in view.
 fn render_plan_progress(frame: &mut Frame, area: Rect, plan: &crate::view::PlanProgress) {
     let total = plan.tasks.len();
     let done = plan.done.min(total);
     let vis = area.height.saturating_sub(2) as usize; // borders
-                                                      // Keep the current task (index == done) in view.
-    let start = if total <= vis {
-        0
-    } else {
-        done.saturating_sub(vis / 2).min(total.saturating_sub(vis))
-    };
+    let start = follow_window(done, total, vis);
     let end = (start + vis).min(total);
 
     let lines: Vec<Line> = plan.tasks[start..end]
@@ -723,10 +730,23 @@ fn render_phase_card(frame: &mut Frame, area: Rect, active: &ActiveRegion, spinn
         } => {
             let a_mark = if ready[0] { "■" } else { "□" };
             let b_mark = if ready[1] { "■" } else { "□" };
-            let mut lines: Vec<Line> = tasks
+            // Reserve two rows for the footer (gate line + keymap); the rest
+            // shows a window of tasks that follows the selection, so a long plan
+            // stays reviewable and the selected task never scrolls off-screen.
+            let vis = (area.height as usize).saturating_sub(4).max(1);
+            let total = tasks.len();
+            let start = follow_window(*selected, total, vis);
+            let end = (start + vis).min(total);
+            let title = if total > vis {
+                format!("PLAN {}/{}", selected + 1, total)
+            } else {
+                "PLAN".to_owned()
+            };
+            let mut lines: Vec<Line> = tasks[start..end]
                 .iter()
                 .enumerate()
-                .map(|(i, t)| {
+                .map(|(off, t)| {
+                    let i = start + off;
                     let marker = if i == *selected { "▶" } else { " " };
                     Line::from(format!(" {} t{} {}", marker, i + 1, t))
                 })
@@ -739,7 +759,7 @@ fn render_phase_card(frame: &mut Frame, area: Rect, active: &ActiveRegion, spinn
                 " [r] steer replan · j/k select · e edit · d delete · </> move · [y] approve — needs both",
             ));
             frame.render_widget(
-                Paragraph::new(lines).block(Block::bordered().title("PLAN")),
+                Paragraph::new(lines).block(Block::bordered().title(title)),
                 area,
             );
         }
@@ -1008,6 +1028,18 @@ mod tests {
         assert_eq!(log_window(3, 10, 0), 0..3);
         assert_eq!(log_window(3, 10, 5), 0..3);
         assert_eq!(log_window(0, 5, 0), 0..0);
+    }
+
+    #[test]
+    fn follow_window_keeps_active_and_next_in_view() {
+        // Everything fits — no scroll.
+        assert_eq!(follow_window(3, 5, 10), 0);
+        // Mid-list: one row of lookback, active + next below it.
+        assert_eq!(follow_window(8, 20, 5), 7);
+        // Near the end: clamped so the window ends at the last item.
+        assert_eq!(follow_window(19, 20, 5), 15);
+        // At the start: no negative underflow.
+        assert_eq!(follow_window(0, 20, 5), 0);
     }
 
     #[test]

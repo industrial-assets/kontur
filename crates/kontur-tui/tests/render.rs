@@ -83,6 +83,33 @@ fn banner_and_status_render() {
 }
 
 #[test]
+fn plan_progress_pane_auto_scrolls_to_current_task() {
+    let mut view = base(ActiveRegion::Working {
+        note: "working".into(),
+    });
+    let tasks: Vec<String> = (1..=20).map(|i| format!("T{i:02}")).collect();
+    view.plan = Some(PlanProgress { tasks, done: 15 });
+    let s = draw(&view);
+    assert!(s.contains("PLAN · 15/20"), "title shows progress count");
+    assert!(s.contains("T16"), "the current task is in view");
+    assert!(!s.contains("T01"), "early tasks scroll out of the window");
+}
+
+#[test]
+fn plan_review_list_windows_to_the_selected_task() {
+    let tasks: Vec<String> = (1..=30).map(|i| format!("T{i:02}")).collect();
+    let view = base(ActiveRegion::Plan {
+        tasks,
+        ready: [false, false],
+        selected: 25,
+    });
+    let s = draw(&view);
+    assert!(s.contains("PLAN 26/30"), "title shows selected position");
+    assert!(s.contains("T26"), "the selected task is in view");
+    assert!(!s.contains("T01"), "early tasks scroll out of the window");
+}
+
+#[test]
 fn plan_progress_pane_shows_markers_and_count() {
     let mut view = base(ActiveRegion::Working {
         note: "agent is working".into(),
