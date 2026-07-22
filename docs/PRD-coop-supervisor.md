@@ -117,7 +117,7 @@ streams the operators can still review with full attention. *(supersedes the
 earlier prompt-entry parallel toggle.)*
 
 ### Execution & lifecycle
-- **FR-8** Tasks execute sequentially against a per-agent isolated worktree. *(implemented: each agent runs in its own git worktree; one agent per session today — concurrent multi-agent fleets are in progress: agent identity through the enforcement plane landed 2026-07-22; per-agent worktree isolation, the agent-proposed split gate, and aggregate merge follow)*
+- **FR-8** Tasks execute sequentially against a per-agent isolated worktree. *(implemented: each agent runs in its own git worktree; one agent per session today — concurrent multi-agent fleets in progress. **Decision half landed 2026-07-22:** agent identity flows through the enforcement plane (every gate/event attributed per agent); the agent-proposed split gate (`propose_split` MCP tool) and the operator Split-approval phase (both `[y]` to approve, one `[n]` to decline). **Execution half remaining:** per-agent worktree isolation (correctness — today's shared worktree + `git add -A` would leak one agent's writes into another's gated diff), host fan-out (spawn a sub-agent per approved stream), and aggregate merge across agents.)*
 - **FR-9** On completion, a task parks at the merge gate with its diff frozen and enters the shared review queue. *(implemented: `propose_task_complete` parks the frozen diff at the dual-hold merge gate)*
 - **FR-10** The system implements the full task lifecycle in §8, including exception states (blocked / failed / abandoned).
 
