@@ -92,8 +92,32 @@ Co-op Supervisor reintroduces the pair, one layer up. Instead of two people at o
 - **FR-6** The agent returns a task list of bounded, single-concern tasks with explicit dependencies (a DAG). *(implemented: the agent proposes a task list via `propose_plan`, gated and executed in order; tasks are an ordered list today — explicit dependency DAGs are not yet modelled)*
 - **FR-7** Both operators can approve or edit the task list; edits re-enter plan review. *(implemented 2026-07-21: `EditPlan` wire message; in-TUI j/k select, e edit, d delete, </> reorder; any edit resets both ready flags; approved/edited list returned to agent via `propose_plan` response)*; prompt-based replan steers supported and preferred — a steer withdraws the proposal and routes the remedy to the agent, which re-proposes
 
+### Fleet model — solo by default, agent-recommended split (22 Jul 2026)
+Agents work **solo by default and prefer to.** The system does not fan work out
+automatically, and there is no blind "run in parallel" toggle — parallelism is
+proposed by the agent and granted by the operators, only when it genuinely helps:
+
+- An agent may **propose a split into a fleet** only when the work has genuinely
+  independent parallel streams (e.g. a backend and a frontend that don't depend
+  on each other) that would meaningfully speed delivery. It **asks the operators
+  for permission** — a gated agent→operator request, in the same family as the
+  plan gate and `ask_clarification`. The agent never splits to split.
+- On approval, the streams fan out to **independent agents**, each in its own
+  worktree, each producing **small, single-concern gated chunks** exactly as a
+  solo agent does. On rejection, the agent continues solo.
+- Every change is **clearly attributed to its agent and task**, so the operators
+  always know whose work they are reviewing — a fleet must never blur into an
+  undifferentiated stream of diffs. Reviewing more than one engineer's output at
+  once is harder, so clean per-agent, per-task presentation is a requirement,
+  not a nicety.
+
+This is opt-in, capped, and conservative by design: the two-reviewer bottleneck
+means a fleet's value is real only for a small number of truly independent
+streams the operators can still review with full attention. *(supersedes the
+earlier prompt-entry parallel toggle.)*
+
 ### Execution & lifecycle
-- **FR-8** Tasks execute sequentially against a per-agent isolated worktree. *(implemented: each agent runs in its own git worktree; one agent per session today — concurrent multi-agent fleets are future work)*
+- **FR-8** Tasks execute sequentially against a per-agent isolated worktree. *(implemented: each agent runs in its own git worktree; one agent per session today — concurrent multi-agent fleets are in progress: agent identity through the enforcement plane landed 2026-07-22; per-agent worktree isolation, the agent-proposed split gate, and aggregate merge follow)*
 - **FR-9** On completion, a task parks at the merge gate with its diff frozen and enters the shared review queue. *(implemented: `propose_task_complete` parks the frozen diff at the dual-hold merge gate)*
 - **FR-10** The system implements the full task lifecycle in §8, including exception states (blocked / failed / abandoned).
 
