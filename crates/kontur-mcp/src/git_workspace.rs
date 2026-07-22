@@ -49,9 +49,16 @@ impl GitWorkspace {
             .to_string();
 
         // Pre-flight: refuse to start a session on a dirty checkout so the
-        // squash-merge at the end cannot conflict with uncommitted work.
+        // squash-merge at the end cannot conflict with uncommitted work. Ignore
+        // the `.kontur/` audit directory: a prior session's persisted (or
+        // committed) audit records must never block a new session.
         let status = git(&repo, &["status", "--porcelain"])?;
-        if !status.trim().is_empty() {
+        let dirty = status.lines().any(|line| {
+            // Porcelain: two status columns, a space, then the path.
+            let path = line.get(3..).unwrap_or("").trim_start_matches('"');
+            !path.is_empty() && !path.starts_with(".kontur/") && path != ".kontur"
+        });
+        if dirty {
             return Err(WorkspaceError::Io(
                 "repository checkout is dirty; commit or stash before hosting a session".into(),
             ));
@@ -156,6 +163,14 @@ impl Workspace for GitWorkspace {
 
     fn merge_session(&self, message: &str) -> Result<(), WorkspaceError> {
         git(&self.repo, &["merge", "--squash", &self.branch])?;
+        // Fold the persisted audit chain (written under <repo>/.kontur before
+        // the merge) into the reviewed commit, so the signed, tamper-evident
+        // records live in git history alongside the code they attest — and the
+        // commit's `Audit-chain:` trailer references a tracked file, not a loose
+        // working-tree artifact.
+        if self.repo.join(".kontur").exists() {
+            git(&self.repo, &["add", ".kontur"])?;
+        }
         git(&self.repo, &["commit", "-m", message])?;
         let worktree_str = self
             .worktree
@@ -240,6 +255,45 @@ mod tests {
         assert!(log.contains("Reviewed-by: B <b>"));
         let count = git(&repo, &["rev-list", "--count", "main"]).unwrap();
         assert_eq!(count.trim(), "2"); // seed + one squash commit
+    }
+
+    #[test]
+    fn merge_commits_audit_chain_under_kontur() {
+        let repo = temp_repo();
+        let ws = GitWorkspace::create(repo.clone(), "s-audit").unwrap();
+        let t = TaskId("t1".into());
+        ws.apply_write(&t, "src/lib.rs", b"pub fn f() {}\n")
+            .unwrap();
+        let _ = ws.freeze_task_diff(&t).unwrap();
+        ws.accept_task(&t).unwrap();
+        // Simulate persist_audit writing the chain before the merge.
+        std::fs::create_dir_all(repo.join(".kontur")).unwrap();
+        std::fs::write(repo.join(".kontur/audit-deadbeef.json"), b"[]\n").unwrap();
+
+        ws.merge_session("session\n\nReviewed-by: A <a>").unwrap();
+
+        // The audit file is tracked in the merge commit on the base branch.
+        let tracked = git(&repo, &["ls-files", ".kontur"]).unwrap();
+        assert!(
+            tracked.contains("audit-deadbeef.json"),
+            "audit chain must be committed: {tracked:?}"
+        );
+        // And the working tree is clean — no untracked audit artifact left.
+        let status = git(&repo, &["status", "--porcelain"]).unwrap();
+        assert!(status.trim().is_empty(), "clean after merge: {status:?}");
+    }
+
+    #[test]
+    fn untracked_kontur_does_not_block_create() {
+        let repo = temp_repo();
+        // A loose audit file (e.g. from a prior abandoned session) must not trip
+        // the clean-checkout pre-flight.
+        std::fs::create_dir_all(repo.join(".kontur")).unwrap();
+        std::fs::write(repo.join(".kontur/audit-old.json"), b"[]\n").unwrap();
+        assert!(
+            GitWorkspace::create(repo, "s-next").is_ok(),
+            "a prior session's .kontur audit file must not block a new session"
+        );
     }
 
     #[test]
