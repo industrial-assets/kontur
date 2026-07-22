@@ -1431,6 +1431,7 @@ mod tests {
             }],
             diff_truncated: false,
             last_cmd: None,
+            agent: "agent-01".into(),
             claimed_by: None,
             discuss: Vec::new(),
         }

@@ -212,6 +212,8 @@ pub struct WireGate {
     /// The task's most recent command and its exit code — the closest thing
     /// to a test result the review surface can show truthfully.
     pub last_cmd: Option<WireCmd>,
+    /// The agent that produced this gate's change (attributes it in a fleet).
+    pub agent: String,
     /// Seat label of the operator currently reviewing this gate, if claimed.
     /// A soft presence signal (PRD FR-3), not a lock.
     pub claimed_by: Option<String>,

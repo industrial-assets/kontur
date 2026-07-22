@@ -86,7 +86,11 @@ impl Demo {
                 b"// guarded token store\nfn guard() {}\n",
             )
             .unwrap();
-        let (gid, _rx) = self.host.begin_task_gate(task, 6400).await.unwrap();
+        let (gid, _rx) = self
+            .host
+            .begin_task_gate("agent-01", task, 6400)
+            .await
+            .unwrap();
         let dh = self.host.pending_gates().await[0].diff_hash;
         (gid, dh)
     }

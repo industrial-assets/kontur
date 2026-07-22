@@ -252,7 +252,10 @@ impl SessionServer {
 
     async fn on_host_event(&self, agent_id: &str, ev: HostEvent) {
         match ev {
-            HostEvent::Write { path, bytes, .. } => {
+            HostEvent::Write {
+                agent, path, bytes, ..
+            } => {
+                let agent_id = agent.as_str();
                 let card = WireFleetCard {
                     id: agent_id.to_owned(),
                     status: format!("write {path}"),
@@ -270,10 +273,12 @@ impl SessionServer {
                 self.refresh_locked().await;
             }
             HostEvent::Command {
+                agent,
                 task,
                 command,
                 exit_code,
             } => {
+                let agent_id = agent.as_str();
                 let truncated: String = command.chars().take(40).collect();
                 let card = WireFleetCard {
                     id: agent_id.to_owned(),
@@ -359,7 +364,8 @@ impl SessionServer {
                 drop(net);
                 self.refresh_locked().await;
             }
-            HostEvent::PlanProposed { tasks } => {
+            HostEvent::PlanProposed { agent, tasks } => {
+                let agent_id = agent.as_str();
                 let n = tasks.len();
                 let mut net = self.inner.net.lock().await;
                 net.agent_plan = Some(tasks);
@@ -389,7 +395,8 @@ impl SessionServer {
                 drop(net);
                 self.refresh_locked().await;
             }
-            HostEvent::QuestionsAsked { questions } => {
+            HostEvent::QuestionsAsked { agent, questions } => {
+                let agent_id = agent.as_str();
                 let n = questions.len();
                 let reducer = crate::clarify::Clarify::new(
                     questions
@@ -1566,6 +1573,7 @@ impl SessionServer {
                     file_diffs,
                     diff_truncated,
                     last_cmd: last_cmds.get(&gv.task_id.0).cloned(),
+                    agent: gv.agent.clone(),
                     claimed_by: claim_snapshot.as_ref().and_then(|(gid, idx)| {
                         (gid == &gv.gate_id.0).then(|| seat_labels[*idx].clone())
                     }),
@@ -3460,10 +3468,14 @@ mod tests {
         let task = kontur_core::TaskId("t1".into());
         server
             .host()
-            .record_write(&task, "main.rs", b"fn main() {}\n")
+            .record_write("agent-01", &task, "main.rs", b"fn main() {}\n")
             .await
             .unwrap();
-        server.host().begin_task_gate(task, 0).await.unwrap();
+        server
+            .host()
+            .begin_task_gate("agent-01", task, 0)
+            .await
+            .unwrap();
 
         // Wait — without any further operator messages — for a WireState where
         // gate.is_some() AND the log contains a "wrote" line. This proves the
@@ -3996,10 +4008,13 @@ mod tests {
         let host = server.host().clone();
         let ask = tokio::spawn(async move {
             let mut rx = host
-                .ask_clarification(vec![ClarifyQuestion {
-                    prompt: "target db?".into(),
-                    options: vec!["postgres".into(), "sqlite".into()],
-                }])
+                .ask_clarification(
+                    "agent-01",
+                    vec![ClarifyQuestion {
+                        prompt: "target db?".into(),
+                        options: vec!["postgres".into(), "sqlite".into()],
+                    }],
+                )
                 .await
                 .unwrap();
             loop {
@@ -4793,12 +4808,12 @@ mod tests {
         let task = kontur_core::TaskId("t1".into());
         server
             .host()
-            .record_write(&task, "main.rs", b"fn main() {}\n")
+            .record_write("agent-01", &task, "main.rs", b"fn main() {}\n")
             .await
             .unwrap();
         server
             .host()
-            .begin_task_gate(task.clone(), 0)
+            .begin_task_gate("agent-01", task.clone(), 0)
             .await
             .unwrap();
 
@@ -5184,7 +5199,10 @@ mod tests {
         server
             .inner
             .host
-            .propose_plan(vec!["agent-task-1".into(), "agent-task-2".into()])
+            .propose_plan(
+                "agent-01",
+                vec!["agent-task-1".into(), "agent-task-2".into()],
+            )
             .await
             .unwrap();
 
@@ -5319,7 +5337,7 @@ mod tests {
         server
             .inner
             .host
-            .propose_plan(vec!["task-alpha".into(), "task-beta".into()])
+            .propose_plan("agent-01", vec!["task-alpha".into(), "task-beta".into()])
             .await
             .unwrap();
 
@@ -5528,7 +5546,7 @@ mod tests {
         server
             .inner
             .host
-            .propose_plan(vec!["a".into(), "b".into()])
+            .propose_plan("agent-01", vec!["a".into(), "b".into()])
             .await
             .unwrap();
         tokio::time::timeout(Duration::from_secs(5), wait_for_state(&mut state_rx, |s| {

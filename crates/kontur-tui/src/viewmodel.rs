@@ -165,7 +165,7 @@ mod tests {
 
         let task = TaskId("t1".into());
         ws.apply_write(&task, "a.rs", b"x\n").unwrap();
-        let (gid, _rx) = host.begin_task_gate(task, 0).await.unwrap();
+        let (gid, _rx) = host.begin_task_gate("agent-01", task, 0).await.unwrap();
         let dh = host.pending_gates().await[0].diff_hash;
 
         // Station A casts (blind, sealed).
@@ -211,7 +211,7 @@ mod tests {
 
         let task = TaskId("t1".into());
         ws.apply_write(&task, "a.rs", b"x\n").unwrap();
-        let (gid, _rx) = host.begin_task_gate(task, 0).await.unwrap();
+        let (gid, _rx) = host.begin_task_gate("agent-01", task, 0).await.unwrap();
         let dh = host.pending_gates().await[0].diff_hash;
         for s in [&s1, &s2] {
             let cv = CastVerdict::create(

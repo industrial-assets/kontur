@@ -41,11 +41,13 @@ pub enum ClarifyDecision {
 #[derive(Clone, Debug)]
 pub enum HostEvent {
     Write {
+        agent: String,
         task: TaskId,
         path: String,
         bytes: usize,
     },
     Command {
+        agent: String,
         task: TaskId,
         command: String,
         /// Exit code of the completed command — the event is emitted after
@@ -53,6 +55,7 @@ pub enum HostEvent {
         exit_code: i32,
     },
     GateOpened {
+        agent: String,
         gate_id: GateId,
         task: TaskId,
     },
@@ -68,6 +71,7 @@ pub enum HostEvent {
         new_gate_id: GateId,
     },
     PlanProposed {
+        agent: String,
         tasks: Vec<String>,
     },
     /// Emitted after `steer_plan` routes a replan prompt to the agent.
@@ -76,6 +80,7 @@ pub enum HostEvent {
     },
     /// The agent asked the operators to clarify ambiguity before planning.
     QuestionsAsked {
+        agent: String,
         questions: Vec<ClarifyQuestion>,
     },
     SessionAbandoned,
@@ -102,6 +107,8 @@ pub struct GateView {
     pub escalation_required: bool,
     pub files: Vec<String>,
     pub loc: u32,
+    /// The agent that produced this gate's change.
+    pub agent: String,
 }
 
 /// Terminal summary of a gate, read by the awaiting agent handler.
@@ -209,6 +216,7 @@ impl GateHost {
     /// (idempotent).
     pub async fn propose_plan(
         &self,
+        agent: &str,
         tasks: Vec<String>,
     ) -> Result<watch::Receiver<PlanDecision>, GateHostError> {
         let mut st = self.state.lock().await;
@@ -231,7 +239,10 @@ impl GateHost {
         // approve_plan cannot race past this subscribe.
         let rx = st.plan_decision_tx.subscribe();
         drop(st);
-        let _ = self.events.send(HostEvent::PlanProposed { tasks });
+        let _ = self.events.send(HostEvent::PlanProposed {
+            agent: agent.to_owned(),
+            tasks,
+        });
         Ok(rx)
     }
 
@@ -270,6 +281,7 @@ impl GateHost {
     /// discipline as `propose_plan` so a stale resolution can't bypass consent.
     pub async fn ask_clarification(
         &self,
+        agent: &str,
         questions: Vec<ClarifyQuestion>,
     ) -> Result<watch::Receiver<ClarifyDecision>, GateHostError> {
         let mut st = self.state.lock().await;
@@ -282,7 +294,10 @@ impl GateHost {
         st.questions = Some(questions.clone());
         let rx = st.clarify_decision_tx.subscribe();
         drop(st);
-        let _ = self.events.send(HostEvent::QuestionsAsked { questions });
+        let _ = self.events.send(HostEvent::QuestionsAsked {
+            agent: agent.to_owned(),
+            questions,
+        });
         Ok(rx)
     }
 
@@ -325,12 +340,14 @@ impl GateHost {
     /// Agent face: record a worktree write on a task (not gated).
     pub async fn record_write(
         &self,
+        agent: &str,
         task_id: &TaskId,
         path: &str,
         contents: &[u8],
     ) -> Result<(), GateHostError> {
         self.workspace.apply_write(task_id, path, contents)?;
         let _ = self.events.send(HostEvent::Write {
+            agent: agent.to_owned(),
             task: task_id.clone(),
             path: path.to_owned(),
             bytes: contents.len(),
@@ -341,12 +358,14 @@ impl GateHost {
     /// Agent face: run a command in the worktree (not gated).
     pub async fn run_command(
         &self,
+        agent: &str,
         task_id: &TaskId,
         command: &str,
         cwd: &str,
     ) -> Result<CommandOutput, GateHostError> {
         let out = self.workspace.run_command(task_id, command, cwd)?;
         let _ = self.events.send(HostEvent::Command {
+            agent: agent.to_owned(),
             task: task_id.clone(),
             command: command.to_owned(),
             exit_code: out.exit_code,
@@ -358,6 +377,7 @@ impl GateHost {
     /// the awaiting agent-side handler watches for resolution.
     pub async fn open_gate(
         &self,
+        agent: &str,
         task_id: TaskId,
         provenance: Provenance,
     ) -> (GateId, watch::Receiver<HoldState>) {
@@ -383,6 +403,7 @@ impl GateHost {
         });
         drop(st);
         let _ = self.events.send(HostEvent::GateOpened {
+            agent: agent.to_owned(),
             gate_id: id.clone(),
             task: task_id_for_event,
         });
@@ -495,6 +516,7 @@ impl GateHost {
     /// Composes the workspace + provenance so the server stays thin.
     pub async fn begin_task_gate(
         &self,
+        agent: &str,
         task_id: TaskId,
         tokens: u64,
     ) -> Result<(GateId, watch::Receiver<HoldState>), GateHostError> {
@@ -505,9 +527,13 @@ impl GateHost {
             if st.abandoned {
                 return Err(GateHostError::SessionAbandoned);
             }
-            build_provenance(&st.ctx, &task_id, dh, &frozen, tokens)
+            let mut p = build_provenance(&st.ctx, &task_id, dh, &frozen, tokens);
+            // Attribute the gate to the agent that proposed it (per-agent in a
+            // fleet; the session default otherwise).
+            p.agent_id = agent.to_owned();
+            p
         };
-        Ok(self.open_gate(task_id, provenance).await)
+        Ok(self.open_gate(agent, task_id, provenance).await)
     }
 
     /// Operator face: gates awaiting review, sealing-safe.
@@ -525,6 +551,7 @@ impl GateHost {
                 escalation_required: e.escalation_required,
                 files: e.provenance.files.clone(),
                 loc: e.provenance.loc,
+                agent: e.provenance.agent_id.clone(),
             })
             .collect()
     }
@@ -605,6 +632,7 @@ impl GateHost {
         let id = GateId(format!("gate-{:03}", st.next_gate));
         let task_id_for_event = task_id.clone();
         let provenance = build_provenance(&st.ctx, &task_id, dh, &frozen, 0);
+        let handedit_agent = provenance.agent_id.clone();
         let hold = DualHold::reopen_handedit(
             id.clone(),
             task_id.clone(),
@@ -681,6 +709,7 @@ impl GateHost {
             });
         }
         let _ = self.events.send(HostEvent::GateOpened {
+            agent: handedit_agent,
             gate_id: id.clone(),
             task: task_id_for_event,
         });
@@ -883,6 +912,27 @@ mod tests {
         }
     }
 
+    /// A gate is attributed to the agent that opened it (fleet attribution).
+    #[tokio::test]
+    async fn gate_carries_its_agent() {
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let context = ctx(vec![op1, op2]);
+        let host = GateHost::new(context, ws.clone());
+
+        let task = TaskId("t1".into());
+        ws.apply_write(&task, "a.rs", b"x\n").unwrap();
+        let (_gid, _rx) = host.begin_task_gate("agent-07", task, 0).await.unwrap();
+
+        let pending = host.pending_gates().await;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending[0].agent, "agent-07",
+            "gate must carry its opening agent"
+        );
+    }
+
     /// persist_audit: a resolved gate round-trips through the JSON file and
     /// the reloaded chain verifies; the filename is content-addressed by the
     /// chain head. In-memory workspaces (no audit_dir) persist nothing.
@@ -909,7 +959,7 @@ mod tests {
         let frozen = ws.freeze_task_diff(&task).unwrap();
         let dh = diff_hash(&frozen);
         let prov = build_provenance(&context, &task, dh, &frozen, 100);
-        let (gid, _rx) = host.open_gate(task, prov).await;
+        let (gid, _rx) = host.open_gate("agent-01", task, prov).await;
         host.submit_verdict(&gid, go_verdict(1, &gid, dh))
             .await
             .unwrap();
@@ -972,7 +1022,7 @@ mod tests {
         let context = ctx(vec![op1, op2]);
         let host = GateHost::new(context, ws);
         let mut events = host.subscribe_events();
-        host.run_command(&TaskId("t1".into()), "cargo test", ".")
+        host.run_command("agent-01", &TaskId("t1".into()), "cargo test", ".")
             .await
             .unwrap();
         match events.recv().await.unwrap() {
@@ -1037,7 +1087,7 @@ mod tests {
         let frozen = ws.freeze_task_diff(&task).unwrap();
         let dh = diff_hash(&frozen);
         let prov = build_provenance(ctx, &task, dh, &frozen, 100);
-        let (gid, _rx) = host.open_gate(task, prov).await;
+        let (gid, _rx) = host.open_gate("agent-01", task, prov).await;
         (gid, dh)
     }
 
@@ -1143,7 +1193,7 @@ mod tests {
 
         let task = TaskId("t1".into());
         ws.apply_write(&task, "a.rs", b"x\n").unwrap();
-        let (gid, _rx) = host.begin_task_gate(task, 42).await.unwrap();
+        let (gid, _rx) = host.begin_task_gate("agent-01", task, 42).await.unwrap();
         let dh = host.pending_gates().await[0].diff_hash;
 
         host.submit_verdict(&gid, go_verdict(1, &gid, dh))
@@ -1302,7 +1352,7 @@ mod tests {
         // Rework: new write, fresh gate, both go.
         let task = TaskId("t1".into());
         ws.apply_write(&task, "a.rs", b"reworked\n").unwrap();
-        let (gid2, _rx) = host.begin_task_gate(task, 0).await.unwrap();
+        let (gid2, _rx) = host.begin_task_gate("agent-01", task, 0).await.unwrap();
         let dh2 = host.pending_gates().await[0].diff_hash;
         host.submit_verdict(&gid2, go_verdict(1, &gid2, dh2))
             .await
@@ -1413,7 +1463,10 @@ mod tests {
             prompt: "target database?".into(),
             options: vec!["postgres".into(), "sqlite".into()],
         }];
-        let mut rx = host.ask_clarification(questions.clone()).await.unwrap();
+        let mut rx = host
+            .ask_clarification("agent-01", questions.clone())
+            .await
+            .unwrap();
         assert_eq!(host.asked_questions().await, Some(questions.clone()));
         assert_eq!(*rx.borrow(), ClarifyDecision::Pending);
 
@@ -1422,7 +1475,7 @@ mod tests {
         let mut got = false;
         loop {
             match ev_rx.try_recv() {
-                Ok(HostEvent::QuestionsAsked { questions: q }) => {
+                Ok(HostEvent::QuestionsAsked { questions: q, .. }) => {
                     assert_eq!(q, questions);
                     got = true;
                     break;
@@ -1462,7 +1515,7 @@ mod tests {
         let mut ev_rx = host.subscribe_events();
 
         let tasks = vec!["add caching".to_string(), "write tests".to_string()];
-        let mut rx = host.propose_plan(tasks.clone()).await.unwrap();
+        let mut rx = host.propose_plan("agent-01", tasks.clone()).await.unwrap();
 
         // proposed_plan() returns the tasks.
         assert_eq!(host.proposed_plan().await, Some(tasks.clone()));
@@ -1475,7 +1528,7 @@ mod tests {
         let mut got_event = false;
         loop {
             match ev_rx.try_recv() {
-                Ok(HostEvent::PlanProposed { tasks: t }) => {
+                Ok(HostEvent::PlanProposed { tasks: t, .. }) => {
                     assert_eq!(t, tasks);
                     got_event = true;
                     break;
@@ -1535,8 +1588,10 @@ mod tests {
         let ws = Arc::new(InMemoryWorkspace::new());
         let host = GateHost::new(ctx(vec![op1, op2]), ws);
 
-        host.propose_plan(vec!["task-a".to_string()]).await.unwrap();
-        host.propose_plan(vec!["task-b".to_string(), "task-c".to_string()])
+        host.propose_plan("agent-01", vec!["task-a".to_string()])
+            .await
+            .unwrap();
+        host.propose_plan("agent-01", vec!["task-b".to_string(), "task-c".to_string()])
             .await
             .unwrap();
 
@@ -1557,7 +1612,10 @@ mod tests {
         let host = GateHost::new(ctx(vec![op1, op2]), ws);
 
         // Propose plan A and approve it.
-        let mut rx1 = host.propose_plan(vec!["task-a".to_string()]).await.unwrap();
+        let mut rx1 = host
+            .propose_plan("agent-01", vec!["task-a".to_string()])
+            .await
+            .unwrap();
         host.approve_plan().await;
 
         // The original receiver sees Approved.
@@ -1569,7 +1627,10 @@ mod tests {
         );
 
         // Re-propose plan B: fresh watch channel, state reset to Pending.
-        let mut rx2 = host.propose_plan(vec!["task-b".to_string()]).await.unwrap();
+        let mut rx2 = host
+            .propose_plan("agent-01", vec!["task-b".to_string()])
+            .await
+            .unwrap();
         assert_eq!(
             *rx2.borrow(),
             PlanDecision::Pending,
@@ -1606,7 +1667,7 @@ mod tests {
         let mut ev_rx = host.subscribe_events();
 
         let mut rx = host
-            .propose_plan(vec!["task-a".to_string(), "task-b".to_string()])
+            .propose_plan("agent-01", vec!["task-a".to_string(), "task-b".to_string()])
             .await
             .unwrap();
         assert_eq!(*rx.borrow(), PlanDecision::Pending);
@@ -1654,7 +1715,10 @@ mod tests {
         let host = GateHost::new(ctx(vec![op1, op2]), ws);
 
         // Propose plan A, steer it.
-        let mut rx1 = host.propose_plan(vec!["task-a".to_string()]).await.unwrap();
+        let mut rx1 = host
+            .propose_plan("agent-01", vec!["task-a".to_string()])
+            .await
+            .unwrap();
         host.steer_plan("rethink".to_string()).await;
         let _ = tokio::time::timeout(Duration::from_millis(100), rx1.changed()).await;
         assert_eq!(
@@ -1663,7 +1727,10 @@ mod tests {
         );
 
         // Re-propose plan B: fresh channel starts at Pending.
-        let mut rx2 = host.propose_plan(vec!["task-b".to_string()]).await.unwrap();
+        let mut rx2 = host
+            .propose_plan("agent-01", vec!["task-b".to_string()])
+            .await
+            .unwrap();
         assert_eq!(
             *rx2.borrow(),
             PlanDecision::Pending,
@@ -1695,10 +1762,15 @@ mod tests {
 
         // Record a write → Write event.
         let task = TaskId("t1".into());
-        host.record_write(&task, "a.rs", b"hello\n").await.unwrap();
+        host.record_write("agent-01", &task, "a.rs", b"hello\n")
+            .await
+            .unwrap();
 
         // Open a gate via begin_task_gate → GateOpened event.
-        let (gid, _watch_rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+        let (gid, _watch_rx) = host
+            .begin_task_gate("agent-01", task.clone(), 10)
+            .await
+            .unwrap();
         let dh = host.pending_gates().await[0].diff_hash;
 
         // Cast two go verdicts → GateResolved{Satisfied} event.
@@ -1838,7 +1910,10 @@ mod tests {
         let task = TaskId("t2".into());
         ws.apply_write(&task, "b.rs", b"y\n").unwrap();
 
-        let err = host.begin_task_gate(task, 10).await.unwrap_err();
+        let err = host
+            .begin_task_gate("agent-01", task, 10)
+            .await
+            .unwrap_err();
         assert_eq!(err, GateHostError::SessionAbandoned);
     }
 
@@ -1880,7 +1955,7 @@ mod tests {
         // Open a gate and satisfy it so provenance is captured in the audit record.
         let task = TaskId("t1".into());
         ws.apply_write(&task, "a.rs", b"x\n").unwrap();
-        let (gid, _rx) = host.begin_task_gate(task, 0).await.unwrap();
+        let (gid, _rx) = host.begin_task_gate("agent-01", task, 0).await.unwrap();
         let dh = host.pending_gates().await[0].diff_hash;
         host.submit_verdict(&gid, go_verdict(1, &gid, dh))
             .await
@@ -1913,7 +1988,7 @@ mod tests {
         host.abandon_session().await.unwrap();
 
         let err = host
-            .propose_plan(vec!["task-a".to_string()])
+            .propose_plan("agent-01", vec!["task-a".to_string()])
             .await
             .unwrap_err();
         assert_eq!(err, GateHostError::SessionAbandoned);
@@ -1938,7 +2013,7 @@ mod tests {
         // Open a gate and park on its watch receiver.
         let task = TaskId("t1".into());
         ws.apply_write(&task, "a.rs", b"x\n").unwrap();
-        let (_gid, mut rx) = host.begin_task_gate(task, 10).await.unwrap();
+        let (_gid, mut rx) = host.begin_task_gate("agent-01", task, 10).await.unwrap();
 
         // The receiver should currently see Open.
         assert_eq!(*rx.borrow(), HoldState::Open);
@@ -1975,7 +2050,10 @@ mod tests {
 
         // Agent opens a gate and parks on rx.
         ws.apply_write(&task, "a.rs", b"agent\n").unwrap();
-        let (_orig_gid, mut orig_rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+        let (_orig_gid, mut orig_rx) = host
+            .begin_task_gate("agent-01", task.clone(), 10)
+            .await
+            .unwrap();
 
         // Hand-edit supersedes: orig_rx becomes a carried watcher on the new entry.
         host.hand_edit(task.clone(), "a.rs", b"human\n", op1)
@@ -2015,7 +2093,10 @@ mod tests {
 
         // Open the initial gate (simulates begin_task_gate after agent writes).
         ws.apply_write(&task, "a.rs", b"agent\n").unwrap();
-        let (original_gate_id, _rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+        let (original_gate_id, _rx) = host
+            .begin_task_gate("agent-01", task.clone(), 10)
+            .await
+            .unwrap();
 
         // Confirm one pending gate exists.
         assert_eq!(host.pending_gates().await.len(), 1);
@@ -2052,7 +2133,10 @@ mod tests {
         let host = GateHost::new(ctx(vec![op1, op2]), ws.clone());
 
         ws.apply_write(&task, "a.rs", b"agent\n").unwrap();
-        let (original_gate_id, _rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+        let (original_gate_id, _rx) = host
+            .begin_task_gate("agent-01", task.clone(), 10)
+            .await
+            .unwrap();
         let original_dh = host.pending_gates().await[0].diff_hash;
 
         // Supersede with a hand-edit.
@@ -2088,7 +2172,10 @@ mod tests {
 
         // Open, satisfy (resolve) the first gate.
         ws.apply_write(&task, "a.rs", b"v1\n").unwrap();
-        let (gid1, _rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+        let (gid1, _rx) = host
+            .begin_task_gate("agent-01", task.clone(), 10)
+            .await
+            .unwrap();
         let dh1 = host.pending_gates().await[0].diff_hash;
         host.submit_verdict(&gid1, go_verdict(1, &gid1, dh1))
             .await
@@ -2104,7 +2191,9 @@ mod tests {
         // Now open a second gate for the same task (simulates rework) and then
         // hand-edit to supersede it. The resolved gate's record must survive.
         ws.apply_write(&task, "a.rs", b"v2\n").unwrap();
-        host.begin_task_gate(task.clone(), 10).await.unwrap();
+        host.begin_task_gate("agent-01", task.clone(), 10)
+            .await
+            .unwrap();
 
         // Hand-edit supersedes the second (Open) gate. The first (Satisfied) gate
         // was already removed from holds at satisfaction time (it's in the chain,
@@ -2162,7 +2251,10 @@ mod tests {
 
         // Agent opens gate and parks on the watch receiver.
         ws.apply_write(&task, "a.rs", b"agent\n").unwrap();
-        let (original_gid, mut original_rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+        let (original_gid, mut original_rx) = host
+            .begin_task_gate("agent-01", task.clone(), 10)
+            .await
+            .unwrap();
 
         // Operator hand-edits, superseding the original gate.
         let (fresh_gid, _fresh_rx) = host
@@ -2225,7 +2317,10 @@ mod tests {
         );
 
         ws.apply_write(&task, "a.rs", b"agent\n").unwrap();
-        let (original_gid, mut original_rx) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+        let (original_gid, mut original_rx) = host
+            .begin_task_gate("agent-01", task.clone(), 10)
+            .await
+            .unwrap();
 
         let (fresh_gid, _fresh_rx) = host
             .hand_edit(task.clone(), "a.rs", b"human\n", op1)
@@ -2287,7 +2382,10 @@ mod tests {
 
         // Agent gate.
         ws.apply_write(&task, "a.rs", b"agent\n").unwrap();
-        let (gid_orig, mut rx_orig) = host.begin_task_gate(task.clone(), 10).await.unwrap();
+        let (gid_orig, mut rx_orig) = host
+            .begin_task_gate("agent-01", task.clone(), 10)
+            .await
+            .unwrap();
 
         // First hand-edit: supersedes agent gate.
         let (gid_mid, mut rx_mid) = host
