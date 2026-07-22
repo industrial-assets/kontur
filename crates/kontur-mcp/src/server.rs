@@ -12,6 +12,9 @@ use crate::gatehost::{ClarifyDecision, ClarifyQuestion, GateHost, PlanDecision};
 #[derive(Clone)]
 pub struct KonturServer {
     host: Arc<GateHost>,
+    /// The id of the agent this MCP connection serves (attributes its writes,
+    /// commands, plan, and gates in a fleet). Defaults to the session agent.
+    agent: String,
 }
 
 #[derive(Serialize, Deserialize, rmcp::schemars::JsonSchema)]
@@ -89,7 +92,18 @@ pub struct AskClarificationOutput {
 
 impl KonturServer {
     pub fn new(host: Arc<GateHost>) -> Self {
-        KonturServer { host }
+        KonturServer {
+            host,
+            agent: "agent-01".to_string(),
+        }
+    }
+
+    /// Construct a server bound to a specific agent id (fleet dispatch).
+    pub fn with_agent(host: Arc<GateHost>, agent: impl Into<String>) -> Self {
+        KonturServer {
+            host,
+            agent: agent.into(),
+        }
     }
 }
 
@@ -108,7 +122,7 @@ impl KonturServer {
         }): Parameters<WriteFileInput>,
     ) -> Result<Json<OkOutput>, ErrorData> {
         self.host
-            .record_write(&TaskId(task_id), &path, contents.as_bytes())
+            .record_write(&self.agent, &TaskId(task_id), &path, contents.as_bytes())
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         Ok(Json(OkOutput { ok: true }))
@@ -128,7 +142,7 @@ impl KonturServer {
     ) -> Result<Json<CommandOut>, ErrorData> {
         let out = self
             .host
-            .run_command(&TaskId(task_id), &command, &cwd)
+            .run_command(&self.agent, &TaskId(task_id), &command, &cwd)
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         Ok(Json(CommandOut {
@@ -147,7 +161,7 @@ impl KonturServer {
     ) -> Result<Json<ProposePlanOutput>, ErrorData> {
         let mut rx = self
             .host
-            .propose_plan(tasks)
+            .propose_plan(&self.agent, tasks)
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
@@ -204,7 +218,7 @@ impl KonturServer {
             .collect();
         let mut rx = self
             .host
-            .ask_clarification(questions)
+            .ask_clarification(&self.agent, questions)
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         loop {
@@ -231,7 +245,7 @@ impl KonturServer {
         let task_id = TaskId(task_id);
         let (gate_id, mut rx) = self
             .host
-            .begin_task_gate(task_id, tokens)
+            .begin_task_gate(&self.agent, task_id, tokens)
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 

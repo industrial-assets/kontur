@@ -31,6 +31,7 @@ pub async fn run_agent(agent: ScriptedAgent, server: SessionServer) {
         server
             .host()
             .record_write(
+                "agent-01",
                 &TaskId(task.id.clone()),
                 &task.path,
                 task.contents.as_bytes(),
@@ -41,7 +42,7 @@ pub async fn run_agent(agent: ScriptedAgent, server: SessionServer) {
         // Open a gate
         let (gate_id, mut rx) = server
             .host()
-            .begin_task_gate(TaskId(task.id.clone()), 100 * (i as u64 + 1))
+            .begin_task_gate("agent-01", TaskId(task.id.clone()), 100 * (i as u64 + 1))
             .await
             .unwrap();
 
@@ -110,6 +111,7 @@ pub async fn run_agent(agent: ScriptedAgent, server: SessionServer) {
             server
                 .host()
                 .record_write(
+                    "agent-01",
                     &TaskId(task.id.clone()),
                     &task.path,
                     task.contents.as_bytes(),
@@ -119,7 +121,7 @@ pub async fn run_agent(agent: ScriptedAgent, server: SessionServer) {
 
             let (new_gate_id, mut new_rx) = server
                 .host()
-                .begin_task_gate(TaskId(task.id.clone()), 100 * (i as u64 + 1))
+                .begin_task_gate("agent-01", TaskId(task.id.clone()), 100 * (i as u64 + 1))
                 .await
                 .unwrap();
 
