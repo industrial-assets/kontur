@@ -414,6 +414,9 @@ impl GateHost {
         path: &str,
         contents: &[u8],
     ) -> Result<(), GateHostError> {
+        // Bind the task to its agent before the write so a per-agent-worktree
+        // workspace routes this task's effects to the right worktree.
+        self.workspace.assign_task(task_id, agent);
         self.workspace.apply_write(task_id, path, contents)?;
         let _ = self.events.send(HostEvent::Write {
             agent: agent.to_owned(),
@@ -432,6 +435,8 @@ impl GateHost {
         command: &str,
         cwd: &str,
     ) -> Result<CommandOutput, GateHostError> {
+        // A command may be a task's first touch; bind it before routing.
+        self.workspace.assign_task(task_id, agent);
         let out = self.workspace.run_command(task_id, command, cwd)?;
         let _ = self.events.send(HostEvent::Command {
             agent: agent.to_owned(),
@@ -589,6 +594,9 @@ impl GateHost {
         task_id: TaskId,
         tokens: u64,
     ) -> Result<(GateId, watch::Receiver<HoldState>), GateHostError> {
+        // Idempotent (first-write already assigned it) but guarantees the task
+        // is routed to its agent's worktree before we freeze the diff.
+        self.workspace.assign_task(&task_id, agent);
         let frozen = self.workspace.freeze_task_diff(&task_id)?;
         let dh = diff_hash(&frozen);
         let provenance = {

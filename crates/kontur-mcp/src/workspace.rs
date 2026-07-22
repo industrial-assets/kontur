@@ -23,6 +23,12 @@ pub struct CommandOutput {
 /// The worktree side-effect port. The gate host owns an `Arc<dyn Workspace>`.
 /// Implementations must be cheap to call under the session lock (sync, fast).
 pub trait Workspace: Send + Sync {
+    /// Bind a task to the agent that owns it, so per-agent-worktree
+    /// implementations (`FleetWorkspace`) can route this task's effects to the
+    /// right worktree. The `GateHost` calls this before a task's first write.
+    /// First assignment wins (a task belongs to exactly one agent). Default:
+    /// no-op — single-worktree implementations ignore it.
+    fn assign_task(&self, _task_id: &TaskId, _agent: &str) {}
     fn apply_write(
         &self,
         task_id: &TaskId,

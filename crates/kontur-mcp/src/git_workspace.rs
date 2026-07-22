@@ -20,7 +20,7 @@ pub struct GitWorkspace {
     base: String,
 }
 
-fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, WorkspaceError> {
+pub(crate) fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, WorkspaceError> {
     // Kontur-issued commits are mechanical (task commits, squash-merge); the
     // signed, tamper-evident record is the audit chain, not git signatures.
     // Disabling gpg here keeps sessions immune to gpg-agent failures under a

@@ -2,6 +2,7 @@
 //! through the four-eyes `kontur-core` engine and emits the audit record.
 
 pub mod error;
+pub mod fleet_workspace;
 pub mod fs_workspace;
 pub mod gatehost;
 pub mod git_workspace;
@@ -11,6 +12,7 @@ pub mod session;
 pub mod workspace;
 
 pub use error::{GateHostError, WorkspaceError};
+pub use fleet_workspace::FleetWorkspace;
 pub use fs_workspace::FsWorkspace;
 pub use gatehost::{
     ClarifyDecision, ClarifyQuestion, GateFinal, GateHost, GateProgress, GateView, HostEvent,
