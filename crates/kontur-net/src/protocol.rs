@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Wire protocol version. Bump on any incompatible change to the message
 /// types below. A client that omits the field (pre-versioning build) is read
 /// as version 0, which mismatches any real version and is rejected cleanly.
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// Serde default for `Hello.protocol` — pre-versioning clients deserialize to 0.
 fn protocol_v0() -> u32 {
@@ -58,6 +58,10 @@ pub enum ClientMsg {
         question: usize,
         choice: WireChoice,
     },
+    /// Decline the agent's proposed split — the agent continues solo. Any one
+    /// seat may decline (conservative: prefer solo). Approval, by contrast,
+    /// requires both seats (via Ready).
+    DeclineSplit,
     /// Toggle this seat's AFK (away-from-keyboard) presence flag. Presence
     /// only — never affects verdict eligibility or any dual-consent step.
     SetAfk {
@@ -152,6 +156,12 @@ pub enum WirePhase {
     Clarify {
         questions: Vec<WireQuestion>,
     },
+    /// The agent proposed splitting into parallel streams; operators approve or
+    /// decline before any fan-out.
+    Split {
+        streams: Vec<WireStream>,
+        agent: String,
+    },
     Executing,
     Closed {
         gates: usize,
@@ -174,6 +184,13 @@ pub struct WireQuestion {
     pub picks: [Option<String>; 2],
     /// The resolved answer(s), once this question is settled.
     pub resolved: Option<Vec<String>>,
+}
+
+/// One proposed parallel stream in a split.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct WireStream {
+    pub title: String,
+    pub detail: String,
 }
 
 /// A seat's answer to a clarification question.

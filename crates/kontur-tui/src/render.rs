@@ -134,6 +134,11 @@ pub fn help_lines(active: &ActiveRegion, host_unlinked: bool) -> Vec<String> {
             out.push("  p    edit the instruction".into());
             out.push("  y    mark ready to dispatch (needs both)".into());
         }
+        ActiveRegion::Split { .. } => {
+            out.push("SPLIT".into());
+            out.push("  y    approve the split (needs both seats)".into());
+            out.push("  n    decline — keep the agent solo".into());
+        }
         ActiveRegion::Clarify { .. } => {
             out.push("CLARIFY".into());
             out.push("  j/k  select question".into());
@@ -680,6 +685,39 @@ fn render_phase_card(frame: &mut Frame, area: Rect, active: &ActiveRegion) {
             frame.render_widget(
                 Paragraph::new(lines)
                     .block(Block::bordered().title("CLARIFY — agent needs answers"))
+                    .wrap(Wrap { trim: true }),
+                area,
+            );
+        }
+        ActiveRegion::Split {
+            agent,
+            streams,
+            ready,
+        } => {
+            let a_mark = if ready[0] { "■" } else { "□" };
+            let b_mark = if ready[1] { "■" } else { "□" };
+            let mut lines: Vec<Line> = Vec::new();
+            lines.push(Line::from(format!(
+                " {agent} proposes splitting into {} parallel agents:",
+                streams.len()
+            )));
+            for (i, (title, detail)) in streams.iter().enumerate() {
+                lines.push(Line::from(Span::styled(
+                    format!("  {}. {title}", i + 1),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(format!("     {detail}")));
+            }
+            lines.push(Line::from(format!(
+                " SPLIT GATE   A ⟨{}⟩ approve   B ⟨{}⟩ approve",
+                a_mark, b_mark
+            )));
+            lines.push(Line::from(
+                " [y] approve (needs both) · [n] decline (keeps it solo)",
+            ));
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .block(Block::bordered().title("SPLIT — agent asks to parallelize"))
                     .wrap(Wrap { trim: true }),
                 area,
             );

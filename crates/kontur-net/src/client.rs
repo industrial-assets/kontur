@@ -198,6 +198,10 @@ impl SessionClient {
         self.send(ClientMsg::SetAfk { afk }).await
     }
 
+    pub async fn decline_split(&self) -> io::Result<()> {
+        self.send(ClientMsg::DeclineSplit).await
+    }
+
     pub async fn resolve_join(
         &self,
         operator: kontur_core::OperatorId,

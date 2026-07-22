@@ -59,6 +59,8 @@ pub enum Action {
     /// Host-only: approve / reject a pending BYO operator's join request.
     ApproveJoin,
     RejectJoin,
+    /// Decline the agent's proposed split (keeps it solo).
+    DeclineSplit,
     /// Move the highlighted clarification question.
     ClarifyNext,
     ClarifyPrev,
@@ -141,6 +143,7 @@ pub fn map_key(
         KeyCode::Char('z') => Action::ToggleAfk,
         KeyCode::Char('a') => Action::ApproveJoin,
         KeyCode::Char('x') => Action::RejectJoin,
+        KeyCode::Char('n') => Action::DeclineSplit,
         KeyCode::Tab => Action::CycleFile,
         KeyCode::Char('y') => Action::Ready,
         KeyCode::Char('p') => Action::PromptBegin,

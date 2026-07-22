@@ -25,6 +25,7 @@ Pair programming assumed a driver at the keyboard and a navigator watching the c
 ## How it works
 
 - **Compose the prompt.** Either seat drafts/edits it in-console ([p]) — multi-line (alt+↵), cursor editing, paste-safe; the other seat watches the draft live, keystroke by keystroke; every edit resets both ready marks; both mark ready to dispatch.
+- **Split, only if it helps.** The agent works solo by default. If the work has genuinely independent parallel streams (e.g. backend and frontend), it *proposes* a split into a fleet and waits — both operators approve (`[y]`) or one declines (`[n]`, keeping it solo). Each agent still produces small, single-concern gated chunks, clearly attributed to its agent and task.
 - **Clarify first.** If the instruction is genuinely ambiguous, the agent asks the operators multiple-choice questions (each with a "provide your own answer" option) and waits — it never assumes. Both operators answer; if they disagree, the question re-asks as *[A's answer / B's answer / accept both]* until they converge.
 - **Plan next.** The agent proposes its task list of bounded, single-concern changes and is blocked until both seats approve it — the plan gate is enforced, not advisory. Either seat can select (`j`/`k`), edit (`e`), delete (`d`), or reorder (`<`/`>`) tasks; any edit resets both ready flags. The approved list is returned to the agent verbatim; steer-first approach preferred — `[r]` routes a revision prompt to the agent.
 - **One task at a time.** Agents work sequentially; each finished change parks at a gate.

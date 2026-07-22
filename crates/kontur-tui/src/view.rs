@@ -139,6 +139,13 @@ pub enum ActiveRegion {
         selected: usize,
         own: usize,
     },
+    /// The agent proposed splitting into parallel streams; operators approve
+    /// (both [y]) or decline ([n]).
+    Split {
+        agent: String,
+        streams: Vec<(String, String)>,
+        ready: [bool; 2],
+    },
     SessionClosed(AuditSummary),
 }
 
