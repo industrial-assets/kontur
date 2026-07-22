@@ -138,7 +138,7 @@ earlier prompt-entry parallel toggle.)*
 
 ### Audit & provenance
 - **FR-20** Every gate emits a signed, immutable audit record at gate time (see §9), hash-chained to the previous record so the sequence is tamper-evident. *(implemented: signed SHA-256 hash-chained records; persisted to `.kontur/audit-<head>.json` at close and verifiable with `kontur audit`)*
-- **FR-21** The final merge commit carries maker-checker **git trailers** (`Reviewed-by: …` per operator) plus a content-addressed link to the full record. An inline session transcript in the commit message is **optional**; capturing the record itself is not. *(implemented: `Reviewed-by:` trailers per operator plus an `Audit-chain: sha256:<head>` trailer linking the persisted, content-addressed record)*
+- **FR-21** The final merge commit carries maker-checker **git trailers** (`Reviewed-by: …` per operator) plus a content-addressed link to the full record. An inline session transcript in the commit message is **optional**; capturing the record itself is not. *(implemented: `Reviewed-by:` trailers per operator plus an `Audit-chain: sha256:<head>` trailer; the content-addressed record (`.kontur/audit-<head>.json`) is committed into the same reviewed merge commit, so the evidence travels with the repo)*
 
 ### Exception handling
 - **FR-22** Blocked (dependency unresolved), Failed (agent error/stuck → human decision: retry / re-prompt / abandon), and Abandoned (supervisor kill-switch, terminal) states are first-class. *(kill-switch/ABANDONED implemented 20 Jul 2026; FAILED surfaced on agent exit)*
