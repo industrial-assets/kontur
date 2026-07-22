@@ -458,9 +458,15 @@ fn panes(
             render_verdict_bar(frame, right[i], card);
         }
         other => {
-            render_phase_card(frame, cols[1], other);
+            render_phase_card(frame, cols[1], other, view.spinner_frame);
         }
     }
+}
+
+/// The four-glyph classic terminal spinner, advanced by the frame counter.
+fn spinner_glyph(frame: u8) -> char {
+    const FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+    FRAMES[(frame as usize) % FRAMES.len()]
 }
 
 fn render_files_bar(
@@ -586,12 +592,24 @@ fn render_verdict_bar(frame: &mut Frame, area: Rect, card: &crate::view::GateCar
     );
 }
 
-fn render_phase_card(frame: &mut Frame, area: Rect, active: &ActiveRegion) {
+fn render_phase_card(frame: &mut Frame, area: Rect, active: &ActiveRegion, spinner_frame: u8) {
     match active {
         ActiveRegion::Idle => {
             frame.render_widget(
                 Paragraph::new(" no task dispatched — draft an instruction to begin")
                     .block(Block::bordered().title("PROMPT")),
+                area,
+            );
+        }
+        ActiveRegion::Working { note } => {
+            // Calm busy indicator: an animated spinner + a terse note. Nothing
+            // for a human to do here, so it stays dim.
+            let line = Line::from(Span::styled(
+                format!(" {} {note}…", spinner_glyph(spinner_frame)),
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+            frame.render_widget(
+                Paragraph::new(line).block(Block::bordered().title("AGENT")),
                 area,
             );
         }
@@ -866,6 +884,7 @@ mod tests {
             link_lost: false,
             cursor: None,
             blink_on: false,
+            spinner_frame: 0,
             join_request: None,
         }
     }

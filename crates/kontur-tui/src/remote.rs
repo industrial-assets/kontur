@@ -165,6 +165,13 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
                 ready,
             }
         }
+        WirePhase::PlanReview { tasks } if tasks.is_empty() => {
+            // Dispatch was approved but the agent has not proposed a plan yet —
+            // show the agent as busy rather than an empty PLAN panel.
+            ActiveRegion::Working {
+                note: "agent is working out the task list".into(),
+            }
+        }
         WirePhase::PlanReview { tasks } => {
             let ready = [
                 state.seats.first().map(|s| s.ready).unwrap_or(false),
@@ -215,7 +222,10 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
             if let Some(wg) = &state.gate {
                 ActiveRegion::Gate(wire_gate_to_card(wg, &stations))
             } else {
-                ActiveRegion::Idle
+                // Between gates: the agent is working the next task.
+                ActiveRegion::Working {
+                    note: "agent is working".into(),
+                }
             }
         }
         WirePhase::Closed {
@@ -262,6 +272,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
         link_lost: false,
         cursor: None,
         blink_on: false,
+        spinner_frame: 0,
         join_request: None,
     }
 }
@@ -713,6 +724,7 @@ pub async fn run_remote(
             String::new()
         };
         view.blink_on = blink_on;
+        view.spinner_frame = blink_frame as u8;
         if let Some((text, caret_col)) =
             compose_notice(&compose, &compose_buf, compose_cursor, &warn)
         {
@@ -1476,6 +1488,43 @@ mod tests {
             claimed_by: None,
             discuss: Vec::new(),
         }
+    }
+
+    // While the agent is working out the task list (PlanReview with no plan
+    // yet) the console shows a busy Working region, not an empty PLAN panel.
+    #[test]
+    fn empty_plan_shows_agent_working() {
+        let own = op(1);
+        let state = base_state(WirePhase::PlanReview { tasks: vec![] });
+        match wire_to_view(&state, own, 0).active {
+            ActiveRegion::Working { note } => assert!(note.contains("task list")),
+            other => panic!("expected Working, got {other:?}"),
+        }
+    }
+
+    // Once the agent proposes a real plan, the PLAN review region appears.
+    #[test]
+    fn nonempty_plan_shows_plan_region() {
+        let own = op(1);
+        let state = base_state(WirePhase::PlanReview {
+            tasks: vec!["add caching".into()],
+        });
+        assert!(matches!(
+            wire_to_view(&state, own, 0).active,
+            ActiveRegion::Plan { .. }
+        ));
+    }
+
+    // Executing with no gate = the agent is working the next task → Working,
+    // not a bare Idle "no task dispatched" panel.
+    #[test]
+    fn executing_without_gate_shows_agent_working() {
+        let own = op(1);
+        let state = base_state(WirePhase::Executing);
+        assert!(matches!(
+            wire_to_view(&state, own, 0).active,
+            ActiveRegion::Working { .. }
+        ));
     }
 
     // The instruction is surfaced after dispatch (PlanReview + Executing) and

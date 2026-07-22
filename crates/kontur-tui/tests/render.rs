@@ -60,6 +60,7 @@ fn base(active: ActiveRegion) -> SessionView {
         link_lost: false,
         cursor: None,
         blink_on: false,
+        spinner_frame: 0,
         join_request: None,
     }
 }
@@ -76,6 +77,18 @@ fn banner_and_status_render() {
     assert!(s.contains("КОНТУР-1"));
     assert!(s.contains("4-EYES ON"));
     assert!(s.contains("NEEDS YOU"));
+}
+
+#[test]
+fn working_region_shows_agent_panel_with_spinner_and_note() {
+    let mut view = base(ActiveRegion::Working {
+        note: "agent is working out the task list".into(),
+    });
+    view.spinner_frame = 1; // '/' frame
+    let s = draw(&view);
+    assert!(s.contains("AGENT"), "panel titled AGENT");
+    assert!(s.contains("agent is working out the task list"));
+    assert!(s.contains('/'), "spinner glyph for frame 1");
 }
 
 #[test]

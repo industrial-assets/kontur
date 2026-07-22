@@ -182,8 +182,18 @@ The agent analyses and returns a task list — a DAG of bounded, single-concern 
  └────────────────────────────────────────────────────────────────┘
 ```
 
+> **Implemented (2026-07-22):** the PLAN panel appears only once the agent has actually returned a task list. In the gap between dispatch approval and the plan arriving — while the agent is still working it out — the right pane shows a calm busy indicator instead of an empty PLAN gate, so operators aren't misled into thinking there's something to review:
+>
+> ```
+>  ┌ AGENT ──────────────────────────────────────────────────────────┐
+>  │  / agent is working out the task list…                          │
+>  └────────────────────────────────────────────────────────────────┘
+> ```
+>
+> The `/` is a slow classic spinner (`|` `/` `-` `\`). The same AGENT panel shows during execution between gates (`agent is working…`). It stays dim — nothing for a human to do — and the attention row reads calmly (`waiting on the agent's plan`).
+
 ### 6.4 Execution — the watch-floor
-The default working view. Agents run through tasks sequentially; the fleet is calm except where a human is needed.
+The default working view. Agents run through tasks sequentially; the fleet is calm except where a human is needed. Between gates — while an agent is producing the next change — the right pane shows the calm AGENT spinner panel (see §6.3) rather than a bare idle pane.
 
 ```
  LINK BOTH-STATIONS SYNC || 4-EYES ON || FLEET 3 (1 NEEDS YOU)

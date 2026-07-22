@@ -119,6 +119,13 @@ pub struct AuditSummary {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ActiveRegion {
     Idle,
+    /// The agent is busy and there is nothing for a human to do yet — shown
+    /// with a calm animated spinner. Used in the gaps where a phase is active
+    /// but its content has not arrived: dispatch approved but no plan proposed
+    /// yet, or executing between gates. `note` is the terse status line.
+    Working {
+        note: String,
+    },
     Prompt {
         prompt: String,
         ready: [bool; 2],
@@ -209,6 +216,9 @@ pub struct SessionView {
     pub cursor: Option<CursorTarget>,
     /// Whether this frame is a cursor-visible ("on") frame.
     pub blink_on: bool,
+    /// Monotonic frame counter used to animate the agent-working spinner. Only
+    /// read when `active` is `ActiveRegion::Working`; ignored otherwise.
+    pub spinner_frame: u8,
     /// Host-only: path to the agent's session log, shown as a persistent
     /// footer so the host can tail the agent's narration. None on the operator
     /// console (the log is host-local and unreachable from there).
