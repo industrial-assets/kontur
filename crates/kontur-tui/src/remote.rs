@@ -197,6 +197,20 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
                 own: own_idx,
             }
         }
+        WirePhase::Split { streams, agent } => {
+            let ready = [
+                state.seats.first().map(|s| s.ready).unwrap_or(false),
+                state.seats.get(1).map(|s| s.ready).unwrap_or(false),
+            ];
+            ActiveRegion::Split {
+                agent: agent.clone(),
+                streams: streams
+                    .iter()
+                    .map(|s| (s.title.clone(), s.detail.clone()))
+                    .collect(),
+                ready,
+            }
+        }
         WirePhase::Executing => {
             if let Some(wg) = &state.gate {
                 ActiveRegion::Gate(wire_gate_to_card(wg, &stations))
@@ -406,6 +420,26 @@ pub fn attention_for(state: &WireState, own: OperatorId) -> Option<Attention> {
                 })
             } else {
                 None
+            }
+        }
+
+        WirePhase::Split { .. } => {
+            let own_idx = own_seat_idx?;
+            let own_ready = state.seats.get(own_idx).map(|s| s.ready).unwrap_or(false);
+            if !own_ready {
+                Some(Attention {
+                    text: "▶ ACTION: agent proposes a parallel split — [y] approve · [n] decline"
+                        .into(),
+                    loud: true,
+                })
+            } else {
+                Some(Attention {
+                    text: format!(
+                        "split approved by you — waiting on {}",
+                        other_label(own_idx)
+                    ),
+                    loud: false,
+                })
             }
         }
 
@@ -1007,6 +1041,13 @@ pub async fn run_remote(
             }
             Some(Action::LogDown) => {
                 log_scroll = log_scroll.saturating_sub(1);
+            }
+
+            // Decline the agent's proposed split (keeps it solo).
+            Some(Action::DeclineSplit) => {
+                if matches!(view.active, ActiveRegion::Split { .. }) {
+                    let _ = client.decline_split().await;
+                }
             }
 
             // Host-only: approve / reject a pending BYO operator's join.

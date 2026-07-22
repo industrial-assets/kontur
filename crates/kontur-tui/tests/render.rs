@@ -668,3 +668,22 @@ fn join_request_banner_renders() {
     assert!(s.contains("a1:b2:c3:d4:e5:f6:07:18"), "fingerprint shown");
     assert!(s.contains("[a] approve") && s.contains("[x] reject"));
 }
+
+/// The Split surface shows the proposed streams and the approve/decline keys.
+#[test]
+fn split_surface_renders_streams() {
+    let view = base(ActiveRegion::Split {
+        agent: "agent-01".into(),
+        streams: vec![
+            ("backend".into(), "API and database".into()),
+            ("frontend".into(), "the UI".into()),
+        ],
+        ready: [true, false],
+    });
+    let s = draw(&view);
+    assert!(s.contains("SPLIT"), "split title; got:\n{s}");
+    assert!(s.contains("1. backend"));
+    assert!(s.contains("API and database"));
+    assert!(s.contains("2. frontend"));
+    assert!(s.contains("[y] approve") && s.contains("[n] decline"));
+}

@@ -12,7 +12,7 @@ use kontur_mcp::{GateHost, HostEvent};
 use crate::codec::{read_json, write_json};
 use crate::protocol::{
     ClientMsg, ServerMsg, WireCmd, WireComment, WireFileDiff, WireFleetCard, WireGate,
-    WirePendingJoin, WirePhase, WireQuestion, WireRole, WireSeat, WireState,
+    WirePendingJoin, WirePhase, WireQuestion, WireRole, WireSeat, WireState, WireStream,
 };
 
 /// How long the server waits for any client traffic before treating the peer
@@ -81,6 +81,7 @@ enum Phase {
     DispatchReady,
     PlanReview,
     Clarify,
+    Split,
     Executing,
     Closed {
         gates: usize,
@@ -122,6 +123,8 @@ struct Net {
     discuss: std::collections::HashMap<String, Vec<(usize, String)>>,
     /// Active clarification exchange, while the agent is awaiting answers.
     clarify: Option<crate::clarify::Clarify>,
+    /// A pending split proposal: (agent, streams) awaiting operator approval.
+    split: Option<(String, Vec<(String, String)>)>,
     /// BYO seat B: the operator key bound at approval (None until approved).
     /// Only meaningful when seat B is configured as BYO (zero sentinel op).
     seat_b_bound: Option<OperatorId>,
@@ -214,6 +217,7 @@ impl SessionServer {
             claim: None,
             discuss: std::collections::HashMap::new(),
             clarify: None,
+            split: None,
             seat_b_bound: None,
             pending_join: None,
         };
@@ -422,11 +426,19 @@ impl SessionServer {
                 self.refresh_locked().await;
             }
             HostEvent::SplitProposed { agent, streams } => {
-                // Placeholder: log the proposal. The full Split phase (operators
-                // approve/decline, then the host fans out sub-agents) is wired in
-                // the next part; no live agent path calls propose_split yet.
                 let n = streams.len();
                 let mut net = self.inner.net.lock().await;
+                net.split = Some((
+                    agent.clone(),
+                    streams.into_iter().map(|s| (s.title, s.detail)).collect(),
+                ));
+                net.phase = Phase::Split;
+                net.seats[0].ready = false;
+                net.seats[1].ready = false;
+                if let Some(existing) = net.fleet.iter_mut().find(|c| c.id == agent) {
+                    existing.status = format!("proposing a split into {n} streams");
+                    existing.needs_signoff = true;
+                }
                 push_log(
                     &mut net,
                     &format!("{agent} proposes splitting into {n} parallel streams"),
@@ -854,6 +866,38 @@ async fn handle_client_msg(
                         server.refresh_locked().await;
                         return;
                     }
+                    Phase::Split => {
+                        // Both seats approved the split. Hand the approved
+                        // streams back to the agent and return to plan review;
+                        // the host fan-out (spawning a sub-agent per stream) is
+                        // wired separately.
+                        let streams = net
+                            .split
+                            .as_ref()
+                            .map(|(_, s)| s.clone())
+                            .unwrap_or_default();
+                        net.split = None;
+                        net.phase = Phase::PlanReview;
+                        net.seats[0].ready = false;
+                        net.seats[1].ready = false;
+                        push_log(&mut net, "split approved · awaiting agent plan(s)");
+                        drop(net);
+                        server
+                            .inner
+                            .host
+                            .resolve_split(kontur_mcp::SplitDecision::Approved(
+                                streams
+                                    .into_iter()
+                                    .map(|(title, detail)| kontur_mcp::SplitStream {
+                                        title,
+                                        detail,
+                                    })
+                                    .collect(),
+                            ))
+                            .await;
+                        server.refresh_locked().await;
+                        return;
+                    }
                     Phase::PlanReview => {
                         // Determine the effective plan: agent-proposed takes priority
                         // over the scripted config plan; if both are empty, refuse.
@@ -1134,6 +1178,30 @@ async fn handle_client_msg(
                 None => push_log(&mut net, &format!("{label} released {}", gate_id.0)),
             }
             drop(net);
+            server.refresh_locked().await;
+        }
+        ClientMsg::DeclineSplit => {
+            // Any one seat may decline a proposed split — the agent continues
+            // solo. Conservative by design.
+            let declined = {
+                let mut net = server.inner.net.lock().await;
+                if net.phase != Phase::Split {
+                    return;
+                }
+                net.split = None;
+                net.phase = Phase::PlanReview;
+                net.seats[0].ready = false;
+                net.seats[1].ready = false;
+                push_log(&mut net, "split declined · agent continues solo");
+                true
+            };
+            if declined {
+                server
+                    .inner
+                    .host
+                    .resolve_split(kontur_mcp::SplitDecision::Declined)
+                    .await;
+            }
             server.refresh_locked().await;
         }
         ClientMsg::Answer { question, choice } => {
@@ -1505,6 +1573,16 @@ impl SessionServer {
                     })
                     .unwrap_or_default(),
             },
+            Phase::Split => {
+                let (agent, streams) = net.split.clone().unwrap_or_default();
+                WirePhase::Split {
+                    agent,
+                    streams: streams
+                        .into_iter()
+                        .map(|(title, detail)| WireStream { title, detail })
+                        .collect(),
+                }
+            }
             Phase::Executing => WirePhase::Executing,
             Phase::Closed {
                 gates,
@@ -4152,6 +4230,209 @@ mod tests {
         )
         .await
         .expect("afk cleared on disconnect");
+    }
+
+    /// End-to-end: the agent proposes a split; both operators approve; the
+    /// parked propose_split resolves with the streams and the phase returns to
+    /// plan review.
+    #[tokio::test]
+    async fn split_resolves_when_both_approve() {
+        use kontur_mcp::{SplitDecision, SplitStream};
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let (server, _ws) = make_server(op1, op2, vec!["t1".into()]);
+        let mut state_rx = server.state_rx();
+
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(ca_read)).await;
+        drain_client(BufReader::new(cb_read)).await;
+        for (w, seat, op) in [(&mut ca_write, "A", op1), (&mut cb_write, "B", op2)] {
+            write_json(
+                w,
+                &ClientMsg::Hello {
+                    seat: seat.into(),
+                    operator: op,
+                    protocol: crate::protocol::PROTOCOL_VERSION,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
+
+        // The agent proposes a split; capture the resolved decision.
+        let host = server.host().clone();
+        let ask = tokio::spawn(async move {
+            let mut rx = host
+                .propose_split(
+                    "agent-01",
+                    vec![
+                        SplitStream {
+                            title: "backend".into(),
+                            detail: "API".into(),
+                        },
+                        SplitStream {
+                            title: "frontend".into(),
+                            detail: "UI".into(),
+                        },
+                    ],
+                )
+                .await
+                .unwrap();
+            loop {
+                match rx.borrow_and_update().clone() {
+                    SplitDecision::Approved(s) => return Some(s),
+                    SplitDecision::Declined => return None,
+                    SplitDecision::Pending => {}
+                }
+                if rx.changed().await.is_err() {
+                    return None;
+                }
+            }
+        });
+
+        // Wire enters the Split phase with the streams.
+        let sp = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::Split { .. })
+            }),
+        )
+        .await
+        .expect("Split phase");
+        if let WirePhase::Split { streams, agent } = &sp.phase {
+            assert_eq!(agent, "agent-01");
+            assert_eq!(streams.len(), 2);
+            assert_eq!(streams[0].title, "backend");
+        } else {
+            panic!("expected Split");
+        }
+
+        // Both approve via Ready.
+        write_json(&mut ca_write, &ClientMsg::Ready).await.unwrap();
+        write_json(&mut cb_write, &ClientMsg::Ready).await.unwrap();
+
+        let decision = tokio::time::timeout(Duration::from_secs(5), ask)
+            .await
+            .expect("resolves")
+            .expect("join");
+        assert_eq!(
+            decision.map(|s| s.len()),
+            Some(2),
+            "approved with both streams"
+        );
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("back to PlanReview");
+    }
+
+    /// A single seat declining a split keeps the agent solo.
+    #[tokio::test]
+    async fn split_declined_by_one_seat() {
+        use kontur_mcp::{SplitDecision, SplitStream};
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let (server, _ws) = make_server(op1, op2, vec!["t1".into()]);
+        let mut state_rx = server.state_rx();
+        let (client_a, server_a) = tokio::io::duplex(65536);
+        let (client_b, server_b) = tokio::io::duplex(65536);
+        server.attach(server_a).await;
+        server.attach(server_b).await;
+        let (ca_read, mut ca_write) = tokio::io::split(client_a);
+        let (cb_read, mut cb_write) = tokio::io::split(client_b);
+        drain_client(BufReader::new(cb_read)).await;
+        drain_client(BufReader::new(ca_read)).await;
+        for (w, seat, op) in [(&mut ca_write, "A", op1), (&mut cb_write, "B", op2)] {
+            write_json(
+                w,
+                &ClientMsg::Hello {
+                    seat: seat.into(),
+                    operator: op,
+                    protocol: crate::protocol::PROTOCOL_VERSION,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::DispatchReady { .. })
+            }),
+        )
+        .await
+        .expect("DispatchReady");
+        let host = server.host().clone();
+        let ask = tokio::spawn(async move {
+            let mut rx = host
+                .propose_split(
+                    "agent-01",
+                    vec![
+                        SplitStream {
+                            title: "a".into(),
+                            detail: "x".into(),
+                        },
+                        SplitStream {
+                            title: "b".into(),
+                            detail: "y".into(),
+                        },
+                    ],
+                )
+                .await
+                .unwrap();
+            loop {
+                match rx.borrow_and_update().clone() {
+                    SplitDecision::Declined => return false,
+                    SplitDecision::Approved(_) => return true,
+                    SplitDecision::Pending => {}
+                }
+                if rx.changed().await.is_err() {
+                    return true;
+                }
+            }
+        });
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::Split { .. })
+            }),
+        )
+        .await
+        .expect("Split");
+        // One seat declines.
+        write_json(&mut ca_write, &ClientMsg::DeclineSplit)
+            .await
+            .unwrap();
+        let approved = tokio::time::timeout(Duration::from_secs(5), ask)
+            .await
+            .expect("resolves")
+            .expect("join");
+        assert!(!approved, "a single decline keeps it solo");
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_state(&mut state_rx, |s| {
+                matches!(s.phase, WirePhase::PlanReview { .. })
+            }),
+        )
+        .await
+        .expect("back to PlanReview");
     }
 
     /// A discuss note appends to the gate's thread and is projected onto the

@@ -63,6 +63,11 @@ pub fn agent_prompt(session_prompt: &str) -> String {
     format!(
         "You are the kontur coding agent. \
 Use ONLY the kontur MCP tools — never use native file or shell tools. \
+PREFER TO WORK ALONE. Only if the instruction contains genuinely \
+independent parallel streams (e.g. a backend and a frontend that do not \
+depend on each other) that would meaningfully speed delivery, call \
+`propose_split` describing each stream and WAIT — the operators approve or \
+decline. Never split just to split; on decline, continue solo. \
 BEFORE planning, judge whether the instruction is genuinely ambiguous — a real \
 fork where you would otherwise have to guess. If so, call `ask_clarification` \
 with multiple-choice questions and WAIT for the operators' answers; use exactly \
