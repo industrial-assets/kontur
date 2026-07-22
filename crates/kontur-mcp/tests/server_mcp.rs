@@ -71,8 +71,9 @@ async fn agent_write_then_propose_gated_by_two_operators() {
         .call_tool(CallToolRequestParams::new("write_file").with_arguments(write_args))
         .await
         .expect("write_file call");
+    // The connection's agent id (default "agent-01") namespaces the task.
     assert_eq!(
-        ws.file_contents(&TaskId("t1".into()), "a.rs"),
+        ws.file_contents(&TaskId("agent-01::t1".into()), "a.rs"),
         Some(b"guarded\n".to_vec())
     );
 
@@ -103,8 +104,72 @@ async fn agent_write_then_propose_gated_by_two_operators() {
     let result = propose.await.expect("join").expect("propose call ok");
     assert_eq!(result.is_error, Some(false));
     assert!(host.verify_audit().await.is_ok());
-    assert_eq!(ws.accepted_tasks(), vec![TaskId("t1".into())]);
+    assert_eq!(ws.accepted_tasks(), vec![TaskId("agent-01::t1".into())]);
     assert_eq!(host.reviewed_by(&gate_id).await.unwrap().len(), 2);
+}
+
+/// Two agents (distinct MCP connections) that independently pick the SAME
+/// logical task id ("1") must not collide: each connection's authoritative
+/// agent id namespaces the task, so their writes land in separate tasks.
+#[tokio::test]
+async fn two_agents_same_task_id_are_isolated() {
+    let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+    let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+    let ws = Arc::new(InMemoryWorkspace::new());
+    let ctx = SessionContext::new("fleet", op1, "agent-01", "claude", "1.0", vec![op1, op2]);
+    let host = Arc::new(GateHost::new(ctx, ws.clone()));
+
+    async fn connect(
+        host: Arc<GateHost>,
+        agent: &str,
+    ) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
+        let (server_io, client_io) = tokio::io::duplex(8192);
+        let server = KonturServer::with_agent(host, agent);
+        tokio::spawn(async move {
+            if let Ok(running) = serve_server(server, server_io).await {
+                let _ = running.waiting().await;
+            }
+        });
+        ().serve(client_io).await.expect("client handshake")
+    }
+
+    let client_a = connect(host.clone(), "agent-a").await;
+    let client_b = connect(host.clone(), "agent-b").await;
+
+    // Both agents write to their own "task 1" with different files.
+    let write = |tid: &str, path: &str, contents: &str| {
+        serde_json::json!({ "task_id": tid, "path": path, "contents": contents })
+            .as_object()
+            .cloned()
+            .unwrap()
+    };
+    client_a
+        .call_tool(
+            CallToolRequestParams::new("write_file").with_arguments(write("1", "a.rs", "A\n")),
+        )
+        .await
+        .expect("agent-a write");
+    client_b
+        .call_tool(
+            CallToolRequestParams::new("write_file").with_arguments(write("1", "b.rs", "B\n")),
+        )
+        .await
+        .expect("agent-b write");
+
+    // Each agent's write is isolated under its namespaced task.
+    assert_eq!(
+        ws.file_contents(&TaskId("agent-a::1".into()), "a.rs"),
+        Some(b"A\n".to_vec())
+    );
+    assert_eq!(
+        ws.file_contents(&TaskId("agent-b::1".into()), "b.rs"),
+        Some(b"B\n".to_vec())
+    );
+    // Cross-contamination is impossible: agent-a's task never sees agent-b's file.
+    assert_eq!(ws.file_contents(&TaskId("agent-a::1".into()), "b.rs"), None);
+    assert_eq!(ws.file_contents(&TaskId("agent-b::1".into()), "a.rs"), None);
+    // The un-namespaced bare id is never used as a task key.
+    assert_eq!(ws.file_contents(&TaskId("1".into()), "a.rs"), None);
 }
 
 #[tokio::test]
