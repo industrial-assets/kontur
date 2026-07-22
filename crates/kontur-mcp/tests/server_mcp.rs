@@ -353,3 +353,72 @@ async fn ask_clarification_blocks_until_resolved() {
         serde_json::Value::String("postgres".into())
     );
 }
+
+#[tokio::test]
+async fn propose_split_blocks_until_resolved() {
+    let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+    let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+    let ws = Arc::new(InMemoryWorkspace::new());
+    let ctx = SessionContext::new(
+        "split test",
+        op1,
+        "agent-02",
+        "claude",
+        "1.0",
+        vec![op1, op2],
+    );
+    let host = Arc::new(GateHost::new(ctx, ws));
+
+    let (server_io, client_io) = tokio::io::duplex(8192);
+    let server = KonturServer::new(host.clone());
+    tokio::spawn(async move {
+        if let Ok(running) = serve_server(server, server_io).await {
+            let _ = running.waiting().await;
+        }
+    });
+    let client = ().serve(client_io).await.expect("client handshake");
+
+    let args = serde_json::json!({
+        "streams": [
+            { "title": "backend", "detail": "API" },
+            { "title": "frontend", "detail": "UI" }
+        ]
+    })
+    .as_object()
+    .cloned()
+    .unwrap();
+
+    let client2 = client.clone();
+    let ask = tokio::spawn(async move {
+        client2
+            .call_tool(CallToolRequestParams::new("propose_split").with_arguments(args))
+            .await
+    });
+
+    for _ in 0..2000 {
+        if host.proposed_split().await.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert!(host.proposed_split().await.is_some(), "streams stored");
+    assert!(!ask.is_finished(), "propose_split must still be blocking");
+
+    host.resolve_split(kontur_mcp::SplitDecision::Approved(
+        host.proposed_split().await.unwrap(),
+    ))
+    .await;
+
+    let result = tokio::time::timeout(Duration::from_secs(5), ask)
+        .await
+        .expect("resolve unblocks")
+        .expect("join")
+        .expect("propose_split ok");
+    assert_eq!(result.is_error, Some(false));
+    let text = match &result.content[0] {
+        rmcp::model::ContentBlock::Text(t) => &t.text,
+        other => panic!("unexpected content: {other:?}"),
+    };
+    let v: serde_json::Value = serde_json::from_str(text).expect("valid json");
+    assert_eq!(v["approved"], serde_json::Value::Bool(true));
+}

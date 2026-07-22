@@ -36,6 +36,24 @@ pub enum ClarifyDecision {
     Answered(Vec<Vec<String>>),
 }
 
+/// One independent parallel stream the agent proposes to split off to its own
+/// agent (e.g. "backend" / "frontend").
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SplitStream {
+    pub title: String,
+    pub detail: String,
+}
+
+/// Resolution of an agent-proposed fleet split, awaited by the parked MCP call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SplitDecision {
+    Pending,
+    /// Operators approved the split into these streams (possibly edited).
+    Approved(Vec<SplitStream>),
+    /// Operators declined — the agent continues solo.
+    Declined,
+}
+
 /// Live activity events for observers (the session server). Best-effort
 /// display stream — never blocks or gates the enforcement path.
 #[derive(Clone, Debug)]
@@ -82,6 +100,11 @@ pub enum HostEvent {
     QuestionsAsked {
         agent: String,
         questions: Vec<ClarifyQuestion>,
+    },
+    /// The agent proposed splitting the work into independent parallel streams.
+    SplitProposed {
+        agent: String,
+        streams: Vec<SplitStream>,
     },
     SessionAbandoned,
 }
@@ -145,6 +168,9 @@ struct SessionState {
     next_gate: u64,
     plan: Option<Vec<String>>,
     questions: Option<Vec<ClarifyQuestion>>,
+    split_streams: Option<Vec<SplitStream>>,
+    split_decision_tx: watch::Sender<SplitDecision>,
+    _split_decision_rx: watch::Receiver<SplitDecision>,
     clarify_decision_tx: watch::Sender<ClarifyDecision>,
     _clarify_decision_rx: watch::Receiver<ClarifyDecision>,
     plan_decision_tx: watch::Sender<PlanDecision>,
@@ -184,6 +210,7 @@ impl GateHost {
         let (events, _) = broadcast::channel(64);
         let (plan_decision_tx, _plan_decision_rx) = watch::channel(PlanDecision::Pending);
         let (clarify_decision_tx, _clarify_decision_rx) = watch::channel(ClarifyDecision::Pending);
+        let (split_decision_tx, _split_decision_rx) = watch::channel(SplitDecision::Pending);
         GateHost {
             state: Arc::new(Mutex::new(SessionState {
                 ctx,
@@ -192,6 +219,9 @@ impl GateHost {
                 next_gate: 0,
                 plan: None,
                 questions: None,
+                split_streams: None,
+                split_decision_tx,
+                _split_decision_rx,
                 clarify_decision_tx,
                 _clarify_decision_rx,
                 plan_decision_tx,
@@ -312,6 +342,45 @@ impl GateHost {
     /// Operator face: the questions currently awaiting answers (None until asked).
     pub async fn asked_questions(&self) -> Option<Vec<ClarifyQuestion>> {
         self.state.lock().await.questions.clone()
+    }
+
+    /// Agent face: propose splitting the work into independent parallel streams.
+    /// Stores the streams, emits `HostEvent::SplitProposed`, and returns a watch
+    /// receiver that flips once the operators approve or decline. Fresh-channel
+    /// discipline (like `ask_clarification`) so a stale decision can't bypass
+    /// consent.
+    pub async fn propose_split(
+        &self,
+        agent: &str,
+        streams: Vec<SplitStream>,
+    ) -> Result<watch::Receiver<SplitDecision>, GateHostError> {
+        let mut st = self.state.lock().await;
+        if st.abandoned {
+            return Err(GateHostError::SessionAbandoned);
+        }
+        let (new_tx, new_rx) = watch::channel(SplitDecision::Pending);
+        st.split_decision_tx = new_tx;
+        st._split_decision_rx = new_rx;
+        st.split_streams = Some(streams.clone());
+        let rx = st.split_decision_tx.subscribe();
+        drop(st);
+        let _ = self.events.send(HostEvent::SplitProposed {
+            agent: agent.to_owned(),
+            streams,
+        });
+        Ok(rx)
+    }
+
+    /// Operator face: approve the proposed split (with the possibly-edited
+    /// streams) or decline it, unblocking the parked `propose_split` call.
+    pub async fn resolve_split(&self, decision: SplitDecision) {
+        let st = self.state.lock().await;
+        st.split_decision_tx.send_replace(decision);
+    }
+
+    /// Operator face: the streams currently awaiting a split decision.
+    pub async fn proposed_split(&self) -> Option<Vec<SplitStream>> {
+        self.state.lock().await.split_streams.clone()
     }
 
     /// Operator face: replace the stored plan with an edited version.
@@ -1446,6 +1515,63 @@ mod tests {
         // No discards from abandon (already accepted earlier).
         assert!(ws.discarded_tasks().is_empty());
         assert!(host.verify_audit().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn propose_split_blocks_then_resolve_flips_watch() {
+        use std::time::Duration;
+        use tokio::sync::broadcast::error::TryRecvError;
+
+        let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let ws = Arc::new(InMemoryWorkspace::new());
+        let host = GateHost::new(ctx(vec![op1, op2]), ws);
+        let mut ev_rx = host.subscribe_events();
+
+        let streams = vec![
+            SplitStream {
+                title: "backend".into(),
+                detail: "API + db".into(),
+            },
+            SplitStream {
+                title: "frontend".into(),
+                detail: "UI".into(),
+            },
+        ];
+        let mut rx = host
+            .propose_split("agent-01", streams.clone())
+            .await
+            .unwrap();
+        assert_eq!(host.proposed_split().await, Some(streams.clone()));
+        assert_eq!(*rx.borrow(), SplitDecision::Pending);
+
+        // SplitProposed event emitted.
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(200);
+        let mut got = false;
+        loop {
+            match ev_rx.try_recv() {
+                Ok(HostEvent::SplitProposed { streams: s, .. }) => {
+                    assert_eq!(s, streams);
+                    got = true;
+                    break;
+                }
+                Ok(_) => {}
+                Err(TryRecvError::Empty) => {
+                    if tokio::time::Instant::now() >= deadline {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                _ => break,
+            }
+        }
+        assert!(got, "SplitProposed event must be emitted");
+
+        // Approve unblocks with the streams.
+        host.resolve_split(SplitDecision::Approved(streams.clone()))
+            .await;
+        rx.changed().await.unwrap();
+        assert_eq!(*rx.borrow(), SplitDecision::Approved(streams));
     }
 
     #[tokio::test]

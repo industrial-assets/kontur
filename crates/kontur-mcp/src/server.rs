@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use kontur_core::{HoldState, Remedy, TaskId};
 
-use crate::gatehost::{ClarifyDecision, ClarifyQuestion, GateHost, PlanDecision};
+use crate::gatehost::{
+    ClarifyDecision, ClarifyQuestion, GateHost, PlanDecision, SplitDecision, SplitStream,
+};
 
 /// The rmcp server exposing the agent-facing gated tools over a `GateHost`.
 #[derive(Clone)]
@@ -88,6 +90,23 @@ pub struct AskClarificationOutput {
     /// The operators' accepted answers, one entry per question in order. An
     /// entry has two strings only when the operators chose "accept both".
     pub answers: Vec<Vec<String>>,
+}
+
+#[derive(Serialize, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct SplitStreamInput {
+    pub title: String,
+    pub detail: String,
+}
+
+#[derive(Serialize, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct ProposeSplitInput {
+    pub streams: Vec<SplitStreamInput>,
+}
+
+#[derive(Serialize, Deserialize, rmcp::schemars::JsonSchema)]
+pub struct ProposeSplitOutput {
+    pub approved: bool,
+    pub streams: Vec<SplitStreamInput>,
 }
 
 impl KonturServer {
@@ -226,6 +245,60 @@ impl KonturServer {
                 ClarifyDecision::Pending => {}
                 ClarifyDecision::Answered(answers) => {
                     return Ok(Json(AskClarificationOutput { answers }));
+                }
+            }
+            if rx.changed().await.is_err() {
+                return Err(ErrorData::internal_error("session closed", None));
+            }
+        }
+    }
+
+    #[tool(
+        name = "propose_split",
+        description = "Prefer to work ALONE. Only if the work has genuinely independent parallel streams (e.g. a backend and a frontend that do not depend on each other) that would meaningfully speed delivery, propose splitting into a fleet: each stream becomes its own agent. Never split just to split. Describe each independent stream; blocks until both operators approve or decline. On approval, execute only the streams assigned back to you; on decline, continue solo."
+    )]
+    async fn propose_split(
+        &self,
+        Parameters(ProposeSplitInput { streams }): Parameters<ProposeSplitInput>,
+    ) -> Result<Json<ProposeSplitOutput>, ErrorData> {
+        if streams.len() < 2 {
+            return Err(ErrorData::invalid_request(
+                "propose_split needs at least two independent streams; otherwise just work solo",
+                None,
+            ));
+        }
+        let streams: Vec<SplitStream> = streams
+            .into_iter()
+            .map(|s| SplitStream {
+                title: s.title,
+                detail: s.detail,
+            })
+            .collect();
+        let mut rx = self
+            .host
+            .propose_split(&self.agent, streams)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        loop {
+            match rx.borrow_and_update().clone() {
+                SplitDecision::Pending => {}
+                SplitDecision::Approved(streams) => {
+                    return Ok(Json(ProposeSplitOutput {
+                        approved: true,
+                        streams: streams
+                            .into_iter()
+                            .map(|s| SplitStreamInput {
+                                title: s.title,
+                                detail: s.detail,
+                            })
+                            .collect(),
+                    }));
+                }
+                SplitDecision::Declined => {
+                    return Ok(Json(ProposeSplitOutput {
+                        approved: false,
+                        streams: vec![],
+                    }));
                 }
             }
             if rx.changed().await.is_err() {

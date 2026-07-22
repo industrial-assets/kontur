@@ -421,6 +421,19 @@ impl SessionServer {
                 drop(net);
                 self.refresh_locked().await;
             }
+            HostEvent::SplitProposed { agent, streams } => {
+                // Placeholder: log the proposal. The full Split phase (operators
+                // approve/decline, then the host fans out sub-agents) is wired in
+                // the next part; no live agent path calls propose_split yet.
+                let n = streams.len();
+                let mut net = self.inner.net.lock().await;
+                push_log(
+                    &mut net,
+                    &format!("{agent} proposes splitting into {n} parallel streams"),
+                );
+                drop(net);
+                self.refresh_locked().await;
+            }
             HostEvent::SessionAbandoned => {
                 // The abandon handler in handle_client_msg already logs and
                 // transitions the phase; nothing extra to do here.

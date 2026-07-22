@@ -14,7 +14,7 @@ pub use error::{GateHostError, WorkspaceError};
 pub use fs_workspace::FsWorkspace;
 pub use gatehost::{
     ClarifyDecision, ClarifyQuestion, GateFinal, GateHost, GateProgress, GateView, HostEvent,
-    PlanDecision,
+    PlanDecision, SplitDecision, SplitStream,
 };
 pub use git_workspace::GitWorkspace;
 pub use provenance::build_provenance;
