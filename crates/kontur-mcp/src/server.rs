@@ -141,7 +141,12 @@ impl KonturServer {
         }): Parameters<WriteFileInput>,
     ) -> Result<Json<OkOutput>, ErrorData> {
         self.host
-            .record_write(&self.agent, &TaskId(task_id), &path, contents.as_bytes())
+            .record_write(
+                &self.agent,
+                &scope_task(&self.agent, &task_id),
+                &path,
+                contents.as_bytes(),
+            )
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         Ok(Json(OkOutput { ok: true }))
@@ -161,7 +166,12 @@ impl KonturServer {
     ) -> Result<Json<CommandOut>, ErrorData> {
         let out = self
             .host
-            .run_command(&self.agent, &TaskId(task_id), &command, &cwd)
+            .run_command(
+                &self.agent,
+                &scope_task(&self.agent, &task_id),
+                &command,
+                &cwd,
+            )
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         Ok(Json(CommandOut {
@@ -315,7 +325,7 @@ impl KonturServer {
         &self,
         Parameters(ProposeInput { task_id, tokens }): Parameters<ProposeInput>,
     ) -> Result<Json<ProposeOutput>, ErrorData> {
-        let task_id = TaskId(task_id);
+        let task_id = scope_task(&self.agent, &task_id);
         let (gate_id, mut rx) = self
             .host
             .begin_task_gate(&self.agent, task_id, tokens)
@@ -374,4 +384,31 @@ fn hex32(bytes: &[u8; 32]) -> String {
         let _ = write!(s, "{b:02x}");
     }
     s
+}
+
+/// Namespace an agent-supplied task id by the connection's authoritative agent
+/// id. Two fanned-out agents that independently pick the same logical id (e.g.
+/// both call a task "1") must not collide in the shared `GateHost` — the agent
+/// prefix keeps holds, supersession, worktree routing, and audit unambiguous.
+/// The prefix is the connection's identity (set via `with_agent`), never
+/// agent-supplied, so one agent cannot forge another's namespace.
+fn scope_task(agent: &str, task_id: &str) -> TaskId {
+    TaskId(format!("{agent}::{task_id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scope_task_prefixes_with_agent() {
+        assert_eq!(scope_task("agent-a", "1"), TaskId("agent-a::1".into()));
+        assert_eq!(scope_task("agent-01", "t1"), TaskId("agent-01::t1".into()));
+    }
+
+    #[test]
+    fn scope_task_isolates_same_id_across_agents() {
+        // The same logical id under two agents yields distinct task ids.
+        assert_ne!(scope_task("agent-a", "1"), scope_task("agent-b", "1"));
+    }
 }
