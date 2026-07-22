@@ -57,10 +57,11 @@ Brutalist: raw, structural, honest. Every element on screen earns its place or i
 # Install (from a clone of this repo):
 cargo install --path crates/kontur-tui
 
-# Primary path — host in your current git repo with a real Claude Code agent.
-# Your terminal becomes the HOST console; the invite shows in-console until the
-# operator links ([l] toggles LAN/WAN); compose the instruction at the dispatch
-# gate with [p]:
+# Primary path — host in your current folder with a real Claude Code agent.
+# A fresh/empty folder works: kontur offers to `git init` and makes a base
+# commit when there are none. Your terminal becomes the HOST console; the invite
+# shows in-console until the operator links ([l] toggles LAN/WAN); compose the
+# instruction at the dispatch gate with [p]:
 cd your-project && kontur --claude
 
 # Operator: paste the invite the host sends you (one 52-char code — it carries
