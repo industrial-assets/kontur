@@ -33,10 +33,10 @@ Design decisions live in the doc set. Treat them as authoritative:
 The product's value *is* these properties. Never weaken, shortcut, or "simplify" them. If a task appears to require breaking one, that is a signal to stop and raise it — not to proceed.
 
 1. **Two independent keys to merge.** No code path may let a single operator's approval merge a change. Two *distinct* operator identities, both `go`.
-2. **Independence enforced at acceptance, not display.** A verdict cast by the change's maker (prompt author / hand-editor) is not counted in strict mode. Check eligibility when a verdict is cast, never only when it's shown.
+2. **Independence enforced at acceptance, not display.** Independence is checked when a verdict is cast, never only when it's shown. A hand-edit uses **maker-checker**: the editor may cast a counting `go` on their own edit, but the gate still requires a *distinct* co-signer — the co-operator who did not make the change. A single operator can never both edit and be the sole approver.
 3. **Blind second review.** On high-risk gates the first verdict is *sealed* — it must not be observable in state, logs, API responses, or UI until the second verdict is cast.
 4. **No bare veto.** A `no-go` without a remedy (a steer prompt or a hand-edit) is rejected.
-5. **Hand-edit: instant apply, deferred acceptance.** A hand-edit takes effect in the worktree immediately, but never becomes merge-eligible without a fresh dual sign-off. It is recorded as human-authored and never folded into the agent's diff.
+5. **Hand-edit: instant apply, deferred acceptance.** A hand-edit takes effect in the worktree immediately, but never becomes merge-eligible without a fresh dual sign-off — the editor's own `go` plus the co-operator's independent `go`. It is recorded as human-authored and never folded into the agent's diff.
 6. **Tamper-evident audit.** Every gate emits a signed record, hash-chained to the previous one. Never break the chain, never emit an unsigned decision, never make a past gate outcome mutable.
 7. **Fail safe under operator loss.** If an operator drops, gates needing a second key **park**. Never degrade to single-key approval to keep things moving.
 

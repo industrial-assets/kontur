@@ -1322,36 +1322,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hand_edit_strict_signals_escalation_and_excludes_editor() {
+    async fn hand_edit_editor_cosigns_with_cooperator() {
         let op1 = Ed25519Signer::from_seed([1; 32]).operator_id();
         let op2 = Ed25519Signer::from_seed([2; 32]).operator_id();
         let ws = Arc::new(InMemoryWorkspace::new());
-        // Default policy = strict.
+        // Default policy = strict; hand-edit gates use maker-checker regardless.
         let host = GateHost::new(ctx(vec![op1, op2]), ws.clone());
 
         let task = TaskId("t1".into());
         let (gid, _rx) = host
-            .hand_edit(task, "a.rs", b"guarded\n", op1)
+            .hand_edit(task.clone(), "a.rs", b"guarded\n", op1)
             .await
             .unwrap();
         let dh = host.pending_gates().await[0].diff_hash;
 
-        // op2 (non-editor) casts: accepted, but escalation is signalled (pool = 1 < 2).
+        // The editor (op1) casts a real go on their own edit — no escalation,
+        // one key not enough.
+        let p = host
+            .submit_verdict(&gid, go_verdict(1, &gid, dh))
+            .await
+            .unwrap();
+        assert!(!p.escalation_required, "editor may co-sign; no escalation");
+        assert_eq!(p.state, HoldState::Partial);
+
+        // The co-operator (op2) provides the independent second signature.
         let p = host
             .submit_verdict(&gid, go_verdict(2, &gid, dh))
             .await
             .unwrap();
-        assert!(p.escalation_required);
-
-        // op1 (the editor) is a maker in strict mode -> rejected.
-        let err = host
-            .submit_verdict(&gid, go_verdict(1, &gid, dh))
-            .await
-            .unwrap_err();
-        assert_eq!(
-            err,
-            GateHostError::Cast(kontur_core::CastRejected::Ineligible)
-        );
+        assert_eq!(p.state, HoldState::Satisfied);
+        assert_eq!(ws.accepted_tasks(), vec![task]);
     }
 
     #[tokio::test]

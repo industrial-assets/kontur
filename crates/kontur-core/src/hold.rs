@@ -83,11 +83,17 @@ impl DualHold {
         h
     }
 
-    /// A fresh hold opened after a hand-edit: authorship reflects human
-    /// involvement, the editor joins the maker set (so strict mode excludes
-    /// them), and the eligible pool is computed from the known operators. If
-    /// that pool is smaller than the required keys, the hold reports
-    /// `escalation_required` on the next cast (invariants #5, #7).
+    /// A fresh hold opened after a hand-edit (maker-checker model): authorship
+    /// reflects human involvement, the editor joins the maker set (recorded as
+    /// the change's author), and the gate uses **pragmatic** independence so the
+    /// editor may cast a real signed go on their own edit. The gate still needs
+    /// two distinct signatures; with only the editor in the maker set, the
+    /// second necessarily comes from the co-operator (the non-maker) — so a lone
+    /// operator can never both edit and be the sole approver (invariants #2, #5).
+    ///
+    /// `policy`'s `blind` / `required` / `availability` are kept from the
+    /// session; only `independence` is forced to pragmatic (strict's
+    /// maker-exclusion only ever made hand-edits unmergeable with two seats).
     #[allow(clippy::too_many_arguments)]
     pub fn reopen_handedit(
         gate_id: GateId,
@@ -105,6 +111,8 @@ impl DualHold {
         } else {
             Authorship::HandEdited
         };
+        let mut policy = policy;
+        policy.independence = crate::policy::Independence::Pragmatic;
         let mut h = DualHold::reopen(
             gate_id,
             task_id,
@@ -113,13 +121,9 @@ impl DualHold {
             makers.clone(),
             authorship,
         );
-        h.eligible_pool = match policy.independence {
-            crate::policy::Independence::Strict => known_operators
-                .iter()
-                .filter(|op| !makers.contains(op))
-                .count(),
-            crate::policy::Independence::Pragmatic => known_operators.len(),
-        };
+        // Every known operator is eligible to co-sign (pragmatic); the distinct
+        // co-signer requirement in `cast` supplies the independence.
+        h.eligible_pool = known_operators.len();
         h
     }
 
@@ -434,10 +438,11 @@ mod tests {
     }
 
     #[test]
-    fn handedit_strict_two_operators_signals_escalation() {
+    fn handedit_editor_cosigns_with_cooperator() {
         let a = Ed25519Signer::from_seed([1; 32]).operator_id();
         let b = Ed25519Signer::from_seed([2; 32]).operator_id();
-        // A hand-edits; strict mode; only A and B exist → eligible pool = {B} = 1 < 2.
+        // A hand-edits under the session's (strict) default policy. Maker-checker:
+        // A may co-sign their own edit, so no escalation, and A + B → satisfied.
         let mut h = DualHold::reopen_handedit(
             GateId("g1".into()),
             TaskId("t1".into()),
@@ -449,14 +454,44 @@ mod tests {
             &[a, b],
         );
         assert_eq!(h.authorship(), Authorship::Both);
-        // B can cast, but the outcome flags escalation because two eligible
-        // keys are unreachable; A (the editor) is ineligible.
-        let out = h.cast(0, go(2, &h)).unwrap();
-        assert!(out.escalation_required);
-        assert!(matches!(
+        // Editor A casts a real go on their own edit — one key is not enough.
+        let out = h.cast(0, go(1, &h)).unwrap();
+        assert_eq!(out.state, HoldState::Partial);
+        assert!(
+            !out.escalation_required,
+            "editor may co-sign; no escalation"
+        );
+        // Co-operator B provides the second, independent signature → satisfied.
+        let out = h.cast(1, go(2, &h)).unwrap();
+        assert_eq!(out.state, HoldState::Satisfied);
+    }
+
+    #[test]
+    fn handedit_cannot_be_satisfied_by_the_editor_alone() {
+        let a = Ed25519Signer::from_seed([1; 32]).operator_id();
+        let b = Ed25519Signer::from_seed([2; 32]).operator_id();
+        let mut h = DualHold::reopen_handedit(
+            GateId("g1".into()),
+            TaskId("t1".into()),
+            Hash([9u8; 32]),
+            GatePolicy::default(),
+            MakerSet::new(),
+            a,
+            true,
+            &[a, b],
+        );
+        // Editor casts once → Partial. A second cast from the SAME identity is
+        // rejected, so the editor can never satisfy the gate alone; the
+        // co-operator's distinct signature is mandatory (invariant #1 + #2).
+        h.cast(0, go(1, &h)).unwrap();
+        assert_eq!(
             h.cast(1, go(1, &h)).unwrap_err(),
-            CastRejected::Ineligible
-        ));
+            CastRejected::DuplicateIdentity
+        );
+        assert_eq!(h.state(), HoldState::Partial);
+        // Only the non-maker co-operator can complete it.
+        let out = h.cast(1, go(2, &h)).unwrap();
+        assert_eq!(out.state, HoldState::Satisfied);
     }
 
     #[test]
@@ -486,12 +521,13 @@ mod tests {
     }
 
     #[test]
-    fn escalation_required_is_readable_before_any_cast() {
+    fn handedit_two_operators_does_not_escalate() {
         // A normal agent-authored hold never forces escalation.
         let h = hold();
         assert!(!h.escalation_required());
 
-        // A strict hand-edit hold with only two operators (editor excluded) does.
+        // A two-seat hand-edit no longer escalates: the editor may co-sign, so
+        // both keys are reachable (maker-checker).
         let a = Ed25519Signer::from_seed([1; 32]).operator_id();
         let b = Ed25519Signer::from_seed([2; 32]).operator_id();
         let he = DualHold::reopen_handedit(
@@ -504,7 +540,7 @@ mod tests {
             true,
             &[a, b],
         );
-        assert!(he.escalation_required());
+        assert!(!he.escalation_required());
     }
 
     #[test]

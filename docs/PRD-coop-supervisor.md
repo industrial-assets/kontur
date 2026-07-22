@@ -50,7 +50,7 @@ Co-op Supervisor reintroduces the pair, one layer up. Instead of two people at o
 
 ## 5. Core concepts
 
-- **Maker-checker / four-eyes.** The agent is the maker. Two humans are independent checkers. The prompt author is recorded as the *instructing party*; a policy toggle controls whether the author may also be a checker (strict mode: no; pragmatic mode: yes, but a second checker who did not instruct is always required). *(implemented — default is strict: the prompt author/hand-editor cannot cast a counting verdict)*
+- **Maker-checker / four-eyes.** The agent is the maker. Two humans are independent checkers. The prompt author is recorded as the *instructing party*; a policy toggle controls whether the author may also be a checker (strict mode: no; pragmatic mode: yes, but a second checker who did not instruct is always required). *(implemented — agent-authored merge gates require two independent human `go`s. A **hand-edit** uses maker-checker: the editor may cast a counting `go` on their own edit, but the gate still requires a distinct co-signer — the co-operator who did not make the change; a lone operator can never satisfy a gate alone.)*
 - **Driver / navigator, rotating.** The driver constructs the prompt; the navigator reviews it live as it's written. Both review worker output. Roles rotate per task or session so the second set of eyes stays genuinely open and so the person reviewing output didn't co-author the spec. Rotation is the primary lever for keeping the two reviews *independent* — two correlated reviews (both rubber-stamping) are one review counted twice.
 
   > **Superseded (20 Jul 2026):** driver/navigator rotation is replaced by structural **Host/Operator** seats (the Host provides the agent backend; both seats are co-equal checkers; no rotation). Independence now rests on the two-distinct-keys requirement alone.
@@ -129,7 +129,7 @@ earlier prompt-entry parallel toggle.)*
 
 ### Hand-edit / emergency override
 - **FR-15** Hand-editing is **always available** and **never gated** — an experienced supervisor must be able to step in to avert a catastrophe. (Reserve for extreme cases by convention, but never remove.) *(implemented: `[e]` hand-edit is always available, never gated)*
-- **FR-16** A hand-edit takes effect in the working tree **immediately** (instant effect), is fed back to the agent so it's aware, but **cannot enter the merge set until both operators sign off** the combined diff (deferred acceptance). *(implemented: hand-edit applies to the worktree immediately and opens a fresh dual-sign-off gate; never folded into the agent's diff)*
+- **FR-16** A hand-edit takes effect in the working tree **immediately** (instant effect), is fed back to the agent so it's aware, but **cannot enter the merge set until both operators sign off** the combined diff (deferred acceptance). *(implemented: hand-edit applies to the worktree immediately and opens a fresh dual-sign-off gate; maker-checker — the editor may cast one of the two `go`s, but a distinct co-signer who did not make the change is always required; never folded into the agent's diff)*
 - **FR-17** Authorship is recorded per task as a flag set (`agent` / `hand-edited` / `both`) so mixed provenance is never misrepresented. The approval bar is identical regardless of authorship. *(implemented: authorship flag recorded per gate record)*
 
 ### Intervention & downstream replan
