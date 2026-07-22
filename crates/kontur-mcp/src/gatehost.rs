@@ -802,6 +802,17 @@ impl GateHost {
     pub async fn session_operators(&self) -> Vec<OperatorId> {
         self.state.lock().await.ctx.operators.clone()
     }
+
+    /// Register an operator into the session roster (idempotent). Called after
+    /// the host approves a BYO seat-B key, so hand-edit eligibility and the
+    /// Reviewed-by/audit roster include the real, approved operator rather than
+    /// the placeholder configured at construction.
+    pub async fn register_operator(&self, op: OperatorId) {
+        let mut st = self.state.lock().await;
+        if !st.ctx.operators.contains(&op) {
+            st.ctx.operators.push(op);
+        }
+    }
 }
 
 #[cfg(test)]
