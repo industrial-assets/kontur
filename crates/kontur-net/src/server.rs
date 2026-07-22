@@ -614,6 +614,7 @@ async fn resolve_byo_join(
     if net.pending_join == Some(operator) {
         net.pending_join = None;
     }
+    let mut newly_bound = false;
     let result = match outcome {
         // First approval wins the seat, re-checked under the lock.
         Ok(Some(true)) => match net.seat_b_bound {
@@ -621,12 +622,22 @@ async fn resolve_byo_join(
             Some(_) => None,
             None => {
                 net.seat_b_bound = Some(operator);
+                // Bind the approved key into seat B's identity so display, the
+                // Reviewed-by trailers, and the audit roster reflect the real
+                // operator rather than the zero placeholder configured for BYO.
+                net.seats[1].operator = operator;
+                newly_bound = true;
                 Some(1)
             }
         },
         _ => None,
     };
     drop(net);
+    if newly_bound {
+        // Register with the gate host (its own lock) so hand-edit eligibility
+        // and session_operators include the approved key.
+        server.inner.host.register_operator(operator).await;
+    }
     server.refresh_locked().await;
     if result.is_none() {
         let reason = match outcome {
@@ -1831,6 +1842,19 @@ mod tests {
         )
         .await
         .expect("approved BYO operator seats and dispatch opens");
+
+        // Seat B's identity on the wire is now the approved key (not the zero
+        // placeholder), and the gate host's roster includes it — so trailers,
+        // audit, and hand-edit eligibility reference the real operator.
+        let bound = state_rx.borrow().clone();
+        assert_eq!(
+            bound.seats[1].operator, byo,
+            "seat B bound to the approved key"
+        );
+        assert!(
+            server.host().session_operators().await.contains(&byo),
+            "approved key registered in the session roster"
+        );
     }
 
     /// Admission is serialized: while one BYO key awaits approval, a second
