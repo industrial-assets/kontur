@@ -1,4 +1,4 @@
-# KONTUR-1 · КОНТУР-1
+# KONTUR · [КОНТУР]
 
 **A brutalist CLI for high-efficiency agentic pair programming.**
 
@@ -16,7 +16,7 @@ Two engineers, one console, a fleet of agents — and nothing ships without both
 
 KONTUR (kohn-toor) is a terminal-native workstation where two engineers jointly supervise a fleet of coding agents on the same codebase. One hosts the agents, one joins to co-sign; both review. Every change an agent makes is gated behind two independent human approvals before it can merge, and the whole session leaves a signed, tamper-evident audit trail.
 
-It exists for the place solo agentic tooling can't go: production environments where *the agent wrote it and one person glanced at it* isn't good enough, and segregation of duties is the rule, not a nicety.
+It exists for the place solo agentic tooling can't go: production environments where _the agent wrote it and one person glanced at it_ isn't good enough, and segregation of duties is the rule, not a nicety.
 
 ## The idea
 
@@ -25,8 +25,8 @@ Pair programming assumed a driver at the keyboard and a navigator watching the c
 ## How it works
 
 - **Compose the prompt.** Either seat drafts/edits it in-console ([p]) — multi-line (alt+↵), cursor editing, paste-safe; the other seat watches the draft live, keystroke by keystroke; every edit resets both ready marks; both mark ready to dispatch.
-- **Split, only if it helps.** The agent works solo by default. If the work has genuinely independent parallel streams (e.g. backend and frontend), it *proposes* a split into a fleet and waits — both operators approve (`[y]`) or one declines (`[n]`, keeping it solo). Each agent still produces small, single-concern gated chunks, clearly attributed to its agent and task.
-- **Clarify first.** If the instruction is genuinely ambiguous, the agent asks the operators multiple-choice questions (each with a "provide your own answer" option) and waits — it never assumes. Both operators answer; if they disagree, the question re-asks as *[A's answer / B's answer / accept both]* until they converge.
+- **Split, only if it helps.** The agent works solo by default. If the work has genuinely independent parallel streams (e.g. backend and frontend), it _proposes_ a split into a fleet and waits — both operators approve (`[y]`) or one declines (`[n]`, keeping it solo). Each agent still produces small, single-concern gated chunks, clearly attributed to its agent and task.
+- **Clarify first.** If the instruction is genuinely ambiguous, the agent asks the operators multiple-choice questions (each with a "provide your own answer" option) and waits — it never assumes. Both operators answer; if they disagree, the question re-asks as _[A's answer / B's answer / accept both]_ until they converge.
 - **Plan next.** The agent proposes its task list of bounded, single-concern changes and is blocked until both seats approve it — the plan gate is enforced, not advisory. Either seat can select (`j`/`k`), edit (`e`), delete (`d`), or reorder (`<`/`>`) tasks; any edit resets both ready flags. The approved list is returned to the agent verbatim; steer-first approach preferred — `[r]` routes a revision prompt to the agent.
 - **One task at a time.** Agents work sequentially; each finished change parks at a gate.
 - **Step away safely.** Either seat can toggle AFK (`[z]`) when they walk off; the other keeps doing all single-operator work (review, draft, steer, claim, discuss) and the console shows "waiting on … (AFK)". AFK is presence only — nothing needing the away seat's second key merges without them.
@@ -83,13 +83,13 @@ cargo run -p kontur-tui --bin kontur -- demo
 
 # Explicit repo / in-memory / scripted flags still work:
 kontur host --repo /path/to/repo --demo-agent
-kontur host --mem --prompt "initial text (editable in-console)" 
+kontur host --mem --prompt "initial text (editable in-console)"
 
 # Join as operator (legacy plain-TCP test form still works):
 kontur join --addr host:7777 --seed 2
 ```
 
-**Console keys:** `?` help · `y` ready · `p` edit prompt · `j`/`k` scroll diff · `↑`/`↓` scroll log · `tab` select file · `c` claim gate · `d` discuss note · `z` AFK (away) · `a`/`x` approve/reject BYO join · `g` go (2× if truncated) · `r` no-go+steer · `e` edit file · `l` invite LAN/WAN · `K` abandon (confirm) · `q` quit.  Press `?` any time for a phase-aware keymap.
+**Console keys:** `?` help · `y` ready · `p` edit prompt · `j`/`k` scroll diff · `↑`/`↓` scroll log · `tab` select file · `c` claim gate · `d` discuss note · `z` AFK (away) · `a`/`x` approve/reject BYO join · `g` go (2× if truncated) · `r` no-go+steer · `e` edit file · `l` invite LAN/WAN · `K` abandon (confirm) · `q` quit. Press `?` any time for a phase-aware keymap.
 
 Invite codes carry the secret the operator's key is derived from — send privately; operator-supplied keys with host-side approval are future work.
 
