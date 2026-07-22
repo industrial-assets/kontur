@@ -68,7 +68,9 @@ fn base(active: ActiveRegion) -> SessionView {
 
 fn draw(view: &SessionView) -> String {
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    terminal.draw(|f| render(f, view, 0, 0, 0)).unwrap();
+    terminal
+        .draw(|f| render(f, view, 0, 0, 0, &std::cell::Cell::new(0)))
+        .unwrap();
     buf_string(terminal.backend().buffer())
 }
 
@@ -343,6 +345,41 @@ fn attention_none_renders_nothing() {
     );
 }
 
+/// The diff pane reports its real content height so scrolling clamps to the
+/// actual pane, not a fixed guess. On a 120x30 backend: panes area = 24 rows
+/// (30 - banner1 - status1 - stations3 - command1), diff area = 24 - files 4 -
+/// verdict 6 = 14, minus 2 borders = 12.
+#[test]
+fn diff_pane_reports_its_real_viewport() {
+    let card = GateCard {
+        gate_id: "gate-009".into(),
+        task: "t9".into(),
+        files: vec!["a.rs".into()],
+        loc: 3,
+        keys: vec![],
+        escalation_required: false,
+        file_diffs: vec![kontur_tui::view::FileDiffView {
+            path: "a.rs".into(),
+            diff: "diff --git a/a.rs b/a.rs\n+one\n+two\n+three\n".into(),
+            truncated: false,
+        }],
+        diff_truncated: false,
+        last_cmd: None,
+        claimed_by: None,
+        discuss: Vec::new(),
+    };
+    let vp = std::cell::Cell::new(0u16);
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    terminal
+        .draw(|f| render(f, &base(ActiveRegion::Gate(card)), 0, 0, 0, &vp))
+        .unwrap();
+    assert_eq!(
+        vp.get(),
+        12,
+        "diff pane must report its real content height"
+    );
+}
+
 /// Gate: files bar shows ▶ for the selected file.
 #[test]
 fn gate_files_bar_shows_selection_marker() {
@@ -361,7 +398,16 @@ fn gate_files_bar_shows_selection_marker() {
     };
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal
-        .draw(|f| render(f, &base(ActiveRegion::Gate(card)), 0, 1, 0))
+        .draw(|f| {
+            render(
+                f,
+                &base(ActiveRegion::Gate(card)),
+                0,
+                1,
+                0,
+                &std::cell::Cell::new(0),
+            )
+        })
         .unwrap();
     let s = buf_string(terminal.backend().buffer());
     assert!(
@@ -414,7 +460,16 @@ fn diff_pane_shows_only_selected_file_section() {
     };
     let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
     terminal
-        .draw(|f| render(f, &base(ActiveRegion::Gate(card)), 0, 1, 0))
+        .draw(|f| {
+            render(
+                f,
+                &base(ActiveRegion::Gate(card)),
+                0,
+                1,
+                0,
+                &std::cell::Cell::new(0),
+            )
+        })
         .unwrap();
     let s = buf_string(terminal.backend().buffer());
     assert!(
@@ -465,7 +520,9 @@ fn prompt_pane_renders_multiline_draft() {
         ready: [false, true],
     });
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    terminal.draw(|f| render(f, &view, 0, 0, 0)).unwrap();
+    terminal
+        .draw(|f| render(f, &view, 0, 0, 0, &std::cell::Cell::new(0)))
+        .unwrap();
     let s = buf_string(terminal.backend().buffer());
     assert!(s.contains(" fix the parser"), "got:\n{s}");
     assert!(
@@ -488,7 +545,9 @@ fn log_scrollback_shows_history_and_offset() {
         })
         .collect();
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    terminal.draw(|f| render(f, &view, 0, 0, 0)).unwrap();
+    terminal
+        .draw(|f| render(f, &view, 0, 0, 0, &std::cell::Cell::new(0)))
+        .unwrap();
     let tail = buf_string(terminal.backend().buffer());
     assert!(
         tail.contains("entry-59"),
@@ -496,7 +555,9 @@ fn log_scrollback_shows_history_and_offset() {
     );
     assert!(!tail.contains("LOG ↑"), "no offset marker at the tail");
 
-    terminal.draw(|f| render(f, &view, 0, 0, 40)).unwrap();
+    terminal
+        .draw(|f| render(f, &view, 0, 0, 40, &std::cell::Cell::new(0)))
+        .unwrap();
     let back = buf_string(terminal.backend().buffer());
     assert!(
         !back.contains("entry-59"),
@@ -644,7 +705,16 @@ fn gate_discuss_strip_renders_notes() {
     };
     let mut terminal = Terminal::new(TestBackend::new(160, 44)).unwrap();
     terminal
-        .draw(|f| render(f, &base(ActiveRegion::Gate(card)), 0, 0, 0))
+        .draw(|f| {
+            render(
+                f,
+                &base(ActiveRegion::Gate(card)),
+                0,
+                0,
+                0,
+                &std::cell::Cell::new(0),
+            )
+        })
         .unwrap();
     let s = buf_string(terminal.backend().buffer());
     assert!(

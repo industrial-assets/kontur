@@ -297,6 +297,15 @@ mod tests {
         assert_eq!(clamp_scroll(5, 10, 20), 0);
     }
 
+    #[test]
+    fn small_viewport_keeps_the_bottom_reachable() {
+        // A 15-line diff in a 12-row pane must scroll to its end (max = 15-12).
+        // With the old fixed viewport of 20 this was max=0 — the bottom 3 lines
+        // were cut off and unscrollable. Clamping with the real pane height fixes it.
+        assert_eq!(clamp_scroll(999, 15, 12), 3);
+        assert_eq!(clamp_scroll(999, 15, 20), 0); // the old, broken behaviour
+    }
+
     // -----------------------------------------------------------------------
     // editor_command
     // -----------------------------------------------------------------------
