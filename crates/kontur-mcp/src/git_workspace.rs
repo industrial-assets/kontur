@@ -44,6 +44,30 @@ pub(crate) fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, Worksp
 
 impl GitWorkspace {
     pub fn create(repo: PathBuf, session: &str) -> Result<Self, WorkspaceError> {
+        // Ensure a committer identity so kontur's mechanical commits (initial,
+        // per-task, squash-merge) never fail in a repo with no user config.
+        // Only fill a fallback when a key is unset — never override the user's
+        // own identity. Repo-local config is shared with the session worktree.
+        if git(&repo, &["config", "user.name"]).is_err() {
+            git(&repo, &["config", "user.name", "kontur"])?;
+        }
+        if git(&repo, &["config", "user.email"]).is_err() {
+            git(&repo, &["config", "user.email", "kontur@localhost"])?;
+        }
+
+        // A freshly `git init`ed repo has an unborn HEAD (no commits). A session
+        // needs a base commit — the worktree and the closing squash-merge both
+        // require one — so commit the folder's current contents as the baseline
+        // (an empty folder gets an empty root commit). This lets kontur start
+        // with zero setup in a brand-new folder.
+        if git(&repo, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_err() {
+            git(&repo, &["add", "-A"])?;
+            git(
+                &repo,
+                &["commit", "--allow-empty", "-m", "kontur: initial commit"],
+            )?;
+        }
+
         let base = git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"])?
             .trim()
             .to_string();
@@ -255,6 +279,42 @@ mod tests {
         assert!(log.contains("Reviewed-by: B <b>"));
         let count = git(&repo, &["rev-list", "--count", "main"]).unwrap();
         assert_eq!(count.trim(), "2"); // seed + one squash commit
+    }
+
+    #[test]
+    fn empty_repo_gets_initial_commit_and_hosts_end_to_end() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static N: AtomicU32 = AtomicU32::new(9000);
+        let mut repo = std::env::temp_dir();
+        repo.push(format!(
+            "kontur-git-empty-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&repo);
+        std::fs::create_dir_all(&repo).unwrap();
+        // `git init` only — no initial commit (unborn HEAD) and no user config,
+        // so the identity fallback is exercised too.
+        git(&repo, &["init", "-b", "main"]).unwrap();
+
+        let ws = GitWorkspace::create(repo.clone(), "s-empty")
+            .expect("a fresh, commitless repo must host without setup");
+        // A base commit now exists.
+        assert_eq!(
+            git(&repo, &["rev-list", "--count", "HEAD"]).unwrap().trim(),
+            "1"
+        );
+        // And the whole session flow works from there.
+        let t = TaskId("t1".into());
+        ws.apply_write(&t, "src/lib.rs", b"pub fn f() {}\n")
+            .unwrap();
+        ws.freeze_task_diff(&t).unwrap();
+        ws.accept_task(&t).unwrap();
+        ws.merge_session("done\n\nReviewed-by: A <a>").unwrap();
+        assert_eq!(
+            git(&repo, &["rev-list", "--count", "main"]).unwrap().trim(),
+            "2", // initial commit + squash-merge
+        );
     }
 
     #[test]

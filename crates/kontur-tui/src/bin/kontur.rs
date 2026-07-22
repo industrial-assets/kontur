@@ -126,7 +126,7 @@ fn audit_cmd(args: &[String]) -> std::io::Result<()> {
 fn print_usage() {
     eprintln!(
         "Usage:
-  kontur                              # zero-config: host in current git repo
+  kontur                              # zero-config: host in cwd (offers to git-init a fresh folder)
   kontur audit <file.json>            # verify a persisted audit chain
   kontur id                           # show your operator fingerprint (BYO)
   kontur mcp-bridge <port>            # stdio<->TCP bridge for Claude Code (internal)
@@ -230,8 +230,8 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         ));
     }
 
-    // Determine working repo path: explicit --repo, or cwd.
-    // If neither --mem nor --repo is given, cwd must be a git repo.
+    // Determine working repo path: explicit --repo, or cwd. A non-git or
+    // commitless folder is handled at host time (offer to init + base commit).
 
     // Determine whether seeds come from explicit flags or are derived from
     // freshly-generated 16-byte secrets (v2 invite model).
@@ -263,22 +263,10 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
     } else if let Some(r) = repo.clone() {
         Some(r)
     } else {
-        // Zero-config: use cwd. Validate it's a git repo.
-        let cwd = std::env::current_dir()?;
-        let git_check = std::process::Command::new("git")
-            .args(["rev-parse", "--git-dir"])
-            .current_dir(&cwd)
-            .output();
-        match git_check {
-            Ok(out) if out.status.success() => Some(cwd.to_string_lossy().into_owned()),
-            _ => {
-                eprintln!(
-                    "error: current directory is not a git repository.\n\
-                     hint: run `git init` first, or use `kontur host --mem` for an in-memory session."
-                );
-                std::process::exit(1);
-            }
-        }
+        // Zero-config: use cwd. A non-git folder is handled below by offering
+        // to initialise one, and a commitless repo gets a base commit — so a
+        // brand-new folder just works.
+        Some(std::env::current_dir()?.to_string_lossy().into_owned())
     };
 
     // Session name: explicit, or auto-generated s-<6hex>.
@@ -322,8 +310,17 @@ async fn host_cmd(args: &[String]) -> std::io::Result<()> {
         Arc::new(GateHost::new(ctx, ws))
     } else {
         let repo_path = std::path::PathBuf::from(effective_repo.as_deref().unwrap());
-        let ws = GitWorkspace::create(repo_path, &session_name)
-            .map_err(|e| err(format!("git workspace: {e}")))?;
+        // A brand-new folder need not already be a git repo — offer to init one.
+        ensure_git_repo(&repo_path)?;
+        let ws = match GitWorkspace::create(repo_path, &session_name) {
+            Ok(ws) => ws,
+            Err(e) => {
+                // Clean, actionable line (not the Debug-printed io::Error) —
+                // this runs before the TUI enters raw mode, so exiting is safe.
+                eprintln!("kontur: cannot host session: {e}");
+                std::process::exit(1);
+            }
+        };
         Arc::new(GateHost::new(ctx, Arc::new(ws)))
     };
 
@@ -811,4 +808,66 @@ fn require_arg(args: &[String], i: usize, flag: &str) -> std::io::Result<String>
 
 fn err(msg: String) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidInput, msg)
+}
+
+/// Ensure `dir` is inside a git work tree, offering to `git init` it if not.
+/// Interactive terminals get a prompt (default yes); non-interactive runs
+/// initialise automatically with a notice (so a fresh folder just works).
+/// Declining exits cleanly. Runs before the TUI takes the terminal, so reading
+/// a line and exiting here are both safe.
+fn ensure_git_repo(dir: &std::path::Path) -> std::io::Result<()> {
+    use std::io::{IsTerminal, Write};
+
+    let inside = std::process::Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(dir)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if inside {
+        return Ok(());
+    }
+
+    let proceed = if std::io::stdin().is_terminal() {
+        eprint!(
+            "kontur: {} is not a git repository. Initialize one here? [Y/n] ",
+            dir.display()
+        );
+        std::io::stderr().flush().ok();
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        let ans = line.trim().to_ascii_lowercase();
+        ans.is_empty() || ans == "y" || ans == "yes"
+    } else {
+        eprintln!(
+            "kontur: {} is not a git repository — initializing (non-interactive).",
+            dir.display()
+        );
+        true
+    };
+
+    if !proceed {
+        eprintln!(
+            "kontur: aborted — run `git init` first, or use `--mem` for an in-memory session."
+        );
+        std::process::exit(1);
+    }
+
+    let out = std::process::Command::new("git")
+        .arg("init")
+        .arg("-b")
+        .arg("main")
+        .current_dir(dir)
+        .output()?;
+    if !out.status.success() {
+        return Err(err(format!(
+            "git init failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    eprintln!(
+        "kontur: initialized empty git repository in {}",
+        dir.display()
+    );
+    Ok(())
 }

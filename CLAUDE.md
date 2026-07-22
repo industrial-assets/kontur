@@ -107,7 +107,8 @@ cargo clippy --all-targets -- -D warnings
 # run the self-contained local demo
 cargo run -p kontur-tui --bin kontur -- demo
 
-# zero-config host in cwd (must be a git repo with at least one commit)
+# zero-config host in cwd (a fresh/empty folder works — kontur offers to
+# `git init` and makes a base commit if there are none)
 cd your-project && kontur
 
 # join as operator — paste the invite link the host printed:
