@@ -287,6 +287,7 @@ pub fn wire_to_view(state: &WireState, own: OperatorId, plan_sel: usize) -> Sess
         blink_on: false,
         spinner_frame: 0,
         join_request: None,
+        version_notice: None,
     }
 }
 
@@ -671,6 +672,21 @@ pub async fn run_remote(
     // Plan review: currently highlighted task row.
     let mut plan_sel: usize = 0;
 
+    // Async, fail-silent upgrade check. Never blocks the loop; result lands in
+    // this slot when (and if) it resolves, and the footer picks it up.
+    let upgrade_notice: Arc<std::sync::Mutex<Option<String>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    {
+        let slot = upgrade_notice.clone();
+        tokio::spawn(async move {
+            if let Some(msg) = crate::update::run_check().await {
+                if let Ok(mut g) = slot.lock() {
+                    *g = Some(msg);
+                }
+            }
+        });
+    }
+
     loop {
         // Pick up any new rejection message.
         while let Ok(r) = rej_rx.try_recv() {
@@ -713,6 +729,14 @@ pub async fn run_remote(
             view.invite = invite
                 .as_ref()
                 .and_then(|l| compose_invite_text(l, link_mode));
+        }
+
+        // Footer version line: peer-mismatch (set in wire_to_view) wins; else
+        // the upgrade nudge if the async check found one.
+        if view.version_notice.is_none() {
+            if let Ok(g) = upgrade_notice.lock() {
+                view.version_notice = g.clone();
+            }
         }
 
         let active_gate_id = state.gate.as_ref().map(|g| g.gate_id.0.clone());

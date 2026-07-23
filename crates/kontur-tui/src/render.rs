@@ -30,6 +30,7 @@ pub fn render(
     };
     let attention_rows: u16 = if view.attention.is_some() { 1 } else { 0 };
     let agent_log_rows: u16 = if view.agent_log.is_some() { 1 } else { 0 };
+    let version_rows: u16 = if view.version_notice.is_some() { 1 } else { 0 };
     let rows = Layout::vertical([
         Constraint::Length(1),              // banner
         Constraint::Length(1),              // status strip
@@ -38,6 +39,7 @@ pub fn render(
         Constraint::Length(3),              // stations
         Constraint::Min(3),                 // panes (left + right)
         Constraint::Length(agent_log_rows), // host-only agent-log footer
+        Constraint::Length(version_rows),   // both-seats version notice
         Constraint::Length(1),              // command line
     ])
     .split(frame.area());
@@ -85,7 +87,10 @@ pub fn render(
     if let Some(path) = &view.agent_log {
         agent_log_footer(frame, rows[6], path);
     }
-    command(frame, rows[7], view);
+    if let Some(notice) = &view.version_notice {
+        version_footer(frame, rows[7], notice);
+    }
+    command(frame, rows[8], view);
 
     // Help overlay sits above everything else.
     if view.show_help {
@@ -95,7 +100,7 @@ pub fn render(
     // Text-entry caret: drawn only on "on" frames of the blink cadence, so the
     // real terminal cursor flashes slowly at the insertion point.
     if view.blink_on {
-        if let Some(pos) = caret_position(view, rows[5], rows[7]) {
+        if let Some(pos) = caret_position(view, rows[5], rows[8]) {
             frame.set_cursor_position(pos);
         }
     }
@@ -920,6 +925,19 @@ fn agent_log_footer(frame: &mut Frame, area: Rect, path: &str) {
     );
 }
 
+/// A single DIM footer line, shown on both seats, carrying a peer-version
+/// mismatch or an available-upgrade nudge. Never loud — emphasis stays with
+/// the gate.
+fn version_footer(frame: &mut Frame, area: Rect, notice: &str) {
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!(" {notice}"),
+            Style::default().add_modifier(Modifier::DIM),
+        ))),
+        area,
+    );
+}
+
 fn command(frame: &mut Frame, area: Rect, view: &SessionView) {
     let text = match &view.notice {
         Some(msg) => {
@@ -989,6 +1007,7 @@ mod tests {
             blink_on: false,
             spinner_frame: 0,
             join_request: None,
+            version_notice: None,
         }
     }
 
@@ -1077,6 +1096,22 @@ mod tests {
         assert!(!help_lines(&ActiveRegion::Idle, false)
             .iter()
             .any(|l| l.contains("invite")));
+    }
+
+    #[test]
+    fn version_notice_renders_in_footer() {
+        let mut view = minimal_view(ActiveRegion::Working {
+            note: "working".into(),
+        });
+        view.version_notice = Some("v0.2.0 available — brew upgrade kontur".to_string());
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render(f, &view, 0, 0, 0, &std::cell::Cell::new(10)))
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("v0.2.0 available"));
     }
 
     fn draw(view: &SessionView) -> String {

@@ -63,6 +63,7 @@ fn base(active: ActiveRegion) -> SessionView {
         spinner_frame: 0,
         join_request: None,
         plan: None,
+        version_notice: None,
     }
 }
 

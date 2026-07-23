@@ -37,6 +37,86 @@ pub fn cache_is_fresh(last_checked_secs: u64, now_secs: u64) -> bool {
     now_secs.saturating_sub(last_checked_secs) < CACHE_TTL_SECS
 }
 
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// The repo whose releases we poll.
+const RELEASES_URL: &str =
+    "https://api.github.com/repos/industrial-assets/kontur/releases/latest";
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn cache_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".kontur").join("update-check.json"))
+}
+
+fn read_cache() -> Option<UpdateCache> {
+    let raw = std::fs::read_to_string(cache_path()?).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn write_cache(cache: &UpdateCache) {
+    if let Some(path) = cache_path() {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(json) = serde_json::to_string(cache) {
+            let _ = std::fs::write(path, json);
+        }
+    }
+}
+
+/// One blocking HTTPS GET to the GitHub Releases API. Returns the latest tag
+/// (e.g. "v0.2.0"), or None on any error. GitHub requires a User-Agent.
+fn fetch_latest_tag() -> Option<String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(3))
+        .build();
+    let body = agent
+        .get(RELEASES_URL)
+        .set(
+            "User-Agent",
+            concat!("kontur/", env!("CARGO_PKG_VERSION")),
+        )
+        .set("Accept", "application/vnd.github+json")
+        .call()
+        .ok()?
+        .into_string()
+        .ok()?;
+    let json: serde_json::Value = serde_json::from_str(&body).ok()?;
+    json.get("tag_name")?.as_str().map(|s| s.to_string())
+}
+
+/// The full check: opt-out, cache, fetch, compare. Fail-silent throughout —
+/// any problem returns None and never disturbs the session.
+pub async fn run_check() -> Option<String> {
+    if std::env::var_os("KONTUR_NO_UPDATE_CHECK").is_some() {
+        return None;
+    }
+    let current = env!("CARGO_PKG_VERSION");
+
+    // Use a fresh cache without touching the network.
+    if let Some(cache) = read_cache() {
+        if cache_is_fresh(cache.last_checked, now_secs()) {
+            return upgrade_notice(current, &cache.latest_version);
+        }
+    }
+
+    // Stale/absent → fetch off the async runtime (ureq is blocking).
+    let latest = tokio::task::spawn_blocking(fetch_latest_tag).await.ok()??;
+    write_cache(&UpdateCache {
+        last_checked: now_secs(),
+        latest_version: latest.clone(),
+    });
+    upgrade_notice(current, &latest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

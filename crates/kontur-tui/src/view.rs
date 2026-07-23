@@ -243,6 +243,9 @@ pub struct SessionView {
     /// Host-only: a BYO operator awaiting approval — the fingerprint to verify.
     /// Rendered as a loud approval prompt; None on the operator console.
     pub join_request: Option<String>,
+    /// A single calm DIM footer line shown on BOTH seats: a peer-version
+    /// mismatch (priority) or an available upgrade. None → no line.
+    pub version_notice: Option<String>,
 }
 
 #[cfg(test)]
