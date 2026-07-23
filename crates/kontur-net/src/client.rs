@@ -81,6 +81,7 @@ impl SessionClient {
                 seat,
                 operator,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: env!("CARGO_PKG_VERSION").to_string(),
             },
         )
         .await?;

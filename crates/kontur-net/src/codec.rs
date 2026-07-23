@@ -61,6 +61,7 @@ mod tests {
             seat: "A".to_string(),
             operator: OperatorId([1; 32]),
             protocol: crate::protocol::PROTOCOL_VERSION,
+            client_version: "0.9.9".to_string(),
         };
 
         let recovered: ClientMsg = roundtrip(&original).await;
@@ -134,6 +135,7 @@ mod tests {
                 linked: true,
                 ready: false,
                 afk: false,
+                version: "0.9.9".into(),
             }],
             fleet: vec![],
             log: vec!["started".to_string()],

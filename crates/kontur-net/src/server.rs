@@ -99,6 +99,7 @@ struct SeatState {
     linked: bool,
     ready: bool,
     afk: bool,
+    version: String,
 }
 
 struct Net {
@@ -165,6 +166,7 @@ impl SessionServer {
                 linked: false,
                 ready: false,
                 afk: false,
+                version: env!("CARGO_PKG_VERSION").to_string(),
             },
             SeatState {
                 label: cfg.seats[1].0.clone(),
@@ -173,6 +175,7 @@ impl SessionServer {
                 linked: false,
                 ready: false,
                 afk: false,
+                version: String::new(),
             },
         ];
 
@@ -186,6 +189,7 @@ impl SessionServer {
                     linked: false,
                     ready: false,
                     afk: false,
+                    version: env!("CARGO_PKG_VERSION").to_string(),
                 },
                 WireSeat {
                     label: cfg.seats[1].0.clone(),
@@ -194,6 +198,7 @@ impl SessionServer {
                     linked: false,
                     ready: false,
                     afk: false,
+                    version: String::new(),
                 },
             ],
             fleet: vec![],
@@ -588,6 +593,7 @@ async fn resolve_byo_join(
     server: &SessionServer,
     operator: OperatorId,
     conn_tx: &mpsc::Sender<ServerMsg>,
+    client_version: String,
 ) -> Option<usize> {
     let mut rx = server.inner.join_tx.subscribe();
     {
@@ -668,6 +674,7 @@ async fn resolve_byo_join(
                 // Reviewed-by trailers, and the audit roster reflect the real
                 // operator rather than the zero placeholder configured for BYO.
                 net.seats[1].operator = operator;
+                net.seats[1].version = client_version.clone();
                 newly_bound = true;
                 Some(1)
             }
@@ -707,12 +714,13 @@ async fn reader_task<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(
         _ => return,
     };
 
-    let (operator, protocol, client_label) = match &hello {
+    let (operator, protocol, client_label, client_version) = match &hello {
         ClientMsg::Hello {
             seat,
             operator,
             protocol,
-        } => (*operator, *protocol, seat.clone()),
+            client_version,
+        } => (*operator, *protocol, seat.clone(), client_version.clone()),
         _ => {
             let _ = conn_tx
                 .send(ServerMsg::Rejected {
@@ -767,7 +775,7 @@ async fn reader_task<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(
         // (GateHost::submit_verdict) and each cast is bound to the connection's
         // authenticated identity, so an approved fingerprint is load-bearing at
         // the merge boundary.
-        match resolve_byo_join(&server, operator, &conn_tx).await {
+        match resolve_byo_join(&server, operator, &conn_tx, client_version.clone()).await {
             Some(i) => i,
             None => return,
         }
@@ -784,6 +792,7 @@ async fn reader_task<R: tokio::io::AsyncBufRead + Unpin + Send + 'static>(
     {
         let mut net = server.inner.net.lock().await;
         net.seats[seat_idx].linked = true;
+        net.seats[seat_idx].version = client_version.clone();
 
         // Both linked for first time → advance to DispatchReady
         if net.phase == Phase::AwaitOperators && net.seats[0].linked && net.seats[1].linked {
@@ -1619,6 +1628,7 @@ impl SessionServer {
                 linked: s.linked,
                 ready: s.ready,
                 afk: s.afk,
+                version: s.version.clone(),
             })
             .collect();
 
@@ -1924,6 +1934,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op_host,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -1936,6 +1947,7 @@ mod tests {
                 seat: "B".into(),
                 operator: byo,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2032,6 +2044,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op_host,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2042,6 +2055,7 @@ mod tests {
                 seat: "B".into(),
                 operator: byo_x,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2067,6 +2081,7 @@ mod tests {
                 seat: "B".into(),
                 operator: byo_y,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2110,6 +2125,7 @@ mod tests {
                 seat: "B".into(),
                 operator: OperatorId([0u8; 32]),
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2166,6 +2182,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op_host,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2176,6 +2193,7 @@ mod tests {
                 seat: "B".into(),
                 operator: byo,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2294,6 +2312,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op_host,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2304,6 +2323,7 @@ mod tests {
                 seat: "B".into(),
                 operator: byo,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2420,6 +2440,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2430,6 +2451,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2591,6 +2613,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2601,6 +2624,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2760,6 +2784,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
                 },
             )
             .await
@@ -2844,6 +2869,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2890,6 +2916,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2900,6 +2927,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2966,6 +2994,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -2976,6 +3005,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3090,6 +3120,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3161,6 +3192,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3171,6 +3203,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3290,6 +3323,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3300,6 +3334,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3432,6 +3467,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3442,6 +3478,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3589,6 +3626,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3682,6 +3720,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3692,6 +3731,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3832,6 +3872,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3842,6 +3883,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3926,6 +3968,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -3936,6 +3979,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -4031,6 +4075,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -4041,6 +4086,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -4123,6 +4169,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
                 },
             )
             .await
@@ -4234,6 +4281,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
                 },
             )
             .await
@@ -4300,6 +4348,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
                 },
             )
             .await
@@ -4408,6 +4457,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
                 },
             )
             .await
@@ -4511,6 +4561,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
                 },
             )
             .await
@@ -4604,6 +4655,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
                 },
             )
             .await
@@ -4695,6 +4747,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION + 99,
+                client_version: String::new(),
             },
         )
         .await
@@ -4758,6 +4811,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -4768,6 +4822,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -4887,6 +4942,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -4897,6 +4953,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5003,6 +5060,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5013,6 +5071,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5175,6 +5234,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5282,6 +5342,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5292,6 +5353,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5394,6 +5456,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5404,6 +5467,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5494,6 +5558,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5504,6 +5569,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5632,6 +5698,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5642,6 +5709,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5749,6 +5817,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5759,6 +5828,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5842,6 +5912,7 @@ mod tests {
                 seat: "A".into(),
                 operator: op1,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await
@@ -5852,6 +5923,7 @@ mod tests {
                 seat: "B".into(),
                 operator: op2,
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                client_version: String::new(),
             },
         )
         .await

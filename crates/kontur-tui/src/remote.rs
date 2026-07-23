@@ -1497,6 +1497,7 @@ mod tests {
                     linked: true,
                     ready: false,
                     afk: false,
+                    version: String::new(),
                 },
                 WireSeat {
                     label: "B".into(),
@@ -1505,6 +1506,7 @@ mod tests {
                     linked: true,
                     ready: false,
                     afk: false,
+                    version: String::new(),
                 },
             ],
             fleet: vec![],
