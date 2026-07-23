@@ -57,8 +57,11 @@ Kontur is distributed as a Homebrew tap (macOS + Linux):
 
 ```sh
 brew tap industrial-assets/kontur
+brew trust industrial-assets/kontur   # once: recent Homebrew requires trusting third-party taps
 brew install kontur
 ```
+
+> Recent Homebrew versions refuse to load formulae from an untrusted third-party tap. Run `brew trust industrial-assets/kontur` once (after tapping) before installing or upgrading. Older Homebrew versions don't have `brew trust` and will error harmlessly — skip that line if so.
 
 Upgrade when a new version ships:
 
@@ -68,7 +71,7 @@ brew upgrade kontur
 
 Kontur tells you in a calm footer line when a newer release is available, and nudges you and your co-operator when your two versions differ. To disable the check entirely, set `KONTUR_NO_UPDATE_CHECK=1`.
 
-One-liner alternative (auto-taps): `brew install industrial-assets/kontur/kontur`.
+One-liner alternative (auto-taps): `brew install industrial-assets/kontur/kontur` (still run `brew trust industrial-assets/kontur` first).
 
 ---
 
