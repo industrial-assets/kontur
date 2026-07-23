@@ -999,11 +999,10 @@ git add .github/workflows/release.yml
 git commit -m "ci: release workflow — prebuilt binaries + tap formula bump"
 ```
 
-> **Manual setup (record in the PR description, not automatable here):**
-> 1. Create the tap repo `industrial-assets/homebrew-kontur` (Task 8).
-> 2. Create a fine-grained PAT with **Contents: write** on that repo only; add it to
->    the `kontur` repo as the Actions secret `KONTUR_TAP_TOKEN`.
-> 3. First release is cut by pushing a tag (Task 8, Step 4).
+> **Manual setup — ✅ COMPLETE (2026-07-23):**
+> 1. ✅ Tap repo `industrial-assets/homebrew-kontur` created, seeded with `Formula/`, and made **public**.
+> 2. ✅ Fine-grained PAT (**Contents: write**, `homebrew-kontur` only) added to the `kontur` repo as the Actions secret `KONTUR_TAP_TOKEN`.
+> 3. ✅ First release cut by pushing tag `v0.1.0` — full pipeline green; formula published to the tap.
 
 ---
 
@@ -1052,7 +1051,7 @@ git add crates/kontur-tui/Cargo.toml && git commit -m "build: package metadata f
 **Interfaces:**
 - Consumes: the release artifacts (Task 6).
 
-- [ ] **Step 1: Create the tap repo with an initial formula**
+- [x] **Step 1: Create the tap repo with an initial formula** ✅ Created empty + public, seeded `Formula/`; CI generated `Formula/kontur.rb` on the `v0.1.0` tag.
 
 Create `industrial-assets/homebrew-kontur` with `Formula/kontur.rb`. For the very first release the tarballs do not exist yet, so this file is a placeholder that CI overwrites on the first tag. Seed it with the same structure Task 6 generates (version `0.0.0`, empty `sha256 ""`), or simply create the repo empty with a `Formula/` dir and let the `formula` CI job create the file (its `git add Formula/kontur.rb` will add a new file). Prefer the latter: create the repo with a README only and a `Formula/` directory.
 
@@ -1102,16 +1101,21 @@ git add README.md docs/UX-kontur.md docs/PRD-coop-supervisor.md CLAUDE.md
 git commit -m "docs: Homebrew install, footer version line, update check + peer version"
 ```
 
-- [ ] **Step 7: Cut the first release (manual, after merge + tap setup)**
+- [x] **Step 7: Cut the first release (manual, after merge + tap setup)** ✅ Done 2026-07-23
 
-Once merged and `KONTUR_TAP_TOKEN` is configured:
+`v0.1.0` shipped:
 
 ```bash
-git tag v0.1.0
+git tag -a v0.1.0 -m "kontur 0.1.0"   # git here requires annotated tags
 git push origin v0.1.0
 ```
 
-Verify: the `release` workflow attaches three tarballs + checksums, and the `formula` job commits `Formula/kontur.rb` to the tap. Then on a clean machine: `brew tap industrial-assets/kontur && brew install kontur && kontur --version`.
+Verified: the `release` workflow attached three tarballs + checksums, and the `formula` job committed `Formula/kontur.rb` to the tap (passing `ruby -c`). Downloaded artifact's sha256 matches the formula and the binary reports `kontur 0.1.0`.
+
+> **Gotchas found during the first release (for next time):**
+> - **Annotated tags required** — this repo's git config rejects a bare `git tag v0.1.0` with *"no tag message?"*; use `git tag -a … -m`.
+> - **Fine-grained PAT scope** — the token must list `homebrew-kontur` under repository access (it was initially missing, so the `formula` push 403'd as the actor); org approval may also be needed on the Team plan.
+> - **`brew trust`** — recent Homebrew refuses untrusted third-party taps; end users run `brew trust industrial-assets/kontur` once after tapping. Documented in `README.md`.
 
 ---
 
