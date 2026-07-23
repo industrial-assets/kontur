@@ -2789,7 +2789,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
-                client_version: String::new(),
+                    client_version: String::new(),
                 },
             )
             .await
@@ -4174,7 +4174,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
-                client_version: String::new(),
+                    client_version: String::new(),
                 },
             )
             .await
@@ -4286,7 +4286,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
-                client_version: String::new(),
+                    client_version: String::new(),
                 },
             )
             .await
@@ -4353,7 +4353,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
-                client_version: String::new(),
+                    client_version: String::new(),
                 },
             )
             .await
@@ -4462,7 +4462,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
-                client_version: String::new(),
+                    client_version: String::new(),
                 },
             )
             .await
@@ -4566,7 +4566,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
-                client_version: String::new(),
+                    client_version: String::new(),
                 },
             )
             .await
@@ -4660,7 +4660,7 @@ mod tests {
                     seat: seat.into(),
                     operator: op,
                     protocol: crate::protocol::PROTOCOL_VERSION,
-                client_version: String::new(),
+                    client_version: String::new(),
                 },
             )
             .await

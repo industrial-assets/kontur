@@ -2,6 +2,9 @@
 //! an operator when a newer kontur exists, plus the pure helpers that decide
 //! what the footer says. No telemetry, no code leaves the host — one GET.
 
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use serde::{Deserialize, Serialize};
 
 /// The 24h freshness window for the on-disk check cache, in seconds.
@@ -37,12 +40,8 @@ pub fn cache_is_fresh(last_checked_secs: u64, now_secs: u64) -> bool {
     now_secs.saturating_sub(last_checked_secs) < CACHE_TTL_SECS
 }
 
-use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
 /// The repo whose releases we poll.
-const RELEASES_URL: &str =
-    "https://api.github.com/repos/industrial-assets/kontur/releases/latest";
+const RELEASES_URL: &str = "https://api.github.com/repos/industrial-assets/kontur/releases/latest";
 
 fn now_secs() -> u64 {
     SystemTime::now()
@@ -53,7 +52,11 @@ fn now_secs() -> u64 {
 
 fn cache_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".kontur").join("update-check.json"))
+    Some(
+        PathBuf::from(home)
+            .join(".kontur")
+            .join("update-check.json"),
+    )
 }
 
 fn read_cache() -> Option<UpdateCache> {
@@ -80,10 +83,7 @@ fn fetch_latest_tag() -> Option<String> {
         .build();
     let body = agent
         .get(RELEASES_URL)
-        .set(
-            "User-Agent",
-            concat!("kontur/", env!("CARGO_PKG_VERSION")),
-        )
+        .set("User-Agent", concat!("kontur/", env!("CARGO_PKG_VERSION")))
         .set("Accept", "application/vnd.github+json")
         .call()
         .ok()?
