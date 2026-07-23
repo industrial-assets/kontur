@@ -2,6 +2,7 @@
 name = "kontur-mcp"
 version.workspace = true
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 kontur-core = { path = "../kontur-core" }

@@ -2,6 +2,7 @@
 name = "kontur-core"
 version.workspace = true
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 ed25519-dalek = { version = "2", features = ["rand_core"] }
