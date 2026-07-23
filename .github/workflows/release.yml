@@ -1,0 +1,131 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match workspace version
+        run: |
+          VERSION=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          if [ "v$VERSION" != "${GITHUB_REF_NAME}" ]; then
+            echo "tag ${GITHUB_REF_NAME} != workspace version v$VERSION" >&2
+            exit 1
+          fi
+
+  build:
+    needs: guard
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-apple-darwin
+            os: macos-14
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p kontur-tui --bin kontur
+      - name: Package
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          NAME="kontur-${VERSION}-${{ matrix.target }}"
+          tar -C target/${{ matrix.target }}/release -czf "${NAME}.tar.gz" kontur
+          shasum -a 256 "${NAME}.tar.gz" | awk '{print $1}' > "${NAME}.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            kontur-*.tar.gz
+            kontur-*.tar.gz.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/kontur-*.tar.gz
+            dist/kontur-*.tar.gz.sha256
+
+  formula:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Check out the tap
+        uses: actions/checkout@v4
+        with:
+          repository: industrial-assets/homebrew-kontur
+          token: ${{ secrets.KONTUR_TAP_TOKEN }}
+          path: tap
+      - name: Regenerate the formula
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          BASE="https://github.com/industrial-assets/kontur/releases/download/${GITHUB_REF_NAME}"
+          sha() { cat "dist/kontur-${VERSION}-$1.tar.gz.sha256"; }
+          ARM_MAC=$(sha aarch64-apple-darwin)
+          X86_MAC=$(sha x86_64-apple-darwin)
+          X86_LINUX=$(sha x86_64-unknown-linux-gnu)
+          cat > tap/Formula/kontur.rb <<RUBY
+          class Kontur < Formula
+            desc "Brutalist CLI for two-signatory agentic pair programming"
+            homepage "https://github.com/industrial-assets/kontur"
+            version "${VERSION}"
+            license "Apache-2.0 OR MIT"
+
+            on_macos do
+              on_arm do
+                url "${BASE}/kontur-${VERSION}-aarch64-apple-darwin.tar.gz"
+                sha256 "${ARM_MAC}"
+              end
+              on_intel do
+                url "${BASE}/kontur-${VERSION}-x86_64-apple-darwin.tar.gz"
+                sha256 "${X86_MAC}"
+              end
+            end
+
+            on_linux do
+              url "${BASE}/kontur-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+              sha256 "${X86_LINUX}"
+            end
+
+            def install
+              bin.install "kontur"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/kontur --version")
+            end
+          end
+          RUBY
+      - name: Commit and push
+        run: |
+          cd tap
+          git config user.name "kontur-release"
+          git config user.email "release@industrialassets.co.uk"
+          git add Formula/kontur.rb
+          git commit -m "kontur ${GITHUB_REF_NAME}"
+          git push
