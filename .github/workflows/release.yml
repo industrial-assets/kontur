@@ -91,7 +91,7 @@ jobs:
           ARM_MAC=$(sha aarch64-apple-darwin)
           X86_MAC=$(sha x86_64-apple-darwin)
           X86_LINUX=$(sha x86_64-unknown-linux-gnu)
-          cat > tap/Formula/kontur.rb <<~RUBY
+          cat > tap/Formula/kontur.rb <<RUBY
           class Kontur < Formula
             desc "Brutalist CLI for two-signatory agentic pair programming"
             homepage "https://github.com/industrial-assets/kontur"
@@ -123,6 +123,7 @@ jobs:
             end
           end
           RUBY
+          ruby -c tap/Formula/kontur.rb
       - name: Commit and push
         run: |
           cd tap
